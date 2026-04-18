@@ -343,13 +343,16 @@ fn main() {
         build.file("src/qt/cpp/macos_event_buffer_bridge.mm");
         build.flag_if_supported("-fblocks");
     }
-    build.std("c++17");
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
-        && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
-    {
+    let windows_msvc = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    if windows_msvc {
+        build.std("c++20");
+        build.define("NOMINMAX", None);
         build.flag_if_supported("/Zc:__cplusplus");
         build.flag_if_supported("/EHsc");
         build.flag_if_supported("/permissive-");
+    } else {
+        build.std("c++17");
     }
 
     add_include_if_exists(&mut build, "include");
