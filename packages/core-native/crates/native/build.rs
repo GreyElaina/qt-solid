@@ -339,6 +339,12 @@ fn main() {
         build.flag_if_supported("-fblocks");
     }
     build.std("c++17");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        build.flag_if_supported("/Zc:__cplusplus");
+        build.flag_if_supported("/EHsc");
+    }
 
     add_include_if_exists(&mut build, "include");
     qt_wgpu_renderer.add_include_dirs(&mut build);
