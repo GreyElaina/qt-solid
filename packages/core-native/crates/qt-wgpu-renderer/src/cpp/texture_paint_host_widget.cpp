@@ -7,6 +7,7 @@
 #include <QtGui/QPaintEvent>
 #include <QtGui/QResizeEvent>
 #include <QtCore/QByteArray>
+#include <QtCore/QTimer>
 #include <QtWidgets/QWidget>
 #include <private/qguiapplication_p.h>
 #include <private/qwidget_p.h>
@@ -110,6 +111,7 @@ public:
   std::uint8_t kind_tag = 0;
   bool no_size = false;
   bool texture_invalid = false;
+  bool next_frame_update_queued = false;
   int preferred_width = -1;
   int preferred_height = -1;
   QRhi *rhi = nullptr;
@@ -418,8 +420,14 @@ bool TexturePaintHostWidgetPrivate::update_prepared_frame(
 
   if (qt_solid_spike::qt::qt_texture_widget_frame_next_frame_requested(
           prepared_frame)) {
-    q->update();
-    qt_solid_spike::qt::window_host_request_wake();
+    if (!next_frame_update_queued) {
+      next_frame_update_queued = true;
+      QTimer::singleShot(0, q, [q, this]() {
+        next_frame_update_queued = false;
+        q->update();
+        qt_solid_spike::qt::window_host_request_wake();
+      });
+    }
   }
 
   return true;
@@ -493,7 +501,7 @@ bool TexturePaintHostWidget::event(QEvent *event) {
     break;
   case QEvent::Show:
     if (isVisible()) {
-      d->sendPaintEvent(QRect(QPoint(0, 0), size()));
+      update();
     }
     break;
   default:
@@ -555,7 +563,7 @@ void TexturePaintHostWidget::resizeEvent(QResizeEvent *event) {
   }
 
   d->no_size = false;
-  d->sendPaintEvent(QRect(QPoint(0, 0), size()));
+  update();
 }
 
 int TexturePaintHostWidget::resolve_width_hint(const QSize &fallback) const {
