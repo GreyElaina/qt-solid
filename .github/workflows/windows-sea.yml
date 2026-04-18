@@ -32,12 +32,10 @@ jobs:
   package:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-2022
-    timeout-minutes: 150
+    timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
       QT_VERSION: 6.10.2
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,22 +53,6 @@ jobs:
       - name: Install JS dependencies
         run: bun install --frozen-lockfile
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Cache Rust build outputs
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            . -> target
-          cache-targets: false
-          env-vars: |
-            RUSTC_WRAPPER
-            SCCACHE_GHA_ENABLED
-
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -86,17 +68,14 @@ jobs:
         run: |
           qmake -query QT_VERSION
           where.exe qmake
-          where.exe qsb
           where.exe windeployqt
 
       - name: Resolve SEA Node
         shell: pwsh
         run: |
           $seaNode = node .\scripts\ensure-sea-node.mjs
-          $seaNodeHeadersDir = node .\scripts\ensure-sea-node.mjs headers-dir
           "QT_SOLID_SEA_PREP_NODE_BINARY=$seaNode" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "QT_SOLID_SEA_NODE_BINARY=$seaNode" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "npm_config_nodedir=$seaNodeHeadersDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Resolve Windows native artifact source
         shell: pwsh
@@ -161,16 +140,12 @@ jobs:
       - name: Record packaging metadata
         shell: pwsh
         run: |
-          $sccacheStats = sccache --show-stats
           @(
             "Node: $(node --version)",
             "Bun: $(bun --version)",
-            "Rust: $(rustc --version)",
             "Qt: $(qmake -query QT_VERSION)",
-            "SEA Node: $env:QT_SOLID_SEA_NODE_BINARY",
-            "sccache:"
+            "SEA Node: $env:QT_SOLID_SEA_NODE_BINARY"
           ) | Set-Content artifacts-windows-sea.txt
-          $sccacheStats | Add-Content artifacts-windows-sea.txt
 
       - name: Upload counter SEA artifact
         if: ${{ github.event_name == 'workflow_run' || inputs.example == 'counter' || inputs.example == 'all' }}
