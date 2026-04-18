@@ -26,9 +26,11 @@ fn add_include_if_exists(build: &mut cc::Build, path: impl AsRef<Path>) {
 
 fn resolve_node_include_dir() -> Option<PathBuf> {
     if let Ok(node_dir) = env::var("npm_config_nodedir") {
-        let include_dir = PathBuf::from(node_dir).join("include/node");
-        if include_dir.exists() {
-            return Some(include_dir);
+        let node_dir = PathBuf::from(node_dir);
+        for include_dir in [node_dir.join("include/node"), node_dir.clone()] {
+            if include_dir.exists() {
+                return Some(include_dir);
+            }
         }
     }
 
@@ -48,9 +50,12 @@ fn resolve_node_include_dir() -> Option<PathBuf> {
     }
 
     let exec_path = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
-    let prefix = exec_path.parent()?.parent()?;
-    let include_dir = prefix.join("include/node");
-    include_dir.exists().then_some(include_dir)
+    let exec_dir = exec_path.parent()?;
+    let candidates = [
+        exec_dir.join("include/node"),
+        exec_dir.parent()?.join("include/node"),
+    ];
+    candidates.into_iter().find(|include_dir| include_dir.exists())
 }
 
 fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
