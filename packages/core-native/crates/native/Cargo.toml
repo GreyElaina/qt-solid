@@ -23,7 +23,7 @@ qt-solid-widget-core = { version = "0.1.0", path = "../widget-core", features = 
 qt-solid-widgets-registry = { version = "0.1.0", path = "../widgets-registry" }
 qt-wgpu-renderer = { version = "0.1.0", path = "../qt-wgpu-renderer" }
 tokio = { version = "1.51.0", features = ["rt-multi-thread", "time"] }
-vello = { version = "0.8.0", path = "../../../../../vello/vello" }
+vello = { version = "0.8.0" }
 widget-build = { version = "0.1.0", path = "../widget-build" }
 window-host = { version = "0.1.0", path = "../window-host" }
 

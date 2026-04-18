@@ -13,4 +13,4 @@ napi = ["dep:napi"]
 bytemuck = { version = "1.25.0", features = ["extern_crate_alloc"] }
 linkme = "0.3.35"
 napi = { version = "3.8.4", features = ["napi8"], optional = true }
-vello = { version = "0.8.0", path = "../../../../../vello/vello", default-features = false }
+vello = { version = "0.8.0", default-features = false }
