@@ -17,39 +17,20 @@ on:
           - counter
           - spin-triangle
           - all
-  pull_request:
-    paths:
-      - ".github/workflows/windows-sea.yml"
-      - ".github/workflows/windows-native.yml"
-      - "bun.lock"
-      - "package.json"
-      - "scripts/**"
-      - "examples/**"
-      - "packages/core/**"
-      - "packages/core-widgets/**"
-      - "packages/example-widgets/**"
-      - "packages/core-native/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/windows-sea.yml"
-      - ".github/workflows/windows-native.yml"
-      - "bun.lock"
-      - "package.json"
-      - "scripts/**"
-      - "examples/**"
-      - "packages/core/**"
-      - "packages/core-widgets/**"
-      - "packages/example-widgets/**"
-      - "packages/core-native/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
+      native_run_id:
+        description: "Optional windows-native run id to download native artifacts from"
+        required: false
+        default: ""
+        type: string
+  workflow_run:
+    workflows:
+      - windows-native
+    types:
+      - completed
 
 jobs:
   package:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: windows-2022
     timeout-minutes: 150
     env:
@@ -60,6 +41,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -115,22 +98,41 @@ jobs:
           "QT_SOLID_SEA_NODE_BINARY=$seaNode" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "npm_config_nodedir=$seaNodeHeadersDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Resolve Windows native artifact source
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_run") {
+            $runId = "${{ github.event.workflow_run.id }}"
+          } elseif ("${{ inputs.native_run_id }}" -ne "") {
+            $runId = "${{ inputs.native_run_id }}"
+          } else {
+            $branch = "${{ github.ref_name }}"
+            $runId = gh run list --workflow windows-native.yml --branch $branch --json databaseId,status,conclusion --limit 20 --jq "[.[] | select(.status == \"completed\" and .conclusion == \"success\")][0].databaseId"
+          }
+          if (-not $runId) {
+            throw "Unable to resolve successful windows-native run id"
+          }
+          "WINDOWS_NATIVE_RUN_ID=$runId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Download Windows native artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-native-x64
-          path: .
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download $env:WINDOWS_NATIVE_RUN_ID -n windows-native-x64 -D .
 
       - name: Build counter SEA
-        if: ${{ inputs.example == 'counter' || inputs.example == 'all' }}
+        if: ${{ github.event_name == 'workflow_run' || inputs.example == 'counter' || inputs.example == 'all' }}
         run: node ./scripts/build-example-sea.mjs counter win32-x64
 
       - name: Build spin-triangle SEA
-        if: ${{ inputs.example == 'spin-triangle' || inputs.example == 'all' }}
+        if: ${{ github.event_name == 'workflow_run' || inputs.example == 'spin-triangle' || inputs.example == 'all' }}
         run: node ./scripts/build-example-sea.mjs spin-triangle win32-x64
 
       - name: Deploy Qt runtime for counter
-        if: ${{ inputs.example == 'counter' || inputs.example == 'all' }}
+        if: ${{ github.event_name == 'workflow_run' || inputs.example == 'counter' || inputs.example == 'all' }}
         shell: pwsh
         run: |
           $qtBinDir = qmake -query QT_INSTALL_BINS
@@ -139,7 +141,7 @@ jobs:
           windeployqt --release --compiler-runtime --no-translations --dir examples\counter\dist-sea $qtWidgetsDll
 
       - name: Deploy Qt runtime for spin-triangle
-        if: ${{ inputs.example == 'spin-triangle' || inputs.example == 'all' }}
+        if: ${{ github.event_name == 'workflow_run' || inputs.example == 'spin-triangle' || inputs.example == 'all' }}
         shell: pwsh
         run: |
           $qtBinDir = qmake -query QT_INSTALL_BINS
@@ -168,7 +170,7 @@ jobs:
           $sccacheStats | Add-Content artifacts-windows-sea.txt
 
       - name: Upload counter SEA artifact
-        if: ${{ inputs.example == 'counter' || inputs.example == 'all' }}
+        if: ${{ github.event_name == 'workflow_run' || inputs.example == 'counter' || inputs.example == 'all' }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-sea-counter-x64
@@ -178,7 +180,7 @@ jobs:
             examples/counter/dist-sea/**
 
       - name: Upload spin-triangle SEA artifact
-        if: ${{ inputs.example == 'spin-triangle' || inputs.example == 'all' }}
+        if: ${{ github.event_name == 'workflow_run' || inputs.example == 'spin-triangle' || inputs.example == 'all' }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-sea-spin-triangle-x64
