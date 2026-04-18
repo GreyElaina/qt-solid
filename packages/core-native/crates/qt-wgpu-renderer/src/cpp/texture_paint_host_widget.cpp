@@ -541,7 +541,10 @@ void TexturePaintHostWidget::paintEvent(QPaintEvent *event) {
         d->node_id, static_cast<std::uint32_t>(pixel_size.width()),
         static_cast<std::uint32_t>(pixel_size.height()),
         static_cast<std::size_t>(pixel_size.width()) * 4, devicePixelRatioF(), interop);
-    d->update_prepared_frame(*prepared_frame);
+    if (!d->update_prepared_frame(*prepared_frame)) {
+      qWarning() << "failed to update prepared texture widget frame for node"
+                 << d->node_id << "backend tag" << interop.backend_tag;
+    }
   } catch (const rust::Error &error) {
     if (use_gles_context) {
       qt_wgpu_renderer::done_gles_context(interop.gles2.context_object);
