@@ -46,6 +46,8 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       QT_VERSION: 6.10.2
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,11 +66,18 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Cache Rust build outputs
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
+          cache-targets: false
+          env-vars: |
+            RUSTC_WRAPPER
+            SCCACHE_GHA_ENABLED
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -131,13 +140,16 @@ jobs:
       - name: Record packaging metadata
         shell: pwsh
         run: |
+          $sccacheStats = sccache --show-stats
           @(
             "Node: $(node --version)",
             "Bun: $(bun --version)",
             "Rust: $(rustc --version)",
             "Qt: $(qmake -query QT_VERSION)",
-            "SEA Node: $env:QT_SOLID_SEA_NODE_BINARY"
+            "SEA Node: $env:QT_SOLID_SEA_NODE_BINARY",
+            "sccache:"
           ) | Set-Content artifacts-windows-sea.txt
+          $sccacheStats | Add-Content artifacts-windows-sea.txt
 
       - name: Upload counter SEA artifact
         uses: actions/upload-artifact@v4

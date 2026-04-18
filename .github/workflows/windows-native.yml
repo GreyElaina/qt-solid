@@ -44,6 +44,8 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       QT_VERSION: 6.10.2
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,11 +64,18 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Cache Rust build outputs
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             . -> target
+          cache-targets: false
+          env-vars: |
+            RUSTC_WRAPPER
+            SCCACHE_GHA_ENABLED
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -114,12 +123,15 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $sccacheStats = sccache --show-stats
           @(
             "Node: $(node --version)",
             "Bun: $(bun --version)",
             "Rust: $(rustc --version)",
-            "Qt: $(qmake -query QT_VERSION)"
+            "Qt: $(qmake -query QT_VERSION)",
+            "sccache:"
           ) | Set-Content artifacts/build-metadata.txt
+          $sccacheStats | Add-Content artifacts/build-metadata.txt
 
       - name: Upload Windows native artifacts
         uses: actions/upload-artifact@v4
