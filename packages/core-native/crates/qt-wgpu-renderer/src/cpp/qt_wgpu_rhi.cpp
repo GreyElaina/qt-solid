@@ -187,15 +187,17 @@ qt_solid_spike::qt::QtRhiInteropTransport texture_widget_rhi_interop(QRhi *rhi) 
     return interop;
   }
 #endif
+#if QT_CONFIG(metal)
   case QRhi::Metal: {
-  const auto *metal_handles =
-      static_cast<const QRhiMetalNativeHandles *>(native_handles);
-  interop.metal.device_object =
-      reinterpret_cast<std::uint64_t>(metal_handles->dev);
-  interop.metal.command_queue_object =
-      reinterpret_cast<std::uint64_t>(metal_handles->cmdQueue);
+    const auto *metal_handles =
+        static_cast<const QRhiMetalNativeHandles *>(native_handles);
+    interop.metal.device_object =
+        reinterpret_cast<std::uint64_t>(metal_handles->dev);
+    interop.metal.command_queue_object =
+        reinterpret_cast<std::uint64_t>(metal_handles->cmdQueue);
     return interop;
   }
+#endif
   default:
     return interop;
   }

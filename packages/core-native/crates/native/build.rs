@@ -59,9 +59,9 @@ fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
 
     for include_path in qt_build.include_paths() {
         let versioned_root = include_path.join(&qt_version);
-        let qtcore_private = versioned_root.join("QtCore/private/qeventdispatcher_cf_p.h");
-        let qtgui_private = versioned_root.join("QtGui/private/qbackingstorerhisupport_p.h");
-        let qtwidgets_private = versioned_root.join("QtWidgets/private/qwidget_p.h");
+        let qtcore_private = versioned_root.join("QtCore/private");
+        let qtgui_private = versioned_root.join("QtGui/private");
+        let qtwidgets_private = versioned_root.join("QtWidgets/private");
         if qtcore_private.exists() || qtgui_private.exists() || qtwidgets_private.exists() {
             include_dirs.push(versioned_root.clone());
             let qtcore_dir = versioned_root.join("QtCore");
@@ -344,6 +344,7 @@ fn main() {
     {
         build.flag_if_supported("/Zc:__cplusplus");
         build.flag_if_supported("/EHsc");
+        build.flag_if_supported("/permissive-");
     }
 
     add_include_if_exists(&mut build, "include");
