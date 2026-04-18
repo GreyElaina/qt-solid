@@ -100,19 +100,16 @@ jobs:
 
       - name: Resolve Windows native artifact source
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           if ("${{ github.event_name }}" -eq "workflow_run") {
             $runId = "${{ github.event.workflow_run.id }}"
           } elseif ("${{ inputs.native_run_id }}" -ne "") {
             $runId = "${{ inputs.native_run_id }}"
           } else {
-            $branch = "${{ github.ref_name }}"
-            $runId = gh run list --workflow windows-native.yml --branch $branch --json databaseId,status,conclusion --limit 20 --jq "[.[] | select(.status == \"completed\" and .conclusion == \"success\")][0].databaseId"
+            throw "windows-sea requires a successful windows-native run; dispatch windows-native first or provide native_run_id"
           }
           if (-not $runId) {
-            throw "Unable to resolve successful windows-native run id"
+            throw "Unable to resolve windows-native run id"
           }
           "WINDOWS_NATIVE_RUN_ID=$runId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
