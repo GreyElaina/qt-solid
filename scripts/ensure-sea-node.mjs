@@ -146,7 +146,7 @@ export async function ensureSeaNodeBinary(options = {}) {
   return materializeSeaNodeBinary(cacheRoot, version, platform, arch)
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1])) {
   const binary = await ensureSeaNodeBinary()
   console.log(binary)
 }
