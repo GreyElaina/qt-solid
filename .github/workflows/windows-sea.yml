@@ -125,14 +125,14 @@ jobs:
         run: |
           $qtBinDir = qmake -query QT_INSTALL_BINS
           $qtWidgetsDll = Join-Path $qtBinDir "Qt6Widgets.dll"
-          windeployqt --release --no-translations --dir examples\counter\dist-sea-win32-x64 $qtWidgetsDll
+          windeployqt --release --no-translations --dir examples\counter\dist-sea $qtWidgetsDll
 
       - name: Deploy Qt runtime for spin-triangle
         shell: pwsh
         run: |
           $qtBinDir = qmake -query QT_INSTALL_BINS
           $qtWidgetsDll = Join-Path $qtBinDir "Qt6Widgets.dll"
-          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea-win32-x64 $qtWidgetsDll
+          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea $qtWidgetsDll
 
       - name: Debug with tmate
         if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.tmate }}
@@ -161,7 +161,7 @@ jobs:
           if-no-files-found: error
           path: |
             artifacts-windows-sea.txt
-            examples/counter/dist-sea-win32-x64/**
+            examples/counter/dist-sea/**
 
       - name: Upload spin-triangle SEA artifact
         uses: actions/upload-artifact@v4
@@ -170,4 +170,4 @@ jobs:
           if-no-files-found: error
           path: |
             artifacts-windows-sea.txt
-            examples/spin-triangle/dist-sea-win32-x64/**
+            examples/spin-triangle/dist-sea/**
