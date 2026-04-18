@@ -10,6 +10,7 @@
     "generate:bindings": "cargo check -p qt-solid-core-widgets -p qt-solid-example-widgets && cargo run -p native --bin generate_ts_bindings",
     "build:native": "napi build --manifest-path packages/core-native/crates/native/Cargo.toml --platform --esm --output-dir packages/core/native --js generated.js --dts generated.d.ts",
     "build:native:example-widgets": "napi build --manifest-path packages/example-widgets/Cargo.toml --platform --esm --output-dir packages/example-widgets/native --js generated.js --dts generated.d.ts",
+    "build:native:example-widgets:release": "napi build --manifest-path packages/example-widgets/Cargo.toml --platform --esm --output-dir packages/example-widgets/native --js generated.js --dts generated.d.ts --release",
     "build:native:release": "napi build --manifest-path packages/core-native/crates/native/Cargo.toml --platform --esm --output-dir packages/core/native --js generated.js --dts generated.d.ts --release",
     "check:native": "cargo check -p native",
     "example:counter": "npm --workspace=@qt-solid-spike/example-counter run run",

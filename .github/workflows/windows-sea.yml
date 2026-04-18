@@ -1,0 +1,144 @@
+name: windows-sea
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-sea.yml"
+      - ".github/workflows/windows-native.yml"
+      - "bun.lock"
+      - "package.json"
+      - "scripts/**"
+      - "examples/**"
+      - "packages/core/**"
+      - "packages/core-widgets/**"
+      - "packages/example-widgets/**"
+      - "packages/core-native/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-sea.yml"
+      - ".github/workflows/windows-native.yml"
+      - "bun.lock"
+      - "package.json"
+      - "scripts/**"
+      - "examples/**"
+      - "packages/core/**"
+      - "packages/core-widgets/**"
+      - "packages/example-widgets/**"
+      - "packages/core-native/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 150
+    env:
+      CARGO_TERM_COLOR: always
+      QT_VERSION: 6.10.2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25.9.0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install JS dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtshadertools
+          cache: true
+
+      - name: Verify Qt tools
+        shell: pwsh
+        run: |
+          qmake -query QT_VERSION
+          where.exe qmake
+          where.exe qsb
+          where.exe windeployqt
+
+      - name: Generate bindings
+        run: npm run generate:bindings
+
+      - name: Build native addons
+        run: |
+          npm run build:native:release
+          npm run build:native:example-widgets:release
+
+      - name: Resolve SEA Node
+        shell: pwsh
+        run: |
+          $seaNode = node .\scripts\ensure-sea-node.mjs
+          "QT_SOLID_SEA_PREP_NODE_BINARY=$seaNode" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "QT_SOLID_SEA_NODE_BINARY=$seaNode" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build counter SEA
+        run: node ./scripts/build-example-sea.mjs counter win32-x64
+
+      - name: Build spin-triangle SEA
+        run: node ./scripts/build-example-sea.mjs spin-triangle win32-x64
+
+      - name: Deploy Qt runtime for counter
+        shell: pwsh
+        run: |
+          windeployqt --release --no-translations --dir examples\counter\dist-sea-win32-x64 packages\core\native\index.win32-x64-msvc.node
+
+      - name: Deploy Qt runtime for spin-triangle
+        shell: pwsh
+        run: |
+          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea-win32-x64 packages\core\native\index.win32-x64-msvc.node
+          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea-win32-x64 packages\example-widgets\native\index.win32-x64-msvc.node
+
+      - name: Record packaging metadata
+        shell: pwsh
+        run: |
+          @(
+            "Node: $(node --version)",
+            "Bun: $(bun --version)",
+            "Rust: $(rustc --version)",
+            "Qt: $(qmake -query QT_VERSION)",
+            "SEA Node: $env:QT_SOLID_SEA_NODE_BINARY"
+          ) | Set-Content artifacts-windows-sea.txt
+
+      - name: Upload counter SEA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-sea-counter-x64
+          if-no-files-found: error
+          path: |
+            artifacts-windows-sea.txt
+            examples/counter/dist-sea-win32-x64/**
+
+      - name: Upload spin-triangle SEA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-sea-spin-triangle-x64
+          if-no-files-found: error
+          path: |
+            artifacts-windows-sea.txt
+            examples/spin-triangle/dist-sea-win32-x64/**
