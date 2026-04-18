@@ -95,12 +95,6 @@ jobs:
           "QT_SOLID_SEA_NODE_BINARY=$seaNode" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "npm_config_nodedir=$seaNodeDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Debug with tmate
-        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.tmate }}
-        uses: mxschmitt/action-tmate@v3
-        with:
-          limit-access-to-actor: true
-
       - name: Generate bindings
         run: npm run generate:bindings
 
@@ -109,6 +103,12 @@ jobs:
 
       - name: Build example widgets native addon
         run: npm run build:native:example-widgets:release
+
+      - name: Debug with tmate
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
 
       - name: Record artifact manifest
         shell: pwsh
