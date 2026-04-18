@@ -125,14 +125,16 @@ jobs:
         run: |
           $qtBinDir = qmake -query QT_INSTALL_BINS
           $qtWidgetsDll = Join-Path $qtBinDir "Qt6Widgets.dll"
-          windeployqt --release --no-translations --dir examples\counter\dist-sea $qtWidgetsDll
+          Copy-Item $qtWidgetsDll examples\counter\dist-sea\ -Force
+          windeployqt --release --compiler-runtime --no-translations --dir examples\counter\dist-sea $qtWidgetsDll
 
       - name: Deploy Qt runtime for spin-triangle
         shell: pwsh
         run: |
           $qtBinDir = qmake -query QT_INSTALL_BINS
           $qtWidgetsDll = Join-Path $qtBinDir "Qt6Widgets.dll"
-          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea $qtWidgetsDll
+          Copy-Item $qtWidgetsDll examples\spin-triangle\dist-sea\ -Force
+          windeployqt --release --compiler-runtime --no-translations --dir examples\spin-triangle\dist-sea $qtWidgetsDll
 
       - name: Debug with tmate
         if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.tmate }}
