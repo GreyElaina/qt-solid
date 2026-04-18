@@ -118,7 +118,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download $env:WINDOWS_NATIVE_RUN_ID -n windows-native-x64 -D .
+          $artifactDir = Join-Path $PWD "_windows-native-artifact"
+          Remove-Item $artifactDir -Recurse -Force -ErrorAction SilentlyContinue
+          gh run download $env:WINDOWS_NATIVE_RUN_ID -n windows-native-x64 -D $artifactDir
+          New-Item -ItemType Directory -Force -Path packages\core\native | Out-Null
+          New-Item -ItemType Directory -Force -Path packages\example-widgets\native | Out-Null
+          Copy-Item "$artifactDir\packages\core\native\*" packages\core\native\ -Recurse -Force
+          Copy-Item "$artifactDir\packages\example-widgets\native\*" packages\example-widgets\native\ -Recurse -Force
 
       - name: Build counter SEA
         if: ${{ github.event_name == 'workflow_run' || inputs.example == 'counter' || inputs.example == 'all' }}
