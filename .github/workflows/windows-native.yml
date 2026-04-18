@@ -96,7 +96,7 @@ jobs:
           "npm_config_nodedir=$seaNodeDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Debug with tmate
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tmate }}
+        if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.tmate }}
         uses: mxschmitt/action-tmate@v3
         with:
           limit-access-to-actor: true
