@@ -41,7 +41,10 @@ pub fn cached_rgba8_texture_entry_d3d11<'a>(
     ))
 }
 
-pub fn finish_texture_render_d3d12(_context: &QtWgpuContext) -> Result<()> {
+pub fn finish_texture_render_d3d12(
+    _context: &QtWgpuContext,
+    _texture: &wgpu::Texture,
+) -> Result<()> {
     Err(QtWgpuRendererError::new(
         "qt-wgpu-renderer D3D12 sync is only available on Windows",
     ))

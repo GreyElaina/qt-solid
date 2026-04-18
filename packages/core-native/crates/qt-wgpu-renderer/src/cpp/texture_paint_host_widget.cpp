@@ -31,7 +31,8 @@ preferred_backing_store_api() {
       return QPlatformBackingStoreRhiConfig::D3D12;
     }
     if (forced_backend == "d3d11" || forced_backend == "d3d") {
-      return QPlatformBackingStoreRhiConfig::D3D11;
+      qWarning("TexturePaintHostWidget: forcing D3D12 because D3D11 interop path is disabled");
+      return QPlatformBackingStoreRhiConfig::D3D12;
     }
 #endif
 #if QT_CONFIG(metal)

@@ -5,7 +5,9 @@ use std::{
 };
 
 use once_cell::sync::Lazy;
+use wgpu::hal::Instance as _;
 use windows::{
+    core::{Free as _, Interface as _, PCWSTR},
     Win32::{
         Foundation::{GENERIC_ALL, HANDLE, LUID},
         Graphics::{
@@ -13,17 +15,15 @@ use windows::{
             Dxgi::{self, Common::DXGI_FORMAT_R8G8B8A8_UNORM},
         },
     },
-    core::{Free as _, Interface as _, PCWSTR},
 };
-use wgpu::hal::Instance as _;
 
 use crate::{
     context::{QtWgpuContext, QtWgpuContextHandle, QtWgpuTextureEntry, TextureCacheKey},
     error::{QtWgpuRendererError, Result},
     lease::{
-        QT_RHI_BACKEND_D3D11, QT_RHI_BACKEND_D3D12, QT_TEXTURE_FORMAT_RGBA8_UNORM,
         QtNativeTextureLease, QtNativeTextureLeaseInfo, QtRhiD3d11InteropInfo,
-        QtRhiD3d12InteropInfo,
+        QtRhiD3d12InteropInfo, QT_RHI_BACKEND_D3D11, QT_RHI_BACKEND_D3D12,
+        QT_TEXTURE_FORMAT_RGBA8_UNORM,
     },
 };
 
@@ -52,9 +52,10 @@ struct NativeTextureLeaseOwnerD3d11 {
 }
 
 type D3d12ContextHandle = Arc<Mutex<QtWgpuContext>>;
+type D3d12ContextKey = (u64, u64);
 type D3d11ContextKey = (u32, i32);
 
-static D3D12_CONTEXTS: Lazy<Mutex<HashMap<u64, D3d12ContextHandle>>> =
+static D3D12_CONTEXTS: Lazy<Mutex<HashMap<D3d12ContextKey, D3d12ContextHandle>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static D3D11_CONTEXTS: Lazy<Mutex<HashMap<D3d11ContextKey, D3d12ContextHandle>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -62,7 +63,7 @@ static D3D11_CONTEXTS: Lazy<Mutex<HashMap<D3d11ContextKey, D3d12ContextHandle>>>
 pub fn load_or_create_context_d3d12(
     rhi_interop: QtRhiD3d12InteropInfo,
 ) -> Result<QtWgpuContextHandle> {
-    let key = rhi_interop.device_object;
+    let key = (rhi_interop.device_object, rhi_interop.command_queue_object);
     let mut contexts = D3D12_CONTEXTS
         .lock()
         .expect("qt-wgpu D3D12 contexts mutex poisoned");
@@ -136,13 +137,27 @@ pub fn cached_rgba8_texture_entry_d3d11<'a>(
     })
 }
 
-pub fn finish_texture_render_d3d12(context: &QtWgpuContext) -> Result<()> {
+pub fn finish_texture_render_d3d12(context: &QtWgpuContext, texture: &wgpu::Texture) -> Result<()> {
+    let mut encoder = context
+        .device()
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("qt-wgpu-renderer-d3d12-export-transition"),
+        });
+    encoder.transition_resources(
+        std::iter::empty(),
+        std::iter::once(wgpu::TextureTransition {
+            texture,
+            selector: None,
+            state: wgpu::TextureUses::RESOURCE,
+        }),
+    );
+    context.queue().submit(Some(encoder.finish()));
     context
         .device()
         .poll(wgpu::PollType::wait_indefinitely())
         .map_err(|error| {
             QtWgpuRendererError::new(format!(
-                "failed to wait for D3D12 texture rendering: {error}",
+                "failed to finish D3D12 texture export for Qt: {error}",
             ))
         })?;
     Ok(())
@@ -161,6 +176,12 @@ pub fn finish_texture_render_d3d11(context: &QtWgpuContext) -> Result<()> {
 }
 
 fn create_context_d3d12(rhi_interop: QtRhiD3d12InteropInfo) -> Result<QtWgpuContext> {
+    if rhi_interop.device_object == 0 || rhi_interop.command_queue_object == 0 {
+        return Err(QtWgpuRendererError::new(
+            "qt-wgpu-renderer is missing D3D12 device or command queue handles",
+        ));
+    }
+
     let qt_device = retain_d3d12_device(rhi_interop.device_object)?;
     let qt_luid = unsafe { qt_device.GetAdapterLuid() };
 
@@ -174,7 +195,8 @@ fn create_context_d3d12(rhi_interop: QtRhiD3d12InteropInfo) -> Result<QtWgpuCont
     let exposed_adapter = select_matching_adapter(hal_instance, qt_luid)?;
     let required_features = wgpu::Features::empty();
     let required_limits = exposed_adapter.capabilities.limits.clone();
-    let adapter = unsafe { instance.create_adapter_from_hal::<wgpu::hal::api::Dx12>(exposed_adapter) };
+    let adapter =
+        unsafe { instance.create_adapter_from_hal::<wgpu::hal::api::Dx12>(exposed_adapter) };
     let hal_adapter = unsafe { adapter.as_hal::<wgpu::hal::api::Dx12>() }.ok_or_else(|| {
         QtWgpuRendererError::new("failed to expose D3D12 HAL adapter from wgpu adapter")
     })?;
@@ -196,7 +218,7 @@ fn create_context_d3d12(rhi_interop: QtRhiD3d12InteropInfo) -> Result<QtWgpuCont
     let qt_device_ptr = qt_device.as_raw() as u64;
     if opened_device_ptr != qt_device_ptr {
         return Err(QtWgpuRendererError::new(
-            "qt-wgpu-renderer could not reuse Qt D3D12 device; raw queue import is still missing",
+            "qt-wgpu-renderer could not reuse Qt D3D12 device for same-device interop",
         ));
     }
 
@@ -237,7 +259,8 @@ fn create_context_d3d11(rhi_interop: QtRhiD3d11InteropInfo) -> Result<QtWgpuCont
     let exposed_adapter = select_matching_adapter(hal_instance, qt_luid)?;
     let required_features = wgpu::Features::empty();
     let required_limits = exposed_adapter.capabilities.limits.clone();
-    let adapter = unsafe { instance.create_adapter_from_hal::<wgpu::hal::api::Dx12>(exposed_adapter) };
+    let adapter =
+        unsafe { instance.create_adapter_from_hal::<wgpu::hal::api::Dx12>(exposed_adapter) };
     let hal_adapter = unsafe { adapter.as_hal::<wgpu::hal::api::Dx12>() }.ok_or_else(|| {
         QtWgpuRendererError::new("failed to expose D3D12 HAL adapter from wgpu adapter")
     })?;
@@ -330,12 +353,9 @@ fn create_shared_texture_entry_d3d11(
     })?;
 
     let shared_handle = unsafe {
-        hal_device.raw_device().CreateSharedHandle(
-            &resource,
-            None,
-            GENERIC_ALL.0,
-            PCWSTR::null(),
-        )
+        hal_device
+            .raw_device()
+            .CreateSharedHandle(&resource, None, GENERIC_ALL.0, PCWSTR::null())
     }
     .map_err(|error| {
         QtWgpuRendererError::new(format!(
@@ -344,14 +364,13 @@ fn create_shared_texture_entry_d3d11(
     })?;
 
     let d3d11_device = retain_d3d11_device1(rhi_interop.device_object)?;
-    let d3d11_texture = unsafe {
-        d3d11_device.OpenSharedResource1::<Direct3D11::ID3D11Texture2D>(shared_handle)
-    }
-    .map_err(|error| {
-        QtWgpuRendererError::new(format!(
-            "failed to open shared D3D12 texture on Qt D3D11 device: {error}",
-        ))
-    })?;
+    let d3d11_texture =
+        unsafe { d3d11_device.OpenSharedResource1::<Direct3D11::ID3D11Texture2D>(shared_handle) }
+            .map_err(|error| {
+            QtWgpuRendererError::new(format!(
+                "failed to open shared D3D12 texture on Qt D3D11 device: {error}",
+            ))
+        })?;
 
     let hal_texture = unsafe {
         wgpu::hal::dx12::Device::texture_from_raw(
@@ -440,9 +459,8 @@ fn retain_d3d11_device1(device_object: u64) -> Result<Direct3D11::ID3D11Device1>
         ));
     }
     let raw = device_object as *mut core::ffi::c_void;
-    let borrowed = unsafe { Direct3D11::ID3D11Device::from_raw_borrowed(&raw) }.ok_or_else(|| {
-        QtWgpuRendererError::new("Qt passed an invalid D3D11 device handle")
-    })?;
+    let borrowed = unsafe { Direct3D11::ID3D11Device::from_raw_borrowed(&raw) }
+        .ok_or_else(|| QtWgpuRendererError::new("Qt passed an invalid D3D11 device handle"))?;
     borrowed.cast().map_err(|error| {
         QtWgpuRendererError::new(format!(
             "Qt D3D11 device does not support ID3D11Device1 shared-resource import: {error}",
@@ -457,9 +475,8 @@ fn retain_d3d12_device(device_object: u64) -> Result<Direct3D12::ID3D12Device> {
         ));
     }
     let raw = device_object as *mut core::ffi::c_void;
-    let borrowed = unsafe { Direct3D12::ID3D12Device::from_raw_borrowed(&raw) }.ok_or_else(|| {
-        QtWgpuRendererError::new("Qt passed an invalid D3D12 device handle")
-    })?;
+    let borrowed = unsafe { Direct3D12::ID3D12Device::from_raw_borrowed(&raw) }
+        .ok_or_else(|| QtWgpuRendererError::new("Qt passed an invalid D3D12 device handle"))?;
     Ok(borrowed.clone())
 }
 
@@ -499,7 +516,7 @@ fn texture_lease_d3d12(
             width_px,
             height_px,
             object,
-            layout: 0,
+            layout: exported_texture_state_d3d12().0 as i32,
         },
         owner,
     ))
@@ -544,4 +561,9 @@ fn texture_lease_d3d11(
 
 fn luid_eq(lhs: LUID, rhs: LUID) -> bool {
     lhs.LowPart == rhs.LowPart && lhs.HighPart == rhs.HighPart
+}
+
+fn exported_texture_state_d3d12() -> Direct3D12::D3D12_RESOURCE_STATES {
+    Direct3D12::D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        | Direct3D12::D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
 }
