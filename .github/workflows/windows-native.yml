@@ -2,6 +2,12 @@ name: windows-native
 
 on:
   workflow_dispatch:
+    inputs:
+      tmate:
+        description: "Pause job and open tmate session after toolchain setup"
+        required: false
+        default: false
+        type: boolean
   pull_request:
     paths:
       - ".github/workflows/windows-native.yml"
@@ -79,6 +85,12 @@ jobs:
           qmake -query QT_HOST_BINS
           where.exe qmake
           where.exe qsb
+
+      - name: Debug with tmate
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tmate }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
 
       - name: Generate bindings
         run: npm run generate:bindings
