@@ -2,12 +2,10 @@ import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import {
   chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs"
 import { join, resolve } from "node:path"
@@ -51,7 +49,7 @@ export function nodeArchiveInfo(version, platform = process.platform, arch = pro
     }
     return {
       directoryName: `node-v${version}-win-${archLabel}`,
-      fileName: archLabel === "x86" ? "win-x86/node.exe" : `win-${archLabel}/node.exe`,
+      fileName: `node-v${version}-win-${archLabel}.zip`,
       executableRelativePath: join(`node-v${version}-win-${archLabel}`, "node.exe"),
     }
   }
@@ -129,13 +127,7 @@ async function materializeSeaNodeBinary(cacheRoot, version, platform, arch) {
   await downloadFile(`${releaseBase}/${info.fileName}`, downloadPath)
   verifySha256(downloadPath, shasums, info.fileName)
 
-  if (platform === "win32") {
-    const targetDir = join(cacheRoot, info.directoryName)
-    ensureDir(targetDir)
-    copyFileSync(downloadPath, executablePath)
-  } else {
-    extractArchive(downloadPath, cacheRoot)
-  }
+  extractArchive(downloadPath, cacheRoot)
 
   chmodSync(executablePath, 0o755)
   if (!binaryHasSeaFuse(executablePath)) {
