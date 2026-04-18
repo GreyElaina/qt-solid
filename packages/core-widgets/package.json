@@ -1,0 +1,30 @@
+{
+  "name": "@qt-solid/core-widgets",
+  "version": "0.0.0",
+  "main": "src/index.ts",
+  "license": "ISC",
+  "type": "module",
+  "private": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./qt-intrinsics": {
+      "types": "./src/qt-intrinsics.ts",
+      "default": "./src/qt-intrinsics.ts"
+    },
+    "./native": {
+      "types": "./src/native.d.ts",
+      "default": "./src/native.ts"
+    },
+    "./widget-library": {
+      "types": "./src/widget-library.ts",
+      "default": "./src/widget-library.ts"
+    }
+  },
+  "dependencies": {
+    "@qt-solid/core": "workspace:*",
+    "solid-js": "^1.9.12"
+  }
+}

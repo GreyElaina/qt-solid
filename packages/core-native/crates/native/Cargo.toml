@@ -1,0 +1,35 @@
+[package]
+name = "native"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[lib]
+name = "qt_binding"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "generate_ts_bindings"
+path = "src/bin/generate_ts_bindings.rs"
+
+[dependencies]
+cxx = "1.0.194"
+napi = { version = "3.8.4", features = ["napi8"] }
+napi-derive = "3.5.3"
+once_cell = "1.21.4"
+qt-solid-core-widgets = { version = "0.1.0", path = "../../../core-widgets" }
+qt-solid-runtime = { version = "0.1.0", path = "../runtime-core" }
+qt-solid-widget-core = { version = "0.1.0", path = "../widget-core", features = ["napi"] }
+qt-solid-widgets-registry = { version = "0.1.0", path = "../widgets-registry" }
+qt-wgpu-renderer = { version = "0.1.0", path = "../qt-wgpu-renderer" }
+tokio = { version = "1.51.0", features = ["rt-multi-thread", "time"] }
+vello = { version = "0.8.0", path = "../../../../../vello/vello" }
+widget-build = { version = "0.1.0", path = "../widget-build" }
+window-host = { version = "0.1.0", path = "../window-host" }
+
+[build-dependencies]
+cc = "1.2.59"
+cxx-build = "1.0.194"
+napi-build = "2.3.1"
+qt-build-utils = "0.8.1"
+qt-solid-native-build = { version = "0.1.0", path = "../native-build" }

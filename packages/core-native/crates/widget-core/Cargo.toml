@@ -1,0 +1,16 @@
+[package]
+name = "qt-solid-widget-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "qt_solid_widget_core"
+
+[features]
+napi = ["dep:napi"]
+
+[dependencies]
+bytemuck = { version = "1.25.0", features = ["extern_crate_alloc"] }
+linkme = "0.3.35"
+napi = { version = "3.8.4", features = ["napi8"], optional = true }
+vello = { version = "0.8.0", path = "../../../../../vello/vello", default-features = false }

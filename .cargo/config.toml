@@ -1,0 +1,13 @@
+[build]
+target-dir = "target"
+
+[target.aarch64-apple-darwin]
+ar = "llvm-ar"
+
+[target.x86_64-apple-darwin]
+ar = "llvm-ar"
+
+[env]
+AR = "llvm-ar"
+AR_aarch64_apple_darwin = "llvm-ar"
+AR_x86_64_apple_darwin = "llvm-ar"

@@ -1,0 +1,59 @@
+{
+  "name": "@qt-solid/solid",
+  "version": "0.0.0",
+  "main": "src/index.ts",
+  "license": "ISC",
+  "type": "module",
+  "private": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./rolldown": {
+      "types": "./src/build/rolldown.ts",
+      "import": "./src/build/rolldown-runtime.js"
+    },
+    "./vite": {
+      "types": "./src/build/vite.ts",
+      "import": "./src/build/vite-runtime.js"
+    },
+    "./hmr": {
+      "types": "./src/entry/hmr.ts",
+      "import": "./src/entry/hmr.ts"
+    },
+    "./bootstrap": {
+      "types": "./src/entry/bootstrap.ts",
+      "import": "./src/entry/bootstrap.ts"
+    },
+    "./compiler": {
+      "types": "./src/build/compiler.ts",
+      "import": "./src/build/compiler.js"
+    },
+    "./compiler-rt": {
+      "types": "./src/compiler-rt.ts",
+      "import": "./src/compiler-rt.ts"
+    },
+    "./jsx-runtime": {
+      "types": "./src/jsx-runtime.d.ts",
+      "import": "./src/jsx-runtime.ts"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./src/jsx-runtime.d.ts",
+      "import": "./src/jsx-runtime.ts"
+    }
+  },
+  "dependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-typescript": "^7.28.5",
+    "@qt-solid/core": "workspace:*",
+    "@qt-solid/core-widgets": "workspace:*",
+    "babel-preset-solid": "^1.9.12",
+    "solid-js": "^1.9.12",
+    "solid-refresh": "^0.7.8"
+  },
+  "peerDependencies": {
+    "rolldown": "^1.0.0-rc.14",
+    "vite": "^8.0.7"
+  }
+}

@@ -1,0 +1,11 @@
+[package]
+name = "window-host"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
+objc2 = { version = "0.6.4", features = ["relax-sign-encoding"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSEvent", "NSGraphicsContext"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2", "CFBase", "CFRunLoop", "CFString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry"] }

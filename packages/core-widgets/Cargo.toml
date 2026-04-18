@@ -1,0 +1,19 @@
+[package]
+name = "qt-solid-core-widgets"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "qt_solid_core_widgets"
+
+[features]
+qt-runtime = []
+
+[build-dependencies]
+qt = { version = "0.1.0", path = "../core-native/crates/widget-core", package = "qt-solid-widget-core" }
+qt-widget-derive = { version = "0.1.0", path = "../core-native/macros/qt-widget-derive" }
+widget-build = { version = "0.1.0", path = "../core-native/crates/widget-build" }
+
+[dependencies]
+qt = { version = "0.1.0", path = "../core-native/crates/widget-core", package = "qt-solid-widget-core" }
+qt-widget-derive = { version = "0.1.0", path = "../core-native/macros/qt-widget-derive" }

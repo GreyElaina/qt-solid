@@ -1,0 +1,12 @@
+[package]
+name = "qt-solid-native-build"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+prettyplease = "0.2.37"
+proc-macro2 = "1.0.106"
+qt-solid-widget-core = { version = "0.1.0", path = "../widget-core" }
+qt-solid-widgets-registry = { version = "0.1.0", path = "../widgets-registry" }
+quote = "1.0.45"
+syn = { version = "2.0.117", features = ["full", "parsing"] }

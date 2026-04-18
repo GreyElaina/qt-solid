@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "packages/core-native/crates/native",
+    "packages/core-native/crates/runtime-core",
+    "packages/core-native/crates/widget-core",
+    "packages/core-native/crates/window-host",
+    "packages/core-native/crates/widget-build",
+    "packages/core-native/crates/native-build",
+    "packages/core-native/macros/qt-widget-derive",
+    "packages/core-widgets",
+    "packages/example-widgets",
+    "packages/example-widgets/crates/schema",
+    "packages/core-native/crates/widgets-registry", "packages/core-native/crates/qt-wgpu-renderer",
+]
+resolver = "2"

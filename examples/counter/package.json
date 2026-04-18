@@ -1,0 +1,21 @@
+{
+  "name": "@qt-solid-spike/example-counter",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run": "npm run app",
+    "build": "npm --prefix ../.. run build:native && rolldown -c ./rolldown.config.mjs",
+    "sea": "npm --prefix ../.. run build:native && node ../../scripts/build-example-sea.mjs counter",
+    "dev": "node ../../scripts/run-vite-dev-app.mjs ./dev-entry.tsx",
+    "start": "node --enable-source-maps --conditions=browser ./dist/app.js",
+    "app": "npm run build && npm run start",
+    "devtools": "npm run build && node --enable-source-maps --conditions=browser ../../scripts/run-with-devtools.mjs ./dist/app.js"
+  },
+  "dependencies": {
+    "@qt-solid/solid": "workspace:*",
+    "solid-js": "^1.9.12"
+  },
+  "devDependencies": {
+    "rolldown": "1.0.0-rc.14"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "compilerOptions": {
+    // Environment setup & latest features
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "preserve",
+    "jsxImportSource": "@qt-solid/solid",
+    "allowJs": true,
+    "types": ["node"],
+    "paths": {
+      "@qt-solid/core": ["./packages/core/native/types.d.ts"],
+      "@qt-solid/core/native": ["./packages/core/native/index.d.ts"],
+      "@qt-solid/core/widget-library": ["./packages/core/src/widget-library.ts"],
+      "@qt-solid/solid": ["./packages/solid/src/index.ts"],
+      "@qt-solid/solid/rolldown": ["./packages/solid/src/build/rolldown.ts"],
+      "@qt-solid/solid/vite": ["./packages/solid/src/build/vite.ts"],
+      "@qt-solid/solid/hmr": ["./packages/solid/src/entry/hmr.ts"],
+      "@qt-solid/solid/bootstrap": ["./packages/solid/src/entry/bootstrap.ts"],
+      "@qt-solid/solid/compiler": ["./packages/solid/src/build/compiler.ts"],
+      "@qt-solid/solid/compiler-rt": ["./packages/solid/src/compiler-rt.ts"],
+      "@qt-solid/solid/jsx-runtime": ["./packages/solid/src/jsx-runtime.d.ts"],
+      "@qt-solid/solid/jsx-dev-runtime": ["./packages/solid/src/jsx-runtime.d.ts"],
+      "@qt-solid/core-widgets": ["./packages/core-widgets/src/index.ts"],
+      "@qt-solid/core-widgets/qt-intrinsics": ["./packages/core-widgets/src/qt-intrinsics.ts"],
+      "@qt-solid/core-widgets/qt-host": ["./packages/core-widgets/src/qt-host.ts"],
+      "@qt-solid/core-widgets/widget-library": ["./packages/core-widgets/src/widget-library.ts"]
+    },
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  }
+}
