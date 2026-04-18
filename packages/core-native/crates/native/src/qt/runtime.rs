@@ -158,12 +158,6 @@ pub(crate) fn qt_texture_widget_frame_layout(
     crate::runtime::qt_texture_widget_frame_layout(frame)
 }
 
-pub(crate) fn qt_texture_widget_frame_source_kind(
-    frame: &crate::runtime::QtPreparedTextureWidgetFrame,
-) -> u8 {
-    crate::runtime::qt_texture_widget_frame_source_kind(frame)
-}
-
 pub(crate) fn qt_texture_widget_frame_native_texture_info(
     frame: &crate::runtime::QtPreparedTextureWidgetFrame,
 ) -> napi::Result<super::ffi::QtNativeTextureLeaseInfo> {
@@ -186,12 +180,6 @@ pub(crate) fn qt_texture_widget_frame_dirty_rects(
     frame: &crate::runtime::QtPreparedTextureWidgetFrame,
 ) -> napi::Result<Vec<super::ffi::QtRect>> {
     crate::runtime::qt_texture_widget_frame_dirty_rects(frame)
-}
-
-pub(crate) fn qt_texture_widget_frame_bytes<'a>(
-    frame: &'a crate::runtime::QtPreparedTextureWidgetFrame,
-) -> napi::Result<&'a [u8]> {
-    crate::runtime::qt_texture_widget_frame_bytes(frame)
 }
 
 pub(crate) fn emit_listener_event(

@@ -226,7 +226,6 @@ pub(crate) mod bridge {
         fn qt_texture_widget_frame_layout(
             frame: &QtPreparedTextureWidgetFrame,
         ) -> QtPreparedTextureWidgetFrameLayout;
-        fn qt_texture_widget_frame_source_kind(frame: &QtPreparedTextureWidgetFrame) -> u8;
         fn qt_texture_widget_frame_native_texture_info(
             frame: &QtPreparedTextureWidgetFrame,
         ) -> Result<QtNativeTextureLeaseInfo>;
@@ -237,9 +236,6 @@ pub(crate) mod bridge {
         fn qt_texture_widget_frame_dirty_rects(
             frame: &QtPreparedTextureWidgetFrame,
         ) -> Result<Vec<QtRect>>;
-        unsafe fn qt_texture_widget_frame_bytes<'a>(
-            frame: &'a QtPreparedTextureWidgetFrame,
-        ) -> Result<&'a [u8]>;
         fn emit_listener_event(
             node_id: u32,
             kind_tag: u8,
@@ -259,7 +255,7 @@ pub(crate) mod bridge {
             field_index: usize,
         ) -> &'static str;
         fn qt_widget_event_payload_field_kind(kind_tag: u8, index: usize, field_index: usize)
-        -> u8;
+            -> u8;
         fn qt_widget_prop_count(kind_tag: u8) -> usize;
         fn qt_widget_prop_id(kind_tag: u8, index: usize) -> u16;
         fn qt_widget_prop_js_name(kind_tag: u8, index: usize) -> &'static str;
@@ -354,18 +350,18 @@ pub(crate) mod bridge {
 }
 
 pub(crate) use bridge::{
-    QPainter, QtListenerValue, QtMethodValue, QtNativeTextureLeaseInfo,
+    debug_clear_highlight, debug_click_node, debug_close_node, debug_highlight_node,
+    debug_input_insert_text, debug_node_at_point, debug_node_bounds, debug_set_inspect_mode,
+    qt_apply_bool_prop, qt_apply_f64_prop, qt_apply_i32_prop, qt_apply_string_prop,
+    qt_call_host_slot, qt_capture_widget_into, qt_capture_widget_layout,
+    qt_capture_widget_region_into, qt_capture_widget_visible_rects, qt_create_widget,
+    qt_debug_node_state, qt_destroy_widget, qt_host_started, qt_insert_child, qt_qpainter_call,
+    qt_read_bool_prop, qt_read_f64_prop, qt_read_i32_prop, qt_read_string_prop, qt_remove_child,
+    qt_request_repaint, qt_runtime_wait_bridge_kind_tag, qt_runtime_wait_bridge_unix_fd,
+    qt_runtime_wait_bridge_windows_handle, schedule_debug_event, shutdown_qt_host, start_qt_host,
+    trace_now_ns, QPainter, QtListenerValue, QtMethodValue, QtNativeTextureLeaseInfo,
     QtPreparedTextureWidgetFrameLayout, QtRealizedNodeState, QtRect, QtRhiInteropTransport,
-    QtWidgetCaptureLayout, QtWindowCompositorPartMeta, debug_clear_highlight, debug_click_node,
-    debug_close_node, debug_highlight_node, debug_input_insert_text, debug_node_at_point,
-    debug_node_bounds, debug_set_inspect_mode, qt_apply_bool_prop, qt_apply_f64_prop,
-    qt_apply_i32_prop, qt_apply_string_prop, qt_call_host_slot, qt_capture_widget_into,
-    qt_capture_widget_layout, qt_capture_widget_region_into, qt_capture_widget_visible_rects,
-    qt_create_widget, qt_debug_node_state, qt_destroy_widget, qt_host_started, qt_insert_child,
-    qt_qpainter_call, qt_read_bool_prop, qt_read_f64_prop, qt_read_i32_prop, qt_read_string_prop,
-    qt_remove_child, qt_request_repaint, qt_runtime_wait_bridge_kind_tag,
-    qt_runtime_wait_bridge_unix_fd, qt_runtime_wait_bridge_windows_handle, schedule_debug_event,
-    shutdown_qt_host, start_qt_host, trace_now_ns,
+    QtWidgetCaptureLayout, QtWindowCompositorPartMeta,
 };
 
 pub(crate) fn emit_app_event(name: &str) {
@@ -527,10 +523,6 @@ pub(crate) fn qt_texture_widget_frame_layout(
     super::runtime::qt_texture_widget_frame_layout(frame)
 }
 
-pub(crate) fn qt_texture_widget_frame_source_kind(frame: &QtPreparedTextureWidgetFrame) -> u8 {
-    super::runtime::qt_texture_widget_frame_source_kind(frame)
-}
-
 pub(crate) fn qt_texture_widget_frame_native_texture_info(
     frame: &QtPreparedTextureWidgetFrame,
 ) -> napi::Result<QtNativeTextureLeaseInfo> {
@@ -551,12 +543,6 @@ pub(crate) fn qt_texture_widget_frame_dirty_rects(
     frame: &QtPreparedTextureWidgetFrame,
 ) -> napi::Result<Vec<QtRect>> {
     super::runtime::qt_texture_widget_frame_dirty_rects(frame)
-}
-
-pub(crate) fn qt_texture_widget_frame_bytes<'a>(
-    frame: &'a QtPreparedTextureWidgetFrame,
-) -> napi::Result<&'a [u8]> {
-    super::runtime::qt_texture_widget_frame_bytes(frame)
 }
 
 pub(crate) fn emit_listener_event(

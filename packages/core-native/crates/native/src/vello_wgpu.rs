@@ -50,9 +50,10 @@ pub(crate) fn render_vello_scene_to_native_texture(
                 entry.texture_lease().clone(),
             )
         }
-        QtRhiInteropInfo::D3d12(_) => {
+        QtRhiInteropInfo::D3d12(info) => {
             let entry = qt_wgpu_renderer::d3d::cached_rgba8_texture_entry_d3d12(
                 &mut context,
+                info,
                 key,
                 "qt-solid-vello-render-target",
             )

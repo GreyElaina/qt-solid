@@ -2,7 +2,6 @@
 
 #include "native/src/qt/ffi.rs.h"
 
-#include <QtGui/QImage>
 #include <rhi/qrhi.h>
 
 #include <cstddef>
@@ -13,8 +12,6 @@ namespace qt_wgpu_renderer {
 
 std::optional<QRhiTexture::Format> texture_format_for_tag(
     std::uint8_t format_tag);
-
-std::optional<QImage::Format> image_format_for_tag(std::uint8_t format_tag);
 
 std::optional<QRhi::Implementation> texture_backend_for_tag(
     std::uint8_t backend_tag);

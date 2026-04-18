@@ -1,18 +1,17 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex, Weak,
     },
     thread::{self, ThreadId},
     time::Duration,
 };
 
-use ::window_host::HostCapabilities as RawWindowHostCapabilities;
 use napi::{
-    Env, Error, Result, Status,
     bindgen_prelude::{Function, FunctionRef},
     threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue},
+    Env, Error, Result, Status,
 };
 use once_cell::sync::Lazy;
 use qt_solid_runtime::tree::NodeTree;
@@ -22,14 +21,15 @@ use qt_solid_widget_core::{
         self as widget_runtime, QtOpaqueBorrow, QtOpaqueInfo, QtValue, WidgetCapture,
         WidgetCaptureFormat,
     },
-    schema::{QtTypeInfo, QtValueRepr, SpecCreateProp, enum_tag_for_value, merged_props},
+    schema::{enum_tag_for_value, merged_props, QtTypeInfo, QtValueRepr, SpecCreateProp},
     vello::{FrameTime as VelloFrameTime, VelloDirtyRect, VelloFrame},
 };
 use qt_wgpu_renderer::{
-    QtNativeTextureLease, QtRhiD3d11InteropInfo, QtRhiD3d12InteropInfo,
-    QtRhiGles2InteropInfo, QtRhiInteropInfo, QtRhiMetalInteropInfo,
-    QtRhiVulkanInteropInfo,
+    QtNativeTextureLease, QtRhiD3d11InteropInfo, QtRhiD3d12InteropInfo, QtRhiGles2InteropInfo,
+    QtRhiInteropInfo, QtRhiMetalInteropInfo, QtRhiVulkanInteropInfo,
 };
+#[rustfmt::skip]
+use ::window_host::HostCapabilities as RawWindowHostCapabilities;
 
 use crate::qt::ffi::{QtNativeTextureLeaseInfo, QtPreparedTextureWidgetFrameLayout};
 use crate::{
@@ -1963,12 +1963,6 @@ enum WindowCompositorPartUploadKind {
     SubRects,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TextureWidgetFrameSourceKind {
-    CpuBytes,
-    ImportedNativeTexture,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct QtPreparedWindowCompositorPart {
     meta: QtWindowCompositorPartMeta,
@@ -2002,42 +1996,20 @@ impl QtPreparedWindowCompositorFrame {
 
 #[derive(Debug, Clone)]
 pub(crate) struct QtPreparedTextureWidgetFrame {
-    source_kind: TextureWidgetFrameSourceKind,
     upload_kind: WindowCompositorPartUploadKind,
     dirty_rects: Vec<QtRect>,
     next_frame_requested: bool,
-    capture: Option<Arc<WidgetCapture>>,
-    native_texture_lease: Option<Box<QtNativeTextureLease>>,
+    native_texture_lease: Box<QtNativeTextureLease>,
 }
 
 impl QtPreparedTextureWidgetFrame {
     fn layout(&self) -> QtPreparedTextureWidgetFrameLayout {
-        match self.source_kind {
-            TextureWidgetFrameSourceKind::CpuBytes => {
-                let capture = self
-                    .capture
-                    .as_ref()
-                    .expect("cpu texture widget frame must carry capture bytes");
-                QtPreparedTextureWidgetFrameLayout {
-                    format_tag: widget_capture_format_tag(capture.format()),
-                    width_px: capture.width_px(),
-                    height_px: capture.height_px(),
-                    stride: capture.stride(),
-                }
-            }
-            TextureWidgetFrameSourceKind::ImportedNativeTexture => {
-                let texture = self
-                    .native_texture_lease
-                    .as_ref()
-                    .expect("imported texture widget frame must carry native texture lease")
-                    .info();
-                QtPreparedTextureWidgetFrameLayout {
-                    format_tag: texture.format_tag,
-                    width_px: texture.width_px,
-                    height_px: texture.height_px,
-                    stride: 0,
-                }
-            }
+        let texture = self.native_texture_lease.info();
+        QtPreparedTextureWidgetFrameLayout {
+            format_tag: texture.format_tag,
+            width_px: texture.width_px,
+            height_px: texture.height_px,
+            stride: 0,
         }
     }
 }
@@ -2047,16 +2019,6 @@ fn upload_kind_tag(kind: WindowCompositorPartUploadKind) -> u8 {
         WindowCompositorPartUploadKind::None => 0,
         WindowCompositorPartUploadKind::Full => 1,
         WindowCompositorPartUploadKind::SubRects => 2,
-    }
-}
-
-fn texture_widget_source_kind_tag(kind: TextureWidgetFrameSourceKind) -> u8 {
-    const IMPORTED_NATIVE_TEXTURE: TextureWidgetFrameSourceKind =
-        TextureWidgetFrameSourceKind::ImportedNativeTexture;
-    if kind == IMPORTED_NATIVE_TEXTURE {
-        1
-    } else {
-        0
     }
 }
 
@@ -3689,24 +3651,14 @@ pub(crate) fn qt_prepare_texture_widget_frame(
         gpu_interop,
     ) {
         Ok(native_texture_lease) => Ok(Box::new(QtPreparedTextureWidgetFrame {
-            source_kind: TextureWidgetFrameSourceKind::ImportedNativeTexture,
             upload_kind: WindowCompositorPartUploadKind::Full,
             dirty_rects,
             next_frame_requested,
-            capture: None,
-            native_texture_lease: Some(Box::new(native_texture_lease)),
+            native_texture_lease: Box::new(native_texture_lease),
         })),
-        Err(_) => {
-            let capture = Arc::new(capture_qt_widget_exact_with_children(&node, false)?);
-            Ok(Box::new(QtPreparedTextureWidgetFrame {
-                source_kind: TextureWidgetFrameSourceKind::CpuBytes,
-                upload_kind: WindowCompositorPartUploadKind::Full,
-                dirty_rects,
-                next_frame_requested,
-                capture: Some(capture),
-                native_texture_lease: None,
-            }))
-        }
+        Err(error) => Err(qt_error(format!(
+            "failed to prepare imported texture widget frame for node {node_id}: {error}",
+        ))),
     }
 }
 
@@ -3720,18 +3672,12 @@ pub(crate) fn qt_texture_widget_frame_upload_kind(frame: &QtPreparedTextureWidge
     upload_kind_tag(frame.upload_kind)
 }
 
-pub(crate) fn qt_texture_widget_frame_source_kind(frame: &QtPreparedTextureWidgetFrame) -> u8 {
-    texture_widget_source_kind_tag(frame.source_kind)
-}
-
 pub(crate) fn qt_texture_widget_frame_native_texture_info(
     frame: &QtPreparedTextureWidgetFrame,
 ) -> Result<QtNativeTextureLeaseInfo> {
-    frame
-        .native_texture_lease
-        .as_ref()
-        .ok_or_else(|| qt_error("texture widget frame does not carry a native texture"))
-        .map(|lease| qt_native_texture_lease_info_to_ffi(lease.info()))
+    Ok(qt_native_texture_lease_info_to_ffi(
+        frame.native_texture_lease.info(),
+    ))
 }
 
 pub(crate) fn qt_texture_widget_frame_next_frame_requested(
@@ -3744,14 +3690,6 @@ pub(crate) fn qt_texture_widget_frame_dirty_rects(
     frame: &QtPreparedTextureWidgetFrame,
 ) -> Result<Vec<QtRect>> {
     Ok(frame.dirty_rects.clone())
-}
-
-pub(crate) fn qt_texture_widget_frame_bytes(frame: &QtPreparedTextureWidgetFrame) -> Result<&[u8]> {
-    let capture = frame
-        .capture
-        .as_ref()
-        .ok_or_else(|| qt_error("texture widget frame does not carry cpu bytes"))?;
-    Ok(capture.bytes())
 }
 
 pub(crate) fn qt_mark_window_compositor_pixels_dirty(window_id: u32, node_id: u32) {
@@ -5307,15 +5245,15 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::{
-        ExactPropValue, ListenerPayload, PartVisibleRect, PixelRect, PremulPixel, QtListenerValue,
-        RuntimeState, WindowCaptureComposingPart, WindowCaptureGroup, WindowCaptureGrouping,
-        WindowCompositorCache, WindowCompositorDirtyFlags, WindowCompositorDirtyRegion,
         build_prepared_window_compositor_frame, coalesce_pixel_rects_for_budget,
         coalesce_scene_subtree_roots, collect_scene_node_dirty_regions,
         compose_window_capture_group, compose_window_capture_regions, group_window_capture_parts,
         lower_exact_prop_value, read_capture_pixel, resize_reuse_cache_compatible,
         split_window_overlay_dirty_state, vello_dirty_rects_to_local_pixel_rects,
-        write_argb32_premultiplied_pixel,
+        write_argb32_premultiplied_pixel, ExactPropValue, ListenerPayload, PartVisibleRect,
+        PixelRect, PremulPixel, QtListenerValue, RuntimeState, WindowCaptureComposingPart,
+        WindowCaptureGroup, WindowCaptureGrouping, WindowCompositorCache,
+        WindowCompositorDirtyFlags, WindowCompositorDirtyRegion,
     };
     use crate::qt;
     use qt_solid_runtime::tree::NodeTree;
@@ -5696,40 +5634,12 @@ mod tests {
     }
 
     #[test]
-    fn prepared_texture_widget_frame_reports_cpu_bytes_source_kind() {
-        let capture = argb_capture(PremulPixel {
-            red: 12,
-            green: 34,
-            blue: 56,
-            alpha: 255,
-        });
-        let frame = super::QtPreparedTextureWidgetFrame {
-            source_kind: super::TextureWidgetFrameSourceKind::CpuBytes,
-            upload_kind: super::WindowCompositorPartUploadKind::Full,
-            dirty_rects: Vec::new(),
-            next_frame_requested: false,
-            capture: Some(Arc::clone(&capture)),
-            native_texture_lease: None,
-        };
-
-        assert_eq!(super::qt_texture_widget_frame_source_kind(&frame), 0);
-        assert_eq!(
-            super::qt_texture_widget_frame_bytes(&frame)
-                .expect("frame bytes")
-                .as_ptr(),
-            capture.bytes().as_ptr()
-        );
-    }
-
-    #[test]
     fn prepared_texture_widget_frame_reports_imported_native_texture_source_kind() {
         let frame = super::QtPreparedTextureWidgetFrame {
-            source_kind: super::TextureWidgetFrameSourceKind::ImportedNativeTexture,
             upload_kind: super::WindowCompositorPartUploadKind::None,
             dirty_rects: Vec::new(),
             next_frame_requested: true,
-            capture: None,
-            native_texture_lease: Some(Box::new(qt_wgpu_renderer::QtNativeTextureLease::new(
+            native_texture_lease: Box::new(qt_wgpu_renderer::QtNativeTextureLease::new(
                 qt_wgpu_renderer::QtNativeTextureLeaseInfo {
                     backend_tag: 4,
                     format_tag: 2,
@@ -5739,11 +5649,10 @@ mod tests {
                     layout: 7,
                 },
                 Arc::new(()),
-            ))),
+            )),
         };
 
         let layout = super::qt_texture_widget_frame_layout(&frame);
-        assert_eq!(super::qt_texture_widget_frame_source_kind(&frame), 1);
         assert_eq!(layout.width_px, 320);
         assert_eq!(layout.height_px, 180);
         assert_eq!(layout.stride, 0);
@@ -5753,7 +5662,6 @@ mod tests {
                 .object,
             0x1234
         );
-        assert!(super::qt_texture_widget_frame_bytes(&frame).is_err());
     }
 
     #[test]

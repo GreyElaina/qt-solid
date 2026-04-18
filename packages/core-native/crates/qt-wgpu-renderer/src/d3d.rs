@@ -39,15 +39,17 @@ impl Drop for SharedNtHandle {
     }
 }
 
-#[derive(Debug, Clone)]
-struct NativeTextureLeaseOwner<T> {
-    texture: T,
-}
-
 #[derive(Debug)]
 struct NativeTextureLeaseOwnerD3d11 {
     texture: wgpu::Texture,
     d3d11_texture: Direct3D11::ID3D11Texture2D,
+    shared_handle: SharedNtHandle,
+}
+
+#[derive(Debug)]
+struct NativeTextureLeaseOwnerD3d12 {
+    texture: wgpu::Texture,
+    d3d12_texture: Direct3D12::ID3D12Resource,
     shared_handle: SharedNtHandle,
 }
 
@@ -94,35 +96,12 @@ pub fn load_or_create_context_d3d11(
 
 pub fn cached_rgba8_texture_entry_d3d12<'a>(
     context: &'a mut QtWgpuContext,
+    rhi_interop: QtRhiD3d12InteropInfo,
     key: TextureCacheKey,
     label: &'static str,
 ) -> Result<&'a QtWgpuTextureEntry> {
     context.texture_entry_with(key, |device, key| {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: key.width_px,
-                height: key.height_px,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: key.format(),
-            usage: key.usage(),
-            view_formats: &[],
-        });
-        let owner = Arc::new(NativeTextureLeaseOwner { texture });
-        let lease = texture_lease_d3d12(
-            Arc::clone(&owner),
-            key.format(),
-            key.width_px,
-            key.height_px,
-        )?;
-        let view = owner
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-        Ok(QtWgpuTextureEntry::new(lease, view))
+        create_shared_texture_entry_d3d12(device, rhi_interop, key, label)
     })
 }
 
@@ -213,14 +192,6 @@ fn create_context_d3d12(rhi_interop: QtRhiD3d12InteropInfo) -> Result<QtWgpuCont
             "failed to create wgpu D3D12 device from Qt adapter: {error}",
         ))
     })?;
-
-    let opened_device_ptr = open_device.device.raw_device().as_raw() as u64;
-    let qt_device_ptr = qt_device.as_raw() as u64;
-    if opened_device_ptr != qt_device_ptr {
-        return Err(QtWgpuRendererError::new(
-            "qt-wgpu-renderer could not reuse Qt D3D12 device for same-device interop",
-        ));
-    }
 
     let (device, queue) = unsafe {
         adapter.create_device_from_hal::<wgpu::hal::api::Dx12>(
@@ -423,6 +394,132 @@ fn create_shared_texture_entry_d3d11(
     Ok(QtWgpuTextureEntry::new(lease, view))
 }
 
+fn create_shared_texture_entry_d3d12(
+    device: &wgpu::Device,
+    rhi_interop: QtRhiD3d12InteropInfo,
+    key: TextureCacheKey,
+    label: &'static str,
+) -> Result<QtWgpuTextureEntry> {
+    let hal_device = unsafe { device.as_hal::<wgpu::hal::api::Dx12>() }.ok_or_else(|| {
+        QtWgpuRendererError::new("failed to expose D3D12 HAL device from wgpu device")
+    })?;
+
+    let raw_desc = Direct3D12::D3D12_RESOURCE_DESC {
+        Dimension: Direct3D12::D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+        Alignment: 0,
+        Width: u64::from(key.width_px),
+        Height: key.height_px,
+        DepthOrArraySize: 1,
+        MipLevels: 1,
+        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        SampleDesc: Dxgi::Common::DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Layout: Direct3D12::D3D12_TEXTURE_LAYOUT_UNKNOWN,
+        Flags: Direct3D12::D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
+            | Direct3D12::D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS,
+    };
+    let heap_props = Direct3D12::D3D12_HEAP_PROPERTIES {
+        Type: Direct3D12::D3D12_HEAP_TYPE_DEFAULT,
+        CPUPageProperty: Direct3D12::D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+        MemoryPoolPreference: Direct3D12::D3D12_MEMORY_POOL_UNKNOWN,
+        CreationNodeMask: 0,
+        VisibleNodeMask: 0,
+    };
+    let mut resource = None;
+    unsafe {
+        hal_device.raw_device().CreateCommittedResource(
+            &heap_props,
+            Direct3D12::D3D12_HEAP_FLAG_SHARED,
+            &raw_desc,
+            Direct3D12::D3D12_RESOURCE_STATE_COMMON,
+            None,
+            &mut resource,
+        )
+    }
+    .map_err(|error| {
+        QtWgpuRendererError::new(format!(
+            "failed to create shared D3D12 texture for Qt D3D12 interop: {error}",
+        ))
+    })?;
+    let resource = resource.ok_or_else(|| {
+        QtWgpuRendererError::new("D3D12 shared texture creation returned a null resource")
+    })?;
+
+    let shared_handle = unsafe {
+        hal_device
+            .raw_device()
+            .CreateSharedHandle(&resource, None, GENERIC_ALL.0, PCWSTR::null())
+    }
+    .map_err(|error| {
+        QtWgpuRendererError::new(format!(
+            "failed to create shared handle for Qt D3D12 interop texture: {error}",
+        ))
+    })?;
+
+    let qt_device = retain_d3d12_device(rhi_interop.device_object)?;
+    let mut qt_resource = None;
+    unsafe { qt_device.OpenSharedHandle(shared_handle, &mut qt_resource) }.map_err(|error| {
+        QtWgpuRendererError::new(format!(
+            "failed to open shared D3D12 texture on Qt D3D12 device: {error}",
+        ))
+    })?;
+    let qt_resource = qt_resource.ok_or_else(|| {
+        QtWgpuRendererError::new("Qt D3D12 device returned a null shared texture resource")
+    })?;
+
+    let hal_texture = unsafe {
+        wgpu::hal::dx12::Device::texture_from_raw(
+            resource,
+            key.format(),
+            wgpu::TextureDimension::D2,
+            wgpu::Extent3d {
+                width: key.width_px,
+                height: key.height_px,
+                depth_or_array_layers: 1,
+            },
+            1,
+            1,
+        )
+    };
+    let texture = unsafe {
+        device.create_texture_from_hal::<wgpu::hal::api::Dx12>(
+            hal_texture,
+            &wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: key.width_px,
+                    height: key.height_px,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: key.format(),
+                usage: key.usage(),
+                view_formats: &[],
+            },
+        )
+    };
+
+    let owner = Arc::new(NativeTextureLeaseOwnerD3d12 {
+        texture,
+        d3d12_texture: qt_resource,
+        shared_handle: SharedNtHandle(shared_handle.0 as u64),
+    });
+    let lease = texture_lease_d3d12(
+        Arc::clone(&owner),
+        key.format(),
+        key.width_px,
+        key.height_px,
+    )?;
+    let view = owner
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    Ok(QtWgpuTextureEntry::new(lease, view))
+}
+
 fn select_matching_adapter(
     hal_instance: &wgpu::hal::dx12::Instance,
     qt_luid: LUID,
@@ -481,18 +578,13 @@ fn retain_d3d12_device(device_object: u64) -> Result<Direct3D12::ID3D12Device> {
 }
 
 fn texture_lease_d3d12(
-    owner: Arc<NativeTextureLeaseOwner<wgpu::Texture>>,
+    owner: Arc<NativeTextureLeaseOwnerD3d12>,
     format: wgpu::TextureFormat,
     width_px: u32,
     height_px: u32,
 ) -> Result<QtNativeTextureLease> {
-    let raw_texture = unsafe {
-        owner
-            .texture
-            .as_hal::<wgpu::hal::api::Dx12>()
-            .ok_or_else(|| QtWgpuRendererError::new("failed to expose wgpu D3D12 texture"))?
-    };
-    let object = unsafe { raw_texture.raw_resource() }.as_raw() as u64;
+    std::hint::black_box(owner.shared_handle.0);
+    let object = owner.d3d12_texture.as_raw() as u64;
     if object == 0 {
         return Err(QtWgpuRendererError::new(
             "qt-wgpu-renderer produced a null D3D12 resource handle",

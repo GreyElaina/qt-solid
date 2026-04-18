@@ -3,7 +3,6 @@
 
 #include "native/src/qt/ffi.rs.h"
 
-#include <QtGui/QImage>
 #include <QtGui/QPaintEvent>
 #include <QtGui/QResizeEvent>
 #include <QtCore/QByteArray>
@@ -96,9 +95,6 @@ public:
 
   void init();
   void ensure_rhi();
-  SourceTextureState *ensure_source_texture(const QSize &pixel_size,
-                                            std::uint8_t format_tag,
-                                            bool *recreated);
   SourceTextureState *ensure_imported_source_texture(
       const qt_solid_spike::qt::QtNativeTextureLeaseInfo &texture_info,
       bool *recreated);
@@ -215,45 +211,6 @@ void TexturePaintHostWidgetPrivate::release_resources() {
 }
 
 TexturePaintHostWidgetPrivate::SourceTextureState *
-TexturePaintHostWidgetPrivate::ensure_source_texture(const QSize &pixel_size,
-                                                     std::uint8_t format_tag,
-                                                     bool *recreated) {
-  const auto texture_format = qt_wgpu_renderer::texture_format_for_tag(format_tag);
-  if (!texture_format.has_value() || rhi == nullptr) {
-    return nullptr;
-  }
-
-  const bool needs_recreate = source_texture.texture == nullptr ||
-                              source_texture.pixel_size != pixel_size ||
-                              source_texture.format_tag != format_tag ||
-                              source_texture.source_kind !=
-                                  TextureWidgetSourceKind::CpuBytes;
-  if (recreated != nullptr) {
-    *recreated = needs_recreate;
-  }
-  if (!needs_recreate) {
-    return &source_texture;
-  }
-
-  auto *next_texture = rhi->newTexture(*texture_format, pixel_size);
-  if (!next_texture->create()) {
-    qWarning("TexturePaintHostWidget: failed to create source texture");
-    delete next_texture;
-    return source_texture.texture != nullptr ? &source_texture : nullptr;
-  }
-
-  queue_source_texture_for_delete(source_texture.texture);
-  source_texture.texture = next_texture;
-  source_texture.pixel_size = pixel_size;
-  source_texture.format_tag = format_tag;
-  source_texture.source_kind = TextureWidgetSourceKind::CpuBytes;
-  source_texture.native_object = 0;
-  source_texture.native_layout = 0;
-  texture_invalid = false;
-  return &source_texture;
-}
-
-TexturePaintHostWidgetPrivate::SourceTextureState *
 TexturePaintHostWidgetPrivate::ensure_imported_source_texture(
     const qt_solid_spike::qt::QtNativeTextureLeaseInfo &texture_info,
     bool *recreated) {
@@ -320,100 +277,13 @@ bool TexturePaintHostWidgetPrivate::update_prepared_frame(
     return false;
   }
 
-  const auto layout =
-      qt_solid_spike::qt::qt_texture_widget_frame_layout(prepared_frame);
-  const auto source_kind = static_cast<TextureWidgetSourceKind>(
-      qt_solid_spike::qt::qt_texture_widget_frame_source_kind(prepared_frame));
-
-  const QSize capture_size(static_cast<int>(layout.width_px),
-                           static_cast<int>(layout.height_px));
   bool recreated = false;
-  SourceTextureState *source_state = nullptr;
-  switch (source_kind) {
-  case TextureWidgetSourceKind::CpuBytes: {
-    const auto image_format = qt_wgpu_renderer::image_format_for_tag(layout.format_tag);
-    if (!image_format.has_value()) {
-      qWarning() << "texture widget frame uses unsupported format tag"
-                 << layout.format_tag;
-      return false;
-    }
-
-    const auto bytes =
-        qt_solid_spike::qt::qt_texture_widget_frame_bytes(prepared_frame);
-    source_state = ensure_source_texture(capture_size, layout.format_tag, &recreated);
-    if (source_state == nullptr || source_state->texture == nullptr) {
-      return false;
-    }
-
-    QImage source_image(reinterpret_cast<const uchar *>(bytes.data()),
-                        capture_size.width(), capture_size.height(),
-                        static_cast<qsizetype>(layout.stride), *image_format);
-
-    QRhiResourceUpdateBatch *resource_updates = rhi->nextResourceUpdateBatch();
-    if (resource_updates == nullptr) {
-      qWarning("TexturePaintHostWidget: failed to allocate resource update batch");
-      return false;
-    }
-
-    const std::uint8_t upload_kind =
-        qt_solid_spike::qt::qt_texture_widget_frame_upload_kind(prepared_frame);
-    bool has_updates = false;
-    if (recreated || upload_kind == 1) {
-      resource_updates->uploadTexture(source_state->texture, source_image);
-      has_updates = true;
-    } else if (upload_kind == 2) {
-      auto dirty_rects =
-          qt_solid_spike::qt::qt_texture_widget_frame_dirty_rects(prepared_frame);
-      std::vector<QRhiTextureUploadEntry> upload_entries;
-      upload_entries.reserve(static_cast<std::size_t>(dirty_rects.size()));
-      for (const auto &dirty_rect : dirty_rects) {
-        const QRect rect(dirty_rect.x, dirty_rect.y, dirty_rect.width,
-                         dirty_rect.height);
-        if (!rect.isValid() || !source_image.rect().contains(rect)) {
-          continue;
-        }
-
-        QRhiTextureSubresourceUploadDescription subresource(
-            source_image.copy(rect));
-        subresource.setDestinationTopLeft(rect.topLeft());
-        upload_entries.emplace_back(0, 0, subresource);
-      }
-      if (!upload_entries.empty()) {
-        QRhiTextureUploadDescription upload_description;
-        upload_description.setEntries(upload_entries.begin(),
-                                      upload_entries.end());
-        resource_updates->uploadTexture(source_state->texture,
-                                        upload_description);
-        has_updates = true;
-      }
-    }
-
-    if (has_updates) {
-      QRhiCommandBuffer *command_buffer = nullptr;
-      if (rhi->beginOffscreenFrame(&command_buffer) != QRhi::FrameOpSuccess) {
-        resource_updates->release();
-        return false;
-      }
-      command_buffer->resourceUpdate(resource_updates);
-      rhi->endOffscreenFrame();
-    } else {
-      resource_updates->release();
-    }
-    break;
-  }
-  case TextureWidgetSourceKind::ImportedNativeTexture: {
-    const auto native_texture_info =
-        qt_solid_spike::qt::qt_texture_widget_frame_native_texture_info(
-            prepared_frame);
-    source_state = ensure_imported_source_texture(native_texture_info, &recreated);
-    if (source_state == nullptr || source_state->texture == nullptr) {
-      return false;
-    }
-    break;
-  }
-  default:
-    qWarning() << "texture widget frame uses unsupported source kind"
-               << static_cast<int>(source_kind);
+  const auto native_texture_info =
+      qt_solid_spike::qt::qt_texture_widget_frame_native_texture_info(
+          prepared_frame);
+  auto *source_state =
+      ensure_imported_source_texture(native_texture_info, &recreated);
+  if (source_state == nullptr || source_state->texture == nullptr) {
     return false;
   }
 

@@ -22,6 +22,7 @@ pub fn load_or_create_context_d3d12(
 
 pub fn cached_rgba8_texture_entry_d3d12<'a>(
     _context: &'a mut QtWgpuContext,
+    _rhi_interop: QtRhiD3d12InteropInfo,
     _key: TextureCacheKey,
     _label: &'static str,
 ) -> Result<&'a QtWgpuTextureEntry> {

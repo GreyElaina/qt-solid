@@ -68,17 +68,6 @@ std::optional<QRhiTexture::Format> texture_format_for_tag(
   }
 }
 
-std::optional<QImage::Format> image_format_for_tag(std::uint8_t format_tag) {
-  switch (format_tag) {
-  case 1:
-    return QImage::Format_ARGB32_Premultiplied;
-  case 2:
-    return QImage::Format_RGBA8888_Premultiplied;
-  default:
-    return std::nullopt;
-  }
-}
-
 std::optional<QRhi::Implementation> texture_backend_for_tag(
     std::uint8_t backend_tag) {
   switch (backend_tag) {
