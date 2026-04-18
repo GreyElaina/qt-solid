@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const seaSentinel = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"
@@ -59,6 +59,18 @@ export function nodeArchiveInfo(version, platform = process.platform, arch = pro
 
 function binaryHasSeaFuse(executablePath) {
   return existsSync(executablePath) && readFileSync(executablePath).includes(Buffer.from(seaSentinel))
+}
+
+function nodeHeadersRoot(cacheRoot, version, platform, executablePath) {
+  if (platform === "win32") {
+    return join(cacheRoot, `node-v${version}`)
+  }
+  return dirname(dirname(executablePath))
+}
+
+function nodeHeadersReady(cacheRoot, version, platform, executablePath) {
+  const headersRoot = nodeHeadersRoot(cacheRoot, version, platform, executablePath)
+  return existsSync(join(headersRoot, "include", "node", "uv.h"))
 }
 
 async function downloadFile(url, targetPath) {
@@ -115,7 +127,7 @@ async function materializeSeaNodeBinary(cacheRoot, version, platform, arch) {
   const info = nodeArchiveInfo(version, platform, arch)
   const releaseBase = `https://nodejs.org/dist/v${version}`
   const executablePath = join(cacheRoot, info.executableRelativePath)
-  if (binaryHasSeaFuse(executablePath)) {
+  if (binaryHasSeaFuse(executablePath) && nodeHeadersReady(cacheRoot, version, platform, executablePath)) {
     return executablePath
   }
 
@@ -129,9 +141,20 @@ async function materializeSeaNodeBinary(cacheRoot, version, platform, arch) {
 
   extractArchive(downloadPath, cacheRoot)
 
+  if (platform === "win32") {
+    const headersFileName = `node-v${version}-headers.tar.gz`
+    const headersDownloadPath = join(cacheRoot, headersFileName)
+    await downloadFile(`${releaseBase}/${headersFileName}`, headersDownloadPath)
+    verifySha256(headersDownloadPath, shasums, headersFileName)
+    extractArchive(headersDownloadPath, cacheRoot)
+  }
+
   chmodSync(executablePath, 0o755)
   if (!binaryHasSeaFuse(executablePath)) {
     throw new Error(`Official Node ${version} binary does not expose ${seaSentinel}`)
+  }
+  if (!nodeHeadersReady(cacheRoot, version, platform, executablePath)) {
+    throw new Error(`Official Node ${version} headers are missing include/node/uv.h`)
   }
   return executablePath
 }
@@ -146,7 +169,23 @@ export async function ensureSeaNodeBinary(options = {}) {
   return materializeSeaNodeBinary(cacheRoot, version, platform, arch)
 }
 
+export async function ensureSeaNodeHeadersDir(options = {}) {
+  const version = options.version ?? process.version.slice(1)
+  const platform = options.platform ?? process.platform
+  const arch = options.arch ?? process.arch
+  const cacheRoot = resolve(
+    options.cacheRoot ?? join(projectRoot, ".cache", "qt-solid-sea-node", `v${version}`, `${platform}-${arch}`),
+  )
+  const executablePath = await materializeSeaNodeBinary(cacheRoot, version, platform, arch)
+  return nodeHeadersRoot(cacheRoot, version, platform, executablePath)
+}
+
 if (process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1])) {
-  const binary = await ensureSeaNodeBinary()
-  console.log(binary)
+  if (process.argv[2] === "headers-dir") {
+    const headersDir = await ensureSeaNodeHeadersDir()
+    console.log(headersDir)
+  } else {
+    const binary = await ensureSeaNodeBinary()
+    console.log(binary)
+  }
 }
