@@ -123,13 +123,16 @@ jobs:
       - name: Deploy Qt runtime for counter
         shell: pwsh
         run: |
-          windeployqt --release --no-translations --dir examples\counter\dist-sea-win32-x64 packages\core\native\index.win32-x64-msvc.node
+          $qtBinDir = qmake -query QT_INSTALL_BINS
+          $qtWidgetsDll = Join-Path $qtBinDir "Qt6Widgets.dll"
+          windeployqt --release --no-translations --dir examples\counter\dist-sea-win32-x64 $qtWidgetsDll
 
       - name: Deploy Qt runtime for spin-triangle
         shell: pwsh
         run: |
-          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea-win32-x64 packages\core\native\index.win32-x64-msvc.node
-          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea-win32-x64 packages\example-widgets\native\index.win32-x64-msvc.node
+          $qtBinDir = qmake -query QT_INSTALL_BINS
+          $qtWidgetsDll = Join-Path $qtBinDir "Qt6Widgets.dll"
+          windeployqt --release --no-translations --dir examples\spin-triangle\dist-sea-win32-x64 $qtWidgetsDll
 
       - name: Debug with tmate
         if: ${{ failure() && github.event_name == 'workflow_dispatch' && inputs.tmate }}
