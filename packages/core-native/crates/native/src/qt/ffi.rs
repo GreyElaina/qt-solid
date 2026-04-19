@@ -1,4 +1,4 @@
-use crate::runtime::{QtPreparedTextureWidgetFrame, QtPreparedWindowCompositorFrame};
+use crate::window_compositor::QtPreparedWindowCompositorFrame;
 
 #[cxx::bridge(namespace = "qt_solid_spike::qt")]
 pub(crate) mod bridge {
@@ -91,70 +91,26 @@ pub(crate) mod bridge {
         scale_factor: f64,
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum QtCompositorSurfaceKind {
+        AppKitNsView = 1,
+        Win32Hwnd = 2,
+        XcbWindow = 3,
+        WaylandSurface = 4,
+    }
+
     #[derive(Clone, Copy, Debug)]
-    struct QtPreparedTextureWidgetFrameLayout {
-        format_tag: u8,
+    struct QtCompositorTarget {
+        surface_kind: QtCompositorSurfaceKind,
+        primary_handle: u64,
+        secondary_handle: u64,
         width_px: u32,
         height_px: u32,
-        stride: usize,
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    struct QtNativeTextureLeaseInfo {
-        backend_tag: u8,
-        format_tag: u8,
-        width_px: u32,
-        height_px: u32,
-        object: u64,
-        layout: i32,
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    struct QtRhiMetalInteropTransport {
-        device_object: u64,
-        command_queue_object: u64,
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    struct QtRhiVulkanInteropTransport {
-        physical_device_object: u64,
-        device_object: u64,
-        queue_family_index: u32,
-        queue_index: u32,
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    struct QtRhiD3d11InteropTransport {
-        device_object: u64,
-        context_object: u64,
-        adapter_luid_low: u32,
-        adapter_luid_high: i32,
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    struct QtRhiD3d12InteropTransport {
-        device_object: u64,
-        command_queue_object: u64,
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    struct QtRhiGles2InteropTransport {
-        context_object: u64,
-    }
-
-    #[derive(Clone, Copy, Debug)]
-    struct QtRhiInteropTransport {
-        backend_tag: u8,
-        metal: QtRhiMetalInteropTransport,
-        vulkan: QtRhiVulkanInteropTransport,
-        d3d11: QtRhiD3d11InteropTransport,
-        d3d12: QtRhiD3d12InteropTransport,
-        gles2: QtRhiGles2InteropTransport,
+        scale_factor: f64,
     }
 
     extern "Rust" {
         type QtPreparedWindowCompositorFrame;
-        type QtPreparedTextureWidgetFrame;
 
         fn emit_app_event(name: &str);
         fn emit_debug_event(name: &str);
@@ -191,6 +147,15 @@ pub(crate) mod bridge {
             dirty_flags: u8,
             interactive_resize: bool,
         ) -> Result<Box<QtPreparedWindowCompositorFrame>>;
+        fn qt_present_window_with_wgpu(
+            node_id: u32,
+            target: QtCompositorTarget,
+            stride: usize,
+            scale_factor: f64,
+            interactive_resize: bool,
+            base_dirty_rects: Vec<QtRect>,
+            bytes: &[u8],
+        ) -> Result<bool>;
         fn qt_window_compositor_frame_part_count(frame: &QtPreparedWindowCompositorFrame) -> usize;
         fn qt_window_compositor_frame_part_meta(
             frame: &QtPreparedWindowCompositorFrame,
@@ -215,27 +180,6 @@ pub(crate) mod bridge {
             frame: &'a QtPreparedWindowCompositorFrame,
             index: usize,
         ) -> Result<&'a [u8]>;
-        fn qt_prepare_texture_widget_frame(
-            node_id: u32,
-            width_px: u32,
-            height_px: u32,
-            stride: usize,
-            scale_factor: f64,
-            rhi_interop: QtRhiInteropTransport,
-        ) -> Result<Box<QtPreparedTextureWidgetFrame>>;
-        fn qt_texture_widget_frame_layout(
-            frame: &QtPreparedTextureWidgetFrame,
-        ) -> QtPreparedTextureWidgetFrameLayout;
-        fn qt_texture_widget_frame_native_texture_info(
-            frame: &QtPreparedTextureWidgetFrame,
-        ) -> Result<QtNativeTextureLeaseInfo>;
-        fn qt_texture_widget_frame_upload_kind(frame: &QtPreparedTextureWidgetFrame) -> u8;
-        fn qt_texture_widget_frame_next_frame_requested(
-            frame: &QtPreparedTextureWidgetFrame,
-        ) -> bool;
-        fn qt_texture_widget_frame_dirty_rects(
-            frame: &QtPreparedTextureWidgetFrame,
-        ) -> Result<Vec<QtRect>>;
         fn emit_listener_event(
             node_id: u32,
             kind_tag: u8,
@@ -255,7 +199,7 @@ pub(crate) mod bridge {
             field_index: usize,
         ) -> &'static str;
         fn qt_widget_event_payload_field_kind(kind_tag: u8, index: usize, field_index: usize)
-            -> u8;
+        -> u8;
         fn qt_widget_prop_count(kind_tag: u8) -> usize;
         fn qt_widget_prop_id(kind_tag: u8, index: usize) -> u16;
         fn qt_widget_prop_js_name(kind_tag: u8, index: usize) -> &'static str;
@@ -350,6 +294,8 @@ pub(crate) mod bridge {
 }
 
 pub(crate) use bridge::{
+    QPainter, QtCompositorSurfaceKind, QtCompositorTarget, QtListenerValue, QtMethodValue,
+    QtRealizedNodeState, QtRect, QtWidgetCaptureLayout, QtWindowCompositorPartMeta,
     debug_clear_highlight, debug_click_node, debug_close_node, debug_highlight_node,
     debug_input_insert_text, debug_node_at_point, debug_node_bounds, debug_set_inspect_mode,
     qt_apply_bool_prop, qt_apply_f64_prop, qt_apply_i32_prop, qt_apply_string_prop,
@@ -359,9 +305,7 @@ pub(crate) use bridge::{
     qt_read_bool_prop, qt_read_f64_prop, qt_read_i32_prop, qt_read_string_prop, qt_remove_child,
     qt_request_repaint, qt_runtime_wait_bridge_kind_tag, qt_runtime_wait_bridge_unix_fd,
     qt_runtime_wait_bridge_windows_handle, schedule_debug_event, shutdown_qt_host, start_qt_host,
-    trace_now_ns, QPainter, QtListenerValue, QtMethodValue, QtNativeTextureLeaseInfo,
-    QtPreparedTextureWidgetFrameLayout, QtRealizedNodeState, QtRect, QtRhiInteropTransport,
-    QtWidgetCaptureLayout, QtWindowCompositorPartMeta,
+    trace_now_ns,
 };
 
 pub(crate) fn emit_app_event(name: &str) {
@@ -377,23 +321,23 @@ pub(crate) fn emit_inspect_event(node_id: u32) {
 }
 
 pub(crate) fn qt_mark_window_compositor_scene_dirty(window_id: u32, node_id: u32) {
-    super::runtime::qt_mark_window_compositor_scene_dirty(window_id, node_id);
+    crate::window_compositor::qt_mark_window_compositor_scene_dirty(window_id, node_id);
 }
 
 pub(crate) fn qt_mark_window_compositor_geometry_dirty(window_id: u32, node_id: u32) {
-    super::runtime::qt_mark_window_compositor_geometry_dirty(window_id, node_id);
+    crate::window_compositor::qt_mark_window_compositor_geometry_dirty(window_id, node_id);
 }
 
 pub(crate) fn qt_mark_window_compositor_pixels_dirty(window_id: u32, node_id: u32) {
-    super::runtime::qt_mark_window_compositor_pixels_dirty(window_id, node_id);
+    crate::window_compositor::qt_mark_window_compositor_pixels_dirty(window_id, node_id);
 }
 
 pub(crate) fn qt_window_frame_tick(node_id: u32) -> napi::Result<()> {
-    super::runtime::qt_window_frame_tick(node_id)
+    crate::window_compositor::qt_window_frame_tick(node_id)
 }
 
 pub(crate) fn qt_window_take_next_frame_request(node_id: u32) -> napi::Result<bool> {
-    super::runtime::qt_window_take_next_frame_request(node_id)
+    crate::window_compositor::qt_window_take_next_frame_request(node_id)
 }
 
 pub(crate) fn qt_mark_window_compositor_pixels_dirty_region(
@@ -404,7 +348,7 @@ pub(crate) fn qt_mark_window_compositor_pixels_dirty_region(
     width: i32,
     height: i32,
 ) {
-    super::runtime::qt_mark_window_compositor_pixels_dirty_region(
+    crate::window_compositor::qt_mark_window_compositor_pixels_dirty_region(
         window_id, node_id, x, y, width, height,
     );
 }
@@ -419,7 +363,7 @@ pub(crate) fn qt_paint_window_compositor(
     interactive_resize: bool,
     bytes: &mut [u8],
 ) -> napi::Result<bool> {
-    super::runtime::qt_paint_window_compositor(
+    crate::window_compositor::qt_paint_window_compositor(
         node_id,
         width_px,
         height_px,
@@ -440,7 +384,7 @@ pub(crate) fn qt_prepare_window_compositor_frame(
     dirty_flags: u8,
     interactive_resize: bool,
 ) -> napi::Result<Box<QtPreparedWindowCompositorFrame>> {
-    super::runtime::qt_prepare_window_compositor_frame(
+    crate::window_compositor::qt_prepare_window_compositor_frame(
         node_id,
         width_px,
         height_px,
@@ -452,97 +396,71 @@ pub(crate) fn qt_prepare_window_compositor_frame(
     .ok_or_else(|| napi::Error::from_reason("window compositor layout mismatch"))
 }
 
+pub(crate) fn qt_present_window_with_wgpu(
+    node_id: u32,
+    target: QtCompositorTarget,
+    stride: usize,
+    scale_factor: f64,
+    interactive_resize: bool,
+    base_dirty_rects: Vec<QtRect>,
+    bytes: &[u8],
+) -> napi::Result<bool> {
+    crate::window_compositor::qt_present_window_with_wgpu(
+        node_id,
+        target,
+        stride,
+        scale_factor,
+        interactive_resize,
+        base_dirty_rects,
+        bytes,
+    )
+}
+
 pub(crate) fn qt_window_compositor_frame_part_count(
     frame: &QtPreparedWindowCompositorFrame,
 ) -> usize {
-    super::runtime::qt_window_compositor_frame_part_count(frame)
+    crate::window_compositor::qt_window_compositor_frame_part_count(frame)
 }
 
 pub(crate) fn qt_window_compositor_frame_part_meta(
     frame: &QtPreparedWindowCompositorFrame,
     index: usize,
 ) -> napi::Result<QtWindowCompositorPartMeta> {
-    super::runtime::qt_window_compositor_frame_part_meta(frame, index)
+    crate::window_compositor::qt_window_compositor_frame_part_meta(frame, index)
 }
 
 pub(crate) fn qt_window_compositor_frame_part_visible_rects(
     frame: &QtPreparedWindowCompositorFrame,
     index: usize,
 ) -> napi::Result<Vec<QtRect>> {
-    super::runtime::qt_window_compositor_frame_part_visible_rects(frame, index)
+    crate::window_compositor::qt_window_compositor_frame_part_visible_rects(frame, index)
 }
 
 pub(crate) fn qt_window_compositor_frame_part_upload_kind(
     frame: &QtPreparedWindowCompositorFrame,
     index: usize,
 ) -> napi::Result<u8> {
-    super::runtime::qt_window_compositor_frame_part_upload_kind(frame, index)
+    crate::window_compositor::qt_window_compositor_frame_part_upload_kind(frame, index)
 }
 
 pub(crate) fn qt_window_compositor_frame_base_upload_kind(
     frame: &QtPreparedWindowCompositorFrame,
 ) -> u8 {
-    super::runtime::qt_window_compositor_frame_base_upload_kind(frame)
+    crate::window_compositor::qt_window_compositor_frame_base_upload_kind(frame)
 }
 
 pub(crate) fn qt_window_compositor_frame_part_dirty_rects(
     frame: &QtPreparedWindowCompositorFrame,
     index: usize,
 ) -> napi::Result<Vec<QtRect>> {
-    super::runtime::qt_window_compositor_frame_part_dirty_rects(frame, index)
+    crate::window_compositor::qt_window_compositor_frame_part_dirty_rects(frame, index)
 }
 
 pub(crate) fn qt_window_compositor_frame_part_bytes<'a>(
     frame: &'a QtPreparedWindowCompositorFrame,
     index: usize,
 ) -> napi::Result<&'a [u8]> {
-    super::runtime::qt_window_compositor_frame_part_bytes(frame, index)
-}
-
-pub(crate) fn qt_prepare_texture_widget_frame(
-    node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    rhi_interop: QtRhiInteropTransport,
-) -> napi::Result<Box<QtPreparedTextureWidgetFrame>> {
-    super::runtime::qt_prepare_texture_widget_frame(
-        node_id,
-        width_px,
-        height_px,
-        stride,
-        scale_factor,
-        rhi_interop,
-    )
-}
-
-pub(crate) fn qt_texture_widget_frame_layout(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> QtPreparedTextureWidgetFrameLayout {
-    super::runtime::qt_texture_widget_frame_layout(frame)
-}
-
-pub(crate) fn qt_texture_widget_frame_native_texture_info(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> napi::Result<QtNativeTextureLeaseInfo> {
-    super::runtime::qt_texture_widget_frame_native_texture_info(frame)
-}
-
-pub(crate) fn qt_texture_widget_frame_upload_kind(frame: &QtPreparedTextureWidgetFrame) -> u8 {
-    super::runtime::qt_texture_widget_frame_upload_kind(frame)
-}
-
-pub(crate) fn qt_texture_widget_frame_next_frame_requested(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> bool {
-    super::runtime::qt_texture_widget_frame_next_frame_requested(frame)
-}
-
-pub(crate) fn qt_texture_widget_frame_dirty_rects(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> napi::Result<Vec<QtRect>> {
-    super::runtime::qt_texture_widget_frame_dirty_rects(frame)
+    crate::window_compositor::qt_window_compositor_frame_part_bytes(frame, index)
 }
 
 pub(crate) fn emit_listener_event(

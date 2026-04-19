@@ -1,72 +1,64 @@
 #include "texture_paint_host_widget.h"
-#include "qt_wgpu_rhi.h"
+#include "qt_wgpu_platform.h"
 
 #include "native/src/qt/ffi.rs.h"
 
 #include <QtGui/QPaintEvent>
 #include <QtGui/QResizeEvent>
-#include <QtCore/QByteArray>
-#include <QtCore/QTimer>
 #include <QtWidgets/QWidget>
 #include <private/qguiapplication_p.h>
 #include <private/qwidget_p.h>
 #include <qpa/qplatformintegration.h>
-#include <rhi/qrhi.h>
 
 namespace {
 
-enum class TextureWidgetSourceKind : std::uint8_t {
-  CpuBytes = 0,
-  ImportedNativeTexture = 1,
-};
-
-std::optional<QPlatformBackingStoreRhiConfig::Api>
-preferred_backing_store_api() {
-  const QByteArray forced_backend =
-      qgetenv("QT_WIDGETS_RHI_BACKEND").trimmed().toLower();
-  if (!forced_backend.isEmpty()) {
-#if defined(Q_OS_WIN)
-    if (forced_backend == "d3d12") {
-      return QPlatformBackingStoreRhiConfig::D3D12;
-    }
-    if (forced_backend == "d3d11" || forced_backend == "d3d") {
-      qWarning("TexturePaintHostWidget: forcing D3D12 because D3D11 interop path is disabled");
-      return QPlatformBackingStoreRhiConfig::D3D12;
-    }
-#endif
-#if QT_CONFIG(metal)
-    if (forced_backend == "metal") {
-      return QPlatformBackingStoreRhiConfig::Metal;
-    }
-#endif
-#if QT_CONFIG(vulkan)
-    if (forced_backend == "vulkan") {
-      return QPlatformBackingStoreRhiConfig::Vulkan;
-    }
-#endif
-#if QT_CONFIG(opengl)
-    if (forced_backend == "opengl" || forced_backend == "gl") {
-      return QPlatformBackingStoreRhiConfig::OpenGL;
-    }
-#endif
-    if (forced_backend == "null") {
-      return QPlatformBackingStoreRhiConfig::Null;
-    }
-    qWarning("TexturePaintHostWidget: unsupported QT_WIDGETS_RHI_BACKEND override '%s'",
-             forced_backend.constData());
+std::optional<std::uint32_t> host_window_node_id(const QWidget *widget) {
+  if (widget == nullptr) {
+    return std::nullopt;
   }
 
-#if defined(Q_OS_WIN)
-  return QPlatformBackingStoreRhiConfig::D3D12;
-#elif QT_CONFIG(metal)
-  return QPlatformBackingStoreRhiConfig::Metal;
-#elif QT_CONFIG(vulkan)
-  return QPlatformBackingStoreRhiConfig::Vulkan;
-#elif QT_CONFIG(opengl)
-  return QPlatformBackingStoreRhiConfig::OpenGL;
-#else
-  return std::nullopt;
-#endif
+  auto *top_level = widget->window();
+  if (top_level == nullptr) {
+    return std::nullopt;
+  }
+  auto *window = top_level->windowHandle();
+  if (window == nullptr) {
+    return std::nullopt;
+  }
+
+  const QVariant node_id = window->property("_qt_solid_root_node_id");
+  if (!node_id.isValid()) {
+    return std::nullopt;
+  }
+  return node_id.toUInt();
+}
+
+void mark_unified_compositor_widget_dirty(const QWidget *widget,
+                                          std::uint32_t node_id,
+                                          const QRect &local_rect) {
+  if (!qt_wgpu_renderer::unified_compositor_active() || widget == nullptr ||
+      node_id == 0 || local_rect.isEmpty()) {
+    return;
+  }
+
+  const auto window_id = host_window_node_id(widget);
+  if (!window_id.has_value()) {
+    return;
+  }
+
+  auto *top_level = widget->window();
+  if (top_level == nullptr) {
+    return;
+  }
+
+  const QPoint top_left_in_window = widget->mapTo(top_level, local_rect.topLeft());
+  qt_solid_spike::qt::qt_mark_window_compositor_pixels_dirty_region(
+      *window_id, node_id, top_left_in_window.x(), top_left_in_window.y(),
+      local_rect.width(), local_rect.height());
+}
+
+QPlatformBackingStoreRhiConfig::Api preferred_backing_store_api() {
+  return QPlatformBackingStoreRhiConfig::Null;
 }
 
 } // namespace
@@ -75,15 +67,6 @@ class TexturePaintHostWidgetPrivate : public QWidgetPrivate {
   Q_DECLARE_PUBLIC(TexturePaintHostWidget)
 
 public:
-  struct SourceTextureState {
-    QRhiTexture *texture = nullptr;
-    QSize pixel_size;
-    std::uint8_t format_tag = 0;
-    TextureWidgetSourceKind source_kind = TextureWidgetSourceKind::CpuBytes;
-    std::uint64_t native_object = 0;
-    int native_layout = 0;
-  };
-
   explicit TexturePaintHostWidgetPrivate(
       decltype(QObjectPrivateVersion) version = QObjectPrivateVersion)
       : QWidgetPrivate(version) {}
@@ -94,37 +77,17 @@ public:
   void endCompose() override;
 
   void init();
-  void ensure_rhi();
-  SourceTextureState *ensure_imported_source_texture(
-      const qt_solid_spike::qt::QtNativeTextureLeaseInfo &texture_info,
-      bool *recreated);
-  void queue_source_texture_for_delete(QRhiTexture *texture);
-  void release_resources();
-  void release_source_resources();
-  bool update_prepared_frame(
-      const qt_solid_spike::qt::QtPreparedTextureWidgetFrame &prepared_frame);
 
   std::uint32_t node_id = 0;
   std::uint8_t kind_tag = 0;
   bool no_size = false;
-  bool texture_invalid = false;
-  bool next_frame_update_queued = false;
   int preferred_width = -1;
   int preferred_height = -1;
-  QRhi *rhi = nullptr;
   QPlatformBackingStoreRhiConfig config;
-  SourceTextureState source_texture;
-  mutable QVector<QRhiResource *> pending_deletes;
 };
 
 QWidgetPrivate::TextureData TexturePaintHostWidgetPrivate::texture() const {
-  qDeleteAll(pending_deletes);
-  pending_deletes.clear();
-
-  TextureData data;
-  if (!texture_invalid)
-    data.textureLeft = source_texture.texture;
-  return data;
+  return TextureData{};
 }
 
 QPlatformTextureList::Flags TexturePaintHostWidgetPrivate::textureListFlags() {
@@ -148,160 +111,8 @@ void TexturePaintHostWidgetPrivate::init() {
     setRenderToTexture();
   }
 
-  const auto api = preferred_backing_store_api();
-  config.setEnabled(api.has_value());
-  if (api.has_value()) {
-    config.setApi(*api);
-  } else {
-    qWarning("TexturePaintHostWidget: no supported RHI backend is available");
-  }
-}
-
-void TexturePaintHostWidgetPrivate::ensure_rhi() {
-  Q_Q(TexturePaintHostWidget);
-  QRhi *current_rhi = QWidgetPrivate::rhi();
-  if (current_rhi &&
-      current_rhi->backend() !=
-          QBackingStoreRhiSupport::apiToRhiBackend(config.api())) {
-    qWarning(
-        "TexturePaintHostWidget: top-level window uses incompatible graphics API "
-        "'%s'",
-        current_rhi->backendName());
-    return;
-  }
-
-  if (current_rhi && current_rhi != rhi) {
-    if (rhi != nullptr) {
-      rhi->removeCleanupCallback(q);
-      release_resources();
-    }
-
-    current_rhi->addCleanupCallback(q, [q, this](QRhi *registered_rhi) {
-      if (!QWidgetPrivate::get(q)->data.in_destructor && rhi == registered_rhi) {
-        release_resources();
-        rhi = nullptr;
-      }
-    });
-  }
-
-  rhi = current_rhi;
-}
-
-void TexturePaintHostWidgetPrivate::release_source_resources() {
-  delete source_texture.texture;
-  source_texture.texture = nullptr;
-  source_texture.pixel_size = {};
-  source_texture.format_tag = 0;
-  source_texture.source_kind = TextureWidgetSourceKind::CpuBytes;
-  source_texture.native_object = 0;
-  source_texture.native_layout = 0;
-}
-
-void TexturePaintHostWidgetPrivate::queue_source_texture_for_delete(
-    QRhiTexture *texture) {
-  if (texture != nullptr)
-    pending_deletes.append(texture);
-}
-
-void TexturePaintHostWidgetPrivate::release_resources() {
-  release_source_resources();
-  qDeleteAll(pending_deletes);
-  pending_deletes.clear();
-  texture_invalid = true;
-}
-
-TexturePaintHostWidgetPrivate::SourceTextureState *
-TexturePaintHostWidgetPrivate::ensure_imported_source_texture(
-    const qt_solid_spike::qt::QtNativeTextureLeaseInfo &texture_info,
-    bool *recreated) {
-  if (rhi == nullptr) {
-    return nullptr;
-  }
-
-  const auto texture_format =
-      qt_wgpu_renderer::texture_format_for_tag(texture_info.format_tag);
-  const auto backend =
-      qt_wgpu_renderer::texture_backend_for_tag(texture_info.backend_tag);
-  if (!texture_format.has_value() || !backend.has_value()) {
-    return nullptr;
-  }
-  if (rhi->backend() != *backend) {
-    qWarning() << "texture widget frame backend does not match current QRhi"
-               << texture_info.backend_tag << "!=" << int(rhi->backend());
-    return nullptr;
-  }
-
-  const QSize pixel_size(static_cast<int>(texture_info.width_px),
-                         static_cast<int>(texture_info.height_px));
-  const bool needs_recreate =
-      source_texture.texture == nullptr ||
-      source_texture.source_kind != TextureWidgetSourceKind::ImportedNativeTexture ||
-      source_texture.pixel_size != pixel_size ||
-      source_texture.format_tag != texture_info.format_tag ||
-      source_texture.native_object != texture_info.object;
-  if (recreated != nullptr) {
-    *recreated = needs_recreate;
-  }
-
-  if (!needs_recreate) {
-    if (source_texture.native_layout != texture_info.layout) {
-      source_texture.texture->setNativeLayout(texture_info.layout);
-      source_texture.native_layout = texture_info.layout;
-    }
-    return &source_texture;
-  }
-
-  auto *next_texture = rhi->newTexture(*texture_format, pixel_size);
-  if (!next_texture->createFrom(
-          QRhiTexture::NativeTexture{texture_info.object, texture_info.layout})) {
-    qWarning("TexturePaintHostWidget: failed to import native source texture");
-    delete next_texture;
-    return source_texture.texture != nullptr ? &source_texture : nullptr;
-  }
-
-  queue_source_texture_for_delete(source_texture.texture);
-  source_texture.texture = next_texture;
-  source_texture.pixel_size = pixel_size;
-  source_texture.format_tag = texture_info.format_tag;
-  source_texture.source_kind = TextureWidgetSourceKind::ImportedNativeTexture;
-  source_texture.native_object = texture_info.object;
-  source_texture.native_layout = texture_info.layout;
-  texture_invalid = false;
-  return &source_texture;
-}
-
-bool TexturePaintHostWidgetPrivate::update_prepared_frame(
-    const qt_solid_spike::qt::QtPreparedTextureWidgetFrame &prepared_frame) {
-  Q_Q(TexturePaintHostWidget);
-  if (rhi == nullptr || node_id == 0) {
-    return false;
-  }
-
-  bool recreated = false;
-  const auto native_texture_info =
-      qt_solid_spike::qt::qt_texture_widget_frame_native_texture_info(
-          prepared_frame);
-  auto *source_state =
-      ensure_imported_source_texture(native_texture_info, &recreated);
-  if (source_state == nullptr || source_state->texture == nullptr) {
-    return false;
-  }
-
-  texture_invalid = false;
-
-  if (qt_solid_spike::qt::qt_texture_widget_frame_next_frame_requested(
-          prepared_frame)) {
-    if (!next_frame_update_queued) {
-      next_frame_update_queued = true;
-      QTimer::singleShot(0, q, [q, this]() {
-        next_frame_update_queued = false;
-        q->update();
-        qt_solid_spike::qt::window_host_request_wake();
-      });
-    }
-  }
-
-  return true;
+  config.setEnabled(true);
+  config.setApi(preferred_backing_store_api());
 }
 
 TexturePaintHostWidget::TexturePaintHostWidget(QWidget *parent)
@@ -315,19 +126,14 @@ TexturePaintHostWidget::TexturePaintHostWidget(TexturePaintHostWidgetPrivate &dd
   d->init();
 }
 
-TexturePaintHostWidget::~TexturePaintHostWidget() {
-  Q_D(TexturePaintHostWidget);
-  if (d->rhi != nullptr) {
-    d->rhi->removeCleanupCallback(this);
-  }
-  d->release_resources();
-}
+TexturePaintHostWidget::~TexturePaintHostWidget() = default;
 
 void TexturePaintHostWidget::bind_rust_widget(std::uint32_t node_id,
                                               std::uint8_t kind_tag) {
   Q_D(TexturePaintHostWidget);
   d->node_id = node_id;
   d->kind_tag = kind_tag;
+  mark_unified_compositor_widget_dirty(this, d->node_id, rect());
   update();
 }
 
@@ -355,28 +161,17 @@ QSize TexturePaintHostWidget::minimumSizeHint() const {
 }
 
 void TexturePaintHostWidget::mark_frame_dirty() {
+  Q_D(TexturePaintHostWidget);
+  mark_unified_compositor_widget_dirty(this, d->node_id, rect());
   update();
   qt_solid_spike::qt::window_host_request_wake();
 }
 
 bool TexturePaintHostWidget::event(QEvent *event) {
   Q_D(TexturePaintHostWidget);
-  switch (event->type()) {
-  case QEvent::WindowAboutToChangeInternal:
-    d->texture_invalid = true;
-    if (d->rhi != nullptr) {
-      d->rhi->removeCleanupCallback(this);
-      d->release_resources();
-      d->rhi = nullptr;
-    }
-    break;
-  case QEvent::Show:
-    if (isVisible()) {
-      update();
-    }
-    break;
-  default:
-    break;
+  if (event->type() == QEvent::Show && isVisible()) {
+    mark_unified_compositor_widget_dirty(this, d->node_id, rect());
+    update();
   }
 
   return QWidget::event(event);
@@ -390,42 +185,9 @@ void TexturePaintHostWidget::paintEvent(QPaintEvent *event) {
     return;
   }
 
-  d->ensure_rhi();
-  if (d->rhi == nullptr) {
+  if (!qt_wgpu_renderer::unified_compositor_active()) {
+    qWarning("TexturePaintHostWidget requires unified compositor backingstore");
     return;
-  }
-
-  const QSize pixel_size =
-      (size() * devicePixelRatioF()).expandedTo(QSize(1, 1));
-  const auto interop = qt_wgpu_renderer::texture_widget_rhi_interop(d->rhi);
-  const bool use_gles_context =
-      interop.backend_tag ==
-      qt_wgpu_renderer::texture_backend_tag(QRhi::OpenGLES2);
-  if (use_gles_context &&
-      !qt_wgpu_renderer::prepare_gles_context(interop.gles2.context_object)) {
-    qWarning() << "failed to make OpenGL/GLES interop context current for node"
-               << d->node_id;
-    return;
-  }
-  try {
-    auto prepared_frame = qt_solid_spike::qt::qt_prepare_texture_widget_frame(
-        d->node_id, static_cast<std::uint32_t>(pixel_size.width()),
-        static_cast<std::uint32_t>(pixel_size.height()),
-        static_cast<std::size_t>(pixel_size.width()) * 4, devicePixelRatioF(), interop);
-    if (!d->update_prepared_frame(*prepared_frame)) {
-      qWarning() << "failed to update prepared texture widget frame for node"
-                 << d->node_id << "backend tag" << interop.backend_tag;
-    }
-  } catch (const rust::Error &error) {
-    if (use_gles_context) {
-      qt_wgpu_renderer::done_gles_context(interop.gles2.context_object);
-    }
-    qWarning() << "failed to prepare texture widget frame for node" << d->node_id
-               << ":" << error.what();
-    return;
-  }
-  if (use_gles_context) {
-    qt_wgpu_renderer::done_gles_context(interop.gles2.context_object);
   }
 }
 
@@ -437,6 +199,7 @@ void TexturePaintHostWidget::resizeEvent(QResizeEvent *event) {
   }
 
   d->no_size = false;
+  mark_unified_compositor_widget_dirty(this, d->node_id, rect());
   update();
 }
 

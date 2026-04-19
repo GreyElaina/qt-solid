@@ -1601,6 +1601,9 @@ public:
       return;
     }
 
+    qt_wgpu_renderer::register_static_platform_plugins();
+    qt_wgpu_renderer::configure_unified_compositor_platform();
+
     argv_storage_ = "qt-solid-spike";
     argv_[0] = argv_storage_.data();
     argv_[1] = nullptr;
@@ -1613,6 +1616,7 @@ public:
 
       app_ = std::make_unique<QApplication>(argc_, argv_);
       app_->setApplicationName(QStringLiteral("qt-solid-spike"));
+      qt_wgpu_renderer::sync_unified_compositor_active_state();
       QObject::connect(app_.get(), &QGuiApplication::applicationStateChanged,
                        app_.get(), [](Qt::ApplicationState state) {
                          if (state == Qt::ApplicationActive) {

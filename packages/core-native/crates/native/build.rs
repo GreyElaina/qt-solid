@@ -55,7 +55,9 @@ fn resolve_node_include_dir() -> Option<PathBuf> {
         exec_dir.join("include/node"),
         exec_dir.parent()?.join("include/node"),
     ];
-    candidates.into_iter().find(|include_dir| include_dir.exists())
+    candidates
+        .into_iter()
+        .find(|include_dir| include_dir.exists())
 }
 
 fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
@@ -102,6 +104,21 @@ fn find_qt_gui_rhi_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
 
     include_dirs.sort();
     include_dirs.dedup();
+    include_dirs
+}
+
+fn find_local_qt_source_include_dirs() -> Vec<PathBuf> {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let candidate = manifest_dir.join("../../../../../qt-source/qtbase/src");
+    let mut include_dirs = Vec::new();
+
+    for relative in ["gui/kernel", "corelib/plugin"] {
+        let path = candidate.join(relative);
+        if path.exists() {
+            include_dirs.push(path);
+        }
+    }
+
     include_dirs
 }
 
@@ -331,6 +348,7 @@ fn main() {
     let qt_include_dirs = qt_build.include_paths();
     let qt_private_include_dirs = find_qt_private_include_dirs(&qt_build);
     let qt_gui_rhi_include_dirs = find_qt_gui_rhi_include_dirs(&qt_build);
+    let qt_source_include_dirs = find_local_qt_source_include_dirs();
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         assert_supported_macos_qt_version(&qt_build);
@@ -372,6 +390,10 @@ fn main() {
     }
 
     for include_dir in qt_gui_rhi_include_dirs {
+        add_include_if_exists(&mut build, include_dir);
+    }
+
+    for include_dir in qt_source_include_dirs {
         add_include_if_exists(&mut build, include_dir);
     }
 

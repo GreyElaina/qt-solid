@@ -3,6 +3,7 @@
 #include "qt/macos_event_buffer_bridge.h"
 #include "qt_cocoa_dispatcher_private_shim.h"
 #endif
+#include "qt_wgpu_platform.h"
 #include "native/src/qt/ffi.rs.h"
 #include "rust_widget_binding_host.h"
 #include "qt_widget_host_includes.inc"

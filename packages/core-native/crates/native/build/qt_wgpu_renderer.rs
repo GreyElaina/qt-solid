@@ -10,13 +10,13 @@ pub(crate) fn spec() -> QtWgpuRendererBuildSpec {
     QtWgpuRendererBuildSpec {
         rerun_if_changed: &[
             "../qt-wgpu-renderer/include/texture_paint_host_widget.h",
-            "../qt-wgpu-renderer/include/qt_wgpu_rhi.h",
-            "../qt-wgpu-renderer/src/cpp/qt_wgpu_rhi.cpp",
+            "../qt-wgpu-renderer/include/qt_wgpu_platform.h",
+            "../qt-wgpu-renderer/src/cpp/qt_wgpu_platform.cpp",
             "../qt-wgpu-renderer/src/cpp/texture_paint_host_widget.cpp",
         ],
         include_dirs: &["../qt-wgpu-renderer/include"],
         cpp_sources: &[
-            "../qt-wgpu-renderer/src/cpp/qt_wgpu_rhi.cpp",
+            "../qt-wgpu-renderer/src/cpp/qt_wgpu_platform.cpp",
             "../qt-wgpu-renderer/src/cpp/texture_paint_host_widget.cpp",
         ],
     }

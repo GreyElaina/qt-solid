@@ -1,47 +1,38 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
     },
     thread::{self, ThreadId},
-    time::Duration,
 };
 
 use napi::{
+    Env, Error, Result, Status,
     bindgen_prelude::{Function, FunctionRef},
     threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue},
-    Env, Error, Result, Status,
 };
 use once_cell::sync::Lazy;
 use qt_solid_runtime::tree::NodeTree;
 use qt_solid_widget_core::{
     decl::{NodeClass, WidgetTypeId},
-    runtime::{
-        self as widget_runtime, QtOpaqueBorrow, QtOpaqueInfo, QtValue, WidgetCapture,
-        WidgetCaptureFormat,
-    },
-    schema::{enum_tag_for_value, merged_props, QtTypeInfo, QtValueRepr, SpecCreateProp},
-    vello::{FrameTime as VelloFrameTime, VelloDirtyRect, VelloFrame},
-};
-use qt_wgpu_renderer::{
-    QtNativeTextureLease, QtRhiD3d11InteropInfo, QtRhiD3d12InteropInfo, QtRhiGles2InteropInfo,
-    QtRhiInteropInfo, QtRhiMetalInteropInfo, QtRhiVulkanInteropInfo,
+    runtime::{self as widget_runtime, QtOpaqueBorrow, QtOpaqueInfo, QtValue, WidgetCapture},
+    schema::{QtTypeInfo, QtValueRepr, SpecCreateProp, enum_tag_for_value, merged_props},
 };
 #[rustfmt::skip]
 use ::window_host::HostCapabilities as RawWindowHostCapabilities;
 
-use crate::qt::ffi::{QtNativeTextureLeaseInfo, QtPreparedTextureWidgetFrameLayout};
 use crate::{
     api::{
-        AlignItems, FlexDirection, JustifyContent, QtCapturedWidgetComposingPart,
-        QtDebugNodeBounds, QtDebugNodeSnapshot, QtDebugSnapshot, QtHostEvent, QtInitialProp,
-        QtListenerValue, QtNode, QtWindowCaptureFrame, QtWindowCaptureGrouping, QtWindowFrameState,
-        QtWindowHostCapabilities, QtWindowHostInfo,
+        AlignItems, FlexDirection, JustifyContent, QtDebugNodeBounds, QtDebugNodeSnapshot,
+        QtDebugSnapshot, QtHostEvent, QtInitialProp, QtListenerValue, QtNode, QtWindowCaptureFrame,
+        QtWindowFrameState, QtWindowHostCapabilities, QtWindowHostInfo,
     },
     bootstrap::widget_registry,
-    qt::{self, QtRealizedNodeState, QtRect, QtWindowCompositorPartMeta},
-    trace, vello_wgpu, window_host,
+    qt::{self, QtRealizedNodeState},
+    trace,
+    window_compositor::{self, CompositorState},
+    window_host,
 };
 
 pub(crate) const ROOT_NODE_ID: u32 = 1;
@@ -331,12 +322,7 @@ struct RuntimeState {
     tree: NodeTree,
     wrappers: HashMap<u32, Weak<QtNodeInner>>,
     widget_instances: HashMap<u32, Arc<dyn widget_runtime::QtWidgetInstanceDyn>>,
-    window_compositor_caches: HashMap<u32, WindowCompositorCache>,
-    window_compositor_geometry_nodes: HashMap<u32, HashSet<u32>>,
-    window_compositor_scene_nodes: HashMap<u32, HashSet<u32>>,
-    window_compositor_scene_subtrees: HashMap<u32, HashSet<u32>>,
-    window_compositor_dirty_nodes: HashMap<u32, HashSet<u32>>,
-    window_compositor_dirty_regions: HashMap<u32, Vec<WindowCompositorDirtyRegion>>,
+    compositor: CompositorState,
 }
 
 impl RuntimeState {
@@ -348,12 +334,7 @@ impl RuntimeState {
             tree: NodeTree::with_root(ROOT_NODE_ID),
             wrappers: HashMap::new(),
             widget_instances: HashMap::new(),
-            window_compositor_caches: HashMap::new(),
-            window_compositor_geometry_nodes: HashMap::new(),
-            window_compositor_scene_nodes: HashMap::new(),
-            window_compositor_scene_subtrees: HashMap::new(),
-            window_compositor_dirty_nodes: HashMap::new(),
-            window_compositor_dirty_regions: HashMap::new(),
+            compositor: CompositorState::new(),
         }
     }
 
@@ -365,12 +346,7 @@ impl RuntimeState {
         self.tree.reset_with_root(ROOT_NODE_ID);
         self.wrappers.clear();
         self.widget_instances.clear();
-        self.window_compositor_caches.clear();
-        self.window_compositor_geometry_nodes.clear();
-        self.window_compositor_scene_nodes.clear();
-        self.window_compositor_scene_subtrees.clear();
-        self.window_compositor_dirty_nodes.clear();
-        self.window_compositor_dirty_regions.clear();
+        self.compositor.clear_all();
         generation
     }
 
@@ -388,12 +364,7 @@ impl RuntimeState {
         self.tree.reset_with_root(ROOT_NODE_ID);
         self.wrappers.clear();
         self.widget_instances.clear();
-        self.window_compositor_caches.clear();
-        self.window_compositor_geometry_nodes.clear();
-        self.window_compositor_scene_nodes.clear();
-        self.window_compositor_scene_subtrees.clear();
-        self.window_compositor_dirty_nodes.clear();
-        self.window_compositor_dirty_regions.clear();
+        self.compositor.clear_all();
     }
 
     fn ensure_generation(&self, generation: u64) -> Result<()> {
@@ -437,12 +408,7 @@ impl RuntimeState {
         }
         self.wrappers.remove(&id);
         self.widget_instances.remove(&id);
-        self.window_compositor_caches.clear();
-        self.window_compositor_geometry_nodes.clear();
-        self.window_compositor_scene_nodes.clear();
-        self.window_compositor_scene_subtrees.clear();
-        self.window_compositor_dirty_nodes.clear();
-        self.window_compositor_dirty_regions.clear();
+        self.compositor.clear_all();
     }
 
     fn mark_destroyed_many(&mut self, ids: &[u32]) {
@@ -468,99 +434,6 @@ impl RuntimeState {
     fn widget_instance(&self, id: u32) -> Option<Arc<dyn widget_runtime::QtWidgetInstanceDyn>> {
         self.widget_instances.get(&id).cloned()
     }
-
-    fn window_compositor_cache(&self, window_id: u32) -> Option<&WindowCompositorCache> {
-        self.window_compositor_caches.get(&window_id)
-    }
-
-    fn set_window_compositor_cache(&mut self, window_id: u32, cache: WindowCompositorCache) {
-        self.window_compositor_caches.insert(window_id, cache);
-    }
-
-    fn clear_window_compositor_cache(&mut self, window_id: u32) {
-        self.window_compositor_caches.remove(&window_id);
-    }
-
-    fn mark_window_compositor_dirty_node(&mut self, window_id: u32, node_id: u32) {
-        self.window_compositor_dirty_nodes
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
-    }
-
-    fn mark_window_compositor_geometry_node(&mut self, window_id: u32, node_id: u32) {
-        self.window_compositor_geometry_nodes
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
-    }
-
-    fn mark_window_compositor_scene_node(&mut self, window_id: u32, node_id: u32) {
-        self.window_compositor_scene_nodes
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
-    }
-
-    fn mark_window_compositor_scene_subtree(&mut self, window_id: u32, node_id: u32) {
-        self.window_compositor_scene_subtrees
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
-    }
-
-    fn mark_window_compositor_dirty_region(
-        &mut self,
-        window_id: u32,
-        region: WindowCompositorDirtyRegion,
-    ) {
-        self.mark_window_compositor_dirty_node(window_id, region.node_id);
-        self.window_compositor_dirty_regions
-            .entry(window_id)
-            .or_default()
-            .push(region);
-    }
-
-    fn take_window_compositor_dirty_nodes(&mut self, window_id: u32) -> HashSet<u32> {
-        self.window_compositor_dirty_nodes
-            .remove(&window_id)
-            .unwrap_or_default()
-    }
-
-    fn take_window_compositor_geometry_nodes(&mut self, window_id: u32) -> HashSet<u32> {
-        self.window_compositor_geometry_nodes
-            .remove(&window_id)
-            .unwrap_or_default()
-    }
-
-    fn take_window_compositor_scene_nodes(&mut self, window_id: u32) -> HashSet<u32> {
-        self.window_compositor_scene_nodes
-            .remove(&window_id)
-            .unwrap_or_default()
-    }
-
-    fn take_window_compositor_scene_subtrees(&mut self, window_id: u32) -> HashSet<u32> {
-        self.window_compositor_scene_subtrees
-            .remove(&window_id)
-            .unwrap_or_default()
-    }
-
-    fn take_window_compositor_dirty_regions(
-        &mut self,
-        window_id: u32,
-    ) -> Vec<WindowCompositorDirtyRegion> {
-        self.window_compositor_dirty_regions
-            .remove(&window_id)
-            .unwrap_or_default()
-    }
-
-    fn clear_window_compositor_dirty_nodes(&mut self, window_id: u32) {
-        self.window_compositor_geometry_nodes.remove(&window_id);
-        self.window_compositor_scene_nodes.remove(&window_id);
-        self.window_compositor_scene_subtrees.remove(&window_id);
-        self.window_compositor_dirty_nodes.remove(&window_id);
-        self.window_compositor_dirty_regions.remove(&window_id);
-    }
 }
 
 static JS_CALLBACK: Lazy<Mutex<Option<Arc<EventCallback>>>> = Lazy::new(|| Mutex::new(None));
@@ -569,6 +442,24 @@ static RUNTIME_STATE: Lazy<Mutex<RuntimeState>> = Lazy::new(|| Mutex::new(Runtim
 
 pub(crate) fn ping() -> &'static str {
     "qt-solid-spike-native"
+}
+
+fn with_runtime_state<T>(run: impl FnOnce(&RuntimeState) -> T) -> T {
+    let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
+    run(&state)
+}
+
+fn with_runtime_state_mut<T>(run: impl FnOnce(&mut RuntimeState) -> T) -> T {
+    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
+    run(&mut state)
+}
+
+pub(crate) fn with_compositor_state<T>(run: impl FnOnce(&CompositorState) -> T) -> T {
+    with_runtime_state(|state| run(&state.compositor))
+}
+
+pub(crate) fn with_compositor_state_mut<T>(run: impl FnOnce(&mut CompositorState) -> T) -> T {
+    with_runtime_state_mut(|state| run(&mut state.compositor))
 }
 
 pub(crate) fn qt_error(message: impl Into<String>) -> Error {
@@ -716,7 +607,7 @@ fn ensure_app_generation(generation: u64) -> Result<()> {
     state.ensure_generation(generation)
 }
 
-fn current_app_generation() -> Result<u64> {
+pub(crate) fn current_app_generation() -> Result<u64> {
     let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
     state
         .app_generation
@@ -815,7 +706,7 @@ fn wrap_optional_node(id: Option<u32>, generation: u64) -> Result<Option<QtNode>
     }
 }
 
-fn wrap_node_id(id: u32) -> Result<QtNode> {
+pub(crate) fn wrap_node_id(id: u32) -> Result<QtNode> {
     let generation = current_app_generation()?;
     let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
     state.ensure_generation(generation)?;
@@ -898,6 +789,25 @@ pub(crate) fn node_by_id(generation: u64, node_id: u32) -> Result<QtNode> {
     let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
     state.ensure_generation(generation)?;
     state.wrap_node(node_id)
+}
+
+pub(crate) fn node_parent_id(generation: u64, node_id: u32) -> Result<Option<u32>> {
+    ensure_app_generation(generation)?;
+
+    let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
+    state.ensure_generation(generation)?;
+    if state.tree.class(node_id).is_none() {
+        return Err(invalid_arg(format!("node {node_id} not found")));
+    }
+    Ok(state.tree.get_parent(node_id))
+}
+
+pub(crate) fn subtree_node_ids(generation: u64, node_id: u32) -> Result<Vec<u32>> {
+    ensure_app_generation(generation)?;
+
+    let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
+    state.ensure_generation(generation)?;
+    state.tree.subtree_handles(node_id).map_err(invalid_arg)
 }
 
 pub(crate) fn create_widget_inner(
@@ -1165,7 +1075,7 @@ fn prop_getter_slot_for_node(node: &impl NodeHandle, js_name: &str) -> Option<u1
     merged_prop_for_node(node, js_name)?.read_slot()
 }
 
-fn read_prop_exact(node: &impl NodeHandle, js_name: &str) -> Result<Option<QtValue>> {
+pub(crate) fn read_prop_exact(node: &impl NodeHandle, js_name: &str) -> Result<Option<QtValue>> {
     let Some(slot) = prop_getter_slot_for_node(node, js_name) else {
         return Ok(None);
     };
@@ -1177,7 +1087,11 @@ fn read_prop_exact(node: &impl NodeHandle, js_name: &str) -> Result<Option<QtVal
         .map_err(|error| qt_error(error.to_string()))
 }
 
-fn apply_prop_by_name(node: &impl NodeHandle, js_name: &str, value: QtValue) -> Result<Option<()>> {
+pub(crate) fn apply_prop_by_name(
+    node: &impl NodeHandle,
+    js_name: &str,
+    value: QtValue,
+) -> Result<Option<()>> {
     let Some(slot) = prop_setter_slot_for_node(node, js_name) else {
         return Ok(None);
     };
@@ -1315,10 +1229,11 @@ pub(crate) fn insert_child(
         state.tree = previous_tree;
         return Err(qt_error(error.what().to_owned()));
     };
-    if let Some(window_id) =
-        window_ancestor_id_for_node(parent.inner().generation, parent.inner().id)?
-    {
-        mark_window_compositor_scene_subtree(window_id, parent.inner().id);
+    if let Some(window_id) = window_compositor::window_ancestor_id_for_node(
+        parent.inner().generation,
+        parent.inner().id,
+    )? {
+        window_compositor::mark_window_compositor_scene_subtree(window_id, parent.inner().id);
     }
     Ok(())
 }
@@ -1349,10 +1264,11 @@ pub(crate) fn remove_child(parent: &impl NodeHandle, child: &QtNode) -> Result<(
         state.tree = previous_tree;
         return Err(qt_error(error.what().to_owned()));
     };
-    if let Some(window_id) =
-        window_ancestor_id_for_node(parent.inner().generation, parent.inner().id)?
-    {
-        mark_window_compositor_scene_subtree(window_id, parent.inner().id);
+    if let Some(window_id) = window_compositor::window_ancestor_id_for_node(
+        parent.inner().generation,
+        parent.inner().id,
+    )? {
+        window_compositor::mark_window_compositor_scene_subtree(window_id, parent.inner().id);
     }
     Ok(())
 }
@@ -1417,7 +1333,7 @@ pub(crate) fn destroy_node(node: &impl NodeHandle) -> Result<()> {
     }
     if let Some(window_id) = window_id {
         let dirty_node_id = parent_id.unwrap_or(window_id);
-        mark_window_compositor_scene_subtree(window_id, dirty_node_id);
+        window_compositor::mark_window_compositor_scene_subtree(window_id, dirty_node_id);
     }
     Ok(())
 }
@@ -1456,7 +1372,7 @@ fn trace_prop_apply_exit(
     );
 }
 
-fn qt_value_type_name(value: &QtValue) -> &'static str {
+pub(crate) fn qt_value_type_name(value: &QtValue) -> &'static str {
     match value {
         QtValue::Unit => "unit",
         QtValue::String(_) => "string",
@@ -1841,2792 +1757,21 @@ pub(crate) fn call_host_method_slot(
 
 pub(crate) fn request_repaint_exact(node: &impl NodeHandle) -> Result<()> {
     ensure_live_node(node)?;
-    if let Some(window_id) = window_ancestor_id_for_node(node.inner().generation, node.inner().id)?
+    if let Some(window_id) =
+        window_compositor::window_ancestor_id_for_node(node.inner().generation, node.inner().id)?
     {
-        mark_window_compositor_dirty_node(window_id, node.inner().id);
+        window_compositor::qt_mark_window_compositor_pixels_dirty(window_id, node.inner().id);
     }
     qt::qt_request_repaint(node.inner().id).map_err(|error| qt_error(error.what().to_owned()))
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WindowCaptureGrouping {
-    Segmented,
-    WholeWindow,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WindowCompositorDirtyFlags(u8);
-
-impl WindowCompositorDirtyFlags {
-    const GEOMETRY: Self = Self(1 << 0);
-    const SCENE: Self = Self(1 << 1);
-    const PIXELS: Self = Self(1 << 2);
-    const ALL_BITS: u8 = Self::GEOMETRY.0 | Self::SCENE.0 | Self::PIXELS.0;
-
-    const fn from_bits(bits: u8) -> Self {
-        Self(bits & Self::ALL_BITS)
-    }
-
-    const fn contains(self, other: Self) -> bool {
-        (self.0 & other.0) == other.0
-    }
-}
-
-impl std::ops::BitOr for WindowCompositorDirtyFlags {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl From<QtWindowCaptureGrouping> for WindowCaptureGrouping {
-    fn from(value: QtWindowCaptureGrouping) -> Self {
-        match value {
-            QtWindowCaptureGrouping::Segmented => Self::Segmented,
-            QtWindowCaptureGrouping::WholeWindow => Self::WholeWindow,
-        }
-    }
-}
-
-impl From<WindowCaptureGrouping> for QtWindowCaptureGrouping {
-    fn from(value: WindowCaptureGrouping) -> Self {
-        match value {
-            WindowCaptureGrouping::Segmented => Self::Segmented,
-            WindowCaptureGrouping::WholeWindow => Self::WholeWindow,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct WindowCaptureComposingPart {
-    pub node_id: u32,
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-    visible_rects: Vec<PartVisibleRect>,
-    pub capture: Arc<WidgetCapture>,
-}
-
-impl WindowCaptureComposingPart {
-    fn into_debug_meta(self) -> Result<QtCapturedWidgetComposingPart> {
-        let stride = u32::try_from(self.capture.stride())
-            .map_err(|_| qt_error("widget capture stride overflow"))?;
-        let byte_length = u32::try_from(self.capture.bytes().len())
-            .map_err(|_| qt_error("widget capture byte length overflow"))?;
-
-        Ok(QtCapturedWidgetComposingPart {
-            node_id: self.node_id,
-            x: self.x,
-            y: self.y,
-            width: self.width,
-            height: self.height,
-            width_px: self.capture.width_px(),
-            height_px: self.capture.height_px(),
-            stride,
-            scale_factor: self.capture.scale_factor(),
-            byte_length,
-        })
-    }
-
-    fn into_compositor_meta(&self) -> QtWindowCompositorPartMeta {
-        QtWindowCompositorPartMeta {
-            node_id: self.node_id,
-            format_tag: widget_capture_format_tag(self.capture.format()),
-            x: self.x,
-            y: self.y,
-            width: self.width,
-            height: self.height,
-            width_px: self.capture.width_px(),
-            height_px: self.capture.height_px(),
-            stride: self.capture.stride(),
-            scale_factor: self.capture.scale_factor(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct WindowCompositorCache {
-    generation: u64,
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    parts: Vec<WindowCaptureComposingPart>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WindowCompositorPartUploadKind {
-    None,
-    Full,
-    SubRects,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct QtPreparedWindowCompositorPart {
-    meta: QtWindowCompositorPartMeta,
-    visible_rects: Vec<QtRect>,
-    upload_kind: WindowCompositorPartUploadKind,
-    dirty_rects: Vec<QtRect>,
-    capture: Arc<WidgetCapture>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct QtPreparedWindowCompositorFrame {
-    base_upload_kind: WindowCompositorPartUploadKind,
-    parts: Vec<QtPreparedWindowCompositorPart>,
-}
-
-impl QtPreparedWindowCompositorFrame {
-    fn part(&self, index: usize) -> Result<&QtPreparedWindowCompositorPart> {
-        self.parts
-            .get(index)
-            .ok_or_else(|| qt_error("window compositor frame part index out of range"))
-    }
-
-    fn part_count(&self) -> usize {
-        self.parts.len()
-    }
-
-    fn base_upload_kind(&self) -> WindowCompositorPartUploadKind {
-        self.base_upload_kind
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct QtPreparedTextureWidgetFrame {
-    upload_kind: WindowCompositorPartUploadKind,
-    dirty_rects: Vec<QtRect>,
-    next_frame_requested: bool,
-    native_texture_lease: Box<QtNativeTextureLease>,
-}
-
-impl QtPreparedTextureWidgetFrame {
-    fn layout(&self) -> QtPreparedTextureWidgetFrameLayout {
-        let texture = self.native_texture_lease.info();
-        QtPreparedTextureWidgetFrameLayout {
-            format_tag: texture.format_tag,
-            width_px: texture.width_px,
-            height_px: texture.height_px,
-            stride: 0,
-        }
-    }
-}
-
-fn upload_kind_tag(kind: WindowCompositorPartUploadKind) -> u8 {
-    match kind {
-        WindowCompositorPartUploadKind::None => 0,
-        WindowCompositorPartUploadKind::Full => 1,
-        WindowCompositorPartUploadKind::SubRects => 2,
-    }
-}
-
-fn qt_native_texture_lease_info_to_ffi(
-    info: qt_wgpu_renderer::QtNativeTextureLeaseInfo,
-) -> QtNativeTextureLeaseInfo {
-    QtNativeTextureLeaseInfo {
-        backend_tag: info.backend_tag,
-        format_tag: info.format_tag,
-        width_px: info.width_px,
-        height_px: info.height_px,
-        object: info.object,
-        layout: info.layout,
-    }
-}
-
-fn qt_rhi_interop_from_transport(
-    transport: crate::qt::ffi::QtRhiInteropTransport,
-) -> Result<QtRhiInteropInfo> {
-    match transport.backend_tag {
-        qt_wgpu_renderer::QT_RHI_BACKEND_METAL => {
-            Ok(QtRhiInteropInfo::Metal(QtRhiMetalInteropInfo {
-                device_object: transport.metal.device_object,
-                command_queue_object: transport.metal.command_queue_object,
-            }))
-        }
-        qt_wgpu_renderer::QT_RHI_BACKEND_VULKAN => {
-            Ok(QtRhiInteropInfo::Vulkan(QtRhiVulkanInteropInfo {
-                physical_device_object: transport.vulkan.physical_device_object,
-                device_object: transport.vulkan.device_object,
-                queue_family_index: transport.vulkan.queue_family_index,
-                queue_index: transport.vulkan.queue_index,
-            }))
-        }
-        qt_wgpu_renderer::QT_RHI_BACKEND_D3D11 => {
-            Ok(QtRhiInteropInfo::D3d11(QtRhiD3d11InteropInfo {
-                device_object: transport.d3d11.device_object,
-                context_object: transport.d3d11.context_object,
-                adapter_luid_low: transport.d3d11.adapter_luid_low,
-                adapter_luid_high: transport.d3d11.adapter_luid_high,
-            }))
-        }
-        qt_wgpu_renderer::QT_RHI_BACKEND_D3D12 => {
-            Ok(QtRhiInteropInfo::D3d12(QtRhiD3d12InteropInfo {
-                device_object: transport.d3d12.device_object,
-                command_queue_object: transport.d3d12.command_queue_object,
-            }))
-        }
-        qt_wgpu_renderer::QT_RHI_BACKEND_OPENGLES2 => {
-            Ok(QtRhiInteropInfo::OpenGles2(QtRhiGles2InteropInfo {
-                context_object: transport.gles2.context_object,
-            }))
-        }
-        other => Err(qt_error(format!("unsupported Qt RHI backend tag {other}",))),
-    }
-}
-
-fn widget_capture_format_tag(format: WidgetCaptureFormat) -> u8 {
-    match format {
-        WidgetCaptureFormat::Argb32Premultiplied => 1,
-        WidgetCaptureFormat::Rgba8Premultiplied => 2,
-    }
-}
-
-fn pixel_rect_to_qt_rect(rect: PixelRect) -> QtRect {
-    QtRect {
-        x: rect.left,
-        y: rect.top,
-        width: rect.right - rect.left,
-        height: rect.bottom - rect.top,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct WindowCaptureGroup {
-    pub parts: Vec<WindowCaptureComposingPart>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct WindowCaptureFrame {
-    pub window_id: u32,
-    pub frame_seq: f64,
-    pub elapsed_ms: f64,
-    pub delta_ms: f64,
-    pub grouping: WindowCaptureGrouping,
-    pub groups: Vec<WindowCaptureGroup>,
-}
-
-impl WindowCaptureFrame {
-    fn into_api_frame(self) -> Result<QtWindowCaptureFrame> {
-        let mut parts = Vec::new();
-        for group in self.groups {
-            for part in group.parts {
-                parts.push(part.into_debug_meta()?);
-            }
-        }
-
-        Ok(QtWindowCaptureFrame {
-            window_id: self.window_id,
-            grouping: self.grouping.into(),
-            frame_seq: self.frame_seq,
-            elapsed_ms: self.elapsed_ms,
-            delta_ms: self.delta_ms,
-            parts,
-        })
-    }
-}
-
-fn widget_capture_format_from_qt(tag: u8) -> widget_runtime::WidgetResult<WidgetCaptureFormat> {
-    match tag {
-        1 => Ok(WidgetCaptureFormat::Argb32Premultiplied),
-        2 => Ok(WidgetCaptureFormat::Rgba8Premultiplied),
-        _ => Err(widget_runtime::WidgetError::new(format!(
-            "unsupported Qt widget capture format tag {tag}"
-        ))),
-    }
-}
-
-fn capture_qt_widget_exact_with_children(
-    node: &impl NodeHandle,
-    include_children: bool,
-) -> Result<WidgetCapture> {
-    ensure_live_node(node)?;
-
-    let layout = qt::qt_capture_widget_layout(node.inner().id)
-        .map_err(|error| qt_error(error.what().to_owned()))?;
-    let format = widget_capture_format_from_qt(layout.format_tag)
-        .map_err(|error| qt_error(error.message().to_owned()))?;
-    let mut capture = WidgetCapture::new_zeroed(
-        format,
-        layout.width_px,
-        layout.height_px,
-        layout.stride,
-        layout.scale_factor,
-    )
-    .map_err(|error| qt_error(error.message().to_owned()))?;
-
-    qt::qt_capture_widget_into(
-        node.inner().id,
-        layout.width_px,
-        layout.height_px,
-        layout.stride,
-        include_children,
-        capture.bytes_mut(),
-    )
-    .map_err(|error| qt_error(error.what().to_owned()))?;
-
-    Ok(capture)
-}
-
-fn capture_qt_widget_regions_into_capture(
-    node: &impl NodeHandle,
-    include_children: bool,
-    capture: &mut WidgetCapture,
-    regions: &[PartVisibleRect],
-) -> Result<()> {
-    ensure_live_node(node)?;
-    if regions.is_empty() {
-        return Ok(());
-    }
-    if capture.format() != WidgetCaptureFormat::Argb32Premultiplied {
-        return Err(qt_error(
-            "partial Qt widget capture requires argb32 premultiplied backing",
-        ));
-    }
-
-    let layout = qt::qt_capture_widget_layout(node.inner().id)
-        .map_err(|error| qt_error(error.what().to_owned()))?;
-    let format = widget_capture_format_from_qt(layout.format_tag)
-        .map_err(|error| qt_error(error.message().to_owned()))?;
-    if format != capture.format()
-        || layout.width_px != capture.width_px()
-        || layout.height_px != capture.height_px()
-        || layout.stride != capture.stride()
-        || (layout.scale_factor - capture.scale_factor()).abs() > 0.001
-    {
-        return Err(qt_error(
-            "qt widget capture layout changed during partial refresh",
-        ));
-    }
-
-    for region in regions {
-        if region.width <= 0 || region.height <= 0 {
-            continue;
-        }
-        qt::qt_capture_widget_region_into(
-            node.inner().id,
-            layout.width_px,
-            layout.height_px,
-            layout.stride,
-            include_children,
-            qt::QtRect {
-                x: region.x,
-                y: region.y,
-                width: region.width,
-                height: region.height,
-            },
-            capture.bytes_mut(),
-        )
-        .map_err(|error| qt_error(error.what().to_owned()))?;
-    }
-
-    Ok(())
-}
-
-fn capture_widget_visible_rects(node_id: u32) -> Result<Vec<PartVisibleRect>> {
-    let rects = qt::qt_capture_widget_visible_rects(node_id)
-        .map_err(|error| qt_error(error.what().to_owned()))?;
-    Ok(rects
-        .into_iter()
-        .filter(|rect| rect.width > 0 && rect.height > 0)
-        .map(|rect| PartVisibleRect {
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height,
-        })
-        .collect())
-}
-
-fn window_dirty_region_to_part_local_logical_rect(
-    part: &WindowCaptureComposingPart,
-    region: WindowCompositorDirtyRegion,
-) -> Option<PartVisibleRect> {
-    let left = region.x.max(part.x);
-    let top = region.y.max(part.y);
-    let right = (region.x + region.width).min(part.x + part.width);
-    let bottom = (region.y + region.height).min(part.y + part.height);
-    (left < right && top < bottom).then_some(PartVisibleRect {
-        x: left - part.x,
-        y: top - part.y,
-        width: right - left,
-        height: bottom - top,
-    })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PremulPixel {
-    red: u8,
-    green: u8,
-    blue: u8,
-    alpha: u8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PixelRect {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PartVisibleRect {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WindowCompositorDirtyRegion {
-    node_id: u32,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-}
-
-impl PixelRect {
-    fn is_empty(self) -> bool {
-        self.left >= self.right || self.top >= self.bottom
-    }
-
-    fn intersect(self, other: Self) -> Option<Self> {
-        let rect = Self {
-            left: self.left.max(other.left),
-            top: self.top.max(other.top),
-            right: self.right.min(other.right),
-            bottom: self.bottom.min(other.bottom),
-        };
-        (!rect.is_empty()).then_some(rect)
-    }
-}
-
-fn pixel_rects_can_merge(left: PixelRect, right: PixelRect) -> bool {
-    let horizontal_overlap = left.left <= right.right && right.left <= left.right;
-    let vertical_overlap = left.top <= right.bottom && right.top <= left.bottom;
-    horizontal_overlap && vertical_overlap
-}
-
-fn merge_pixel_rects(mut regions: Vec<PixelRect>) -> Vec<PixelRect> {
-    let mut merged = Vec::new();
-    while let Some(mut current) = regions.pop() {
-        if current.is_empty() {
-            continue;
-        }
-
-        let mut index = 0;
-        while index < regions.len() {
-            if pixel_rects_can_merge(current, regions[index]) {
-                let other = regions.swap_remove(index);
-                current = PixelRect {
-                    left: current.left.min(other.left),
-                    top: current.top.min(other.top),
-                    right: current.right.max(other.right),
-                    bottom: current.bottom.max(other.bottom),
-                };
-                index = 0;
-            } else {
-                index += 1;
-            }
-        }
-
-        merged.push(current);
-    }
-
-    merged
-}
-
-fn union_pixel_rects(left: PixelRect, right: PixelRect) -> PixelRect {
-    PixelRect {
-        left: left.left.min(right.left),
-        top: left.top.min(right.top),
-        right: left.right.max(right.right),
-        bottom: left.bottom.max(right.bottom),
-    }
-}
-
-fn coalesce_pixel_rects_for_budget(
-    regions: Vec<PixelRect>,
-    full_area: usize,
-    max_regions: usize,
-    max_pair_expansion_ratio: f64,
-    merge_all_expansion_ratio: f64,
-    merge_all_full_ratio: f64,
-) -> Vec<PixelRect> {
-    let mut regions = merge_pixel_rects(regions);
-    if regions.len() <= 1 {
-        return regions;
-    }
-
-    let dirty_area = regions.iter().copied().map(pixel_rect_area).sum::<usize>();
-    if dirty_area == 0 {
-        return Vec::new();
-    }
-
-    let full_union = regions
-        .iter()
-        .copied()
-        .reduce(union_pixel_rects)
-        .expect("regions is non-empty");
-    let full_union_area = pixel_rect_area(full_union);
-    if full_union_area > 0
-        && (full_area == 0 || (full_union_area as f64 / full_area as f64) <= merge_all_full_ratio)
-        && (full_union_area as f64 / dirty_area as f64) <= merge_all_expansion_ratio
-    {
-        return vec![full_union];
-    }
-
-    while regions.len() > max_regions {
-        let mut best_pair: Option<(usize, usize, PixelRect, f64)> = None;
-        for left_index in 0..regions.len() {
-            for right_index in left_index + 1..regions.len() {
-                let merged = union_pixel_rects(regions[left_index], regions[right_index]);
-                let merged_area = pixel_rect_area(merged);
-                if merged_area == 0 {
-                    continue;
-                }
-                if full_area != 0 && (merged_area as f64 / full_area as f64) > merge_all_full_ratio
-                {
-                    continue;
-                }
-
-                let source_area =
-                    pixel_rect_area(regions[left_index]) + pixel_rect_area(regions[right_index]);
-                let expansion_ratio = merged_area as f64 / source_area as f64;
-                if expansion_ratio > max_pair_expansion_ratio {
-                    continue;
-                }
-
-                match best_pair {
-                    Some((_, _, _, best_ratio)) if expansion_ratio >= best_ratio => {}
-                    _ => {
-                        best_pair = Some((left_index, right_index, merged, expansion_ratio));
-                    }
-                }
-            }
-        }
-
-        let Some((left_index, right_index, merged, _)) = best_pair else {
-            break;
-        };
-        regions.swap_remove(right_index);
-        regions.swap_remove(left_index);
-        regions.push(merged);
-        regions = merge_pixel_rects(regions);
-    }
-
-    regions
-}
-
-fn premul_scale(value: u8, factor: u8) -> u8 {
-    let scaled = (u32::from(value) * u32::from(factor) + 127) / 255;
-    u8::try_from(scaled).expect("premul channel stays within u8")
-}
-
-fn premul_over(dst: PremulPixel, src: PremulPixel) -> PremulPixel {
-    let inv_alpha = 255_u8.saturating_sub(src.alpha);
-    PremulPixel {
-        red: src.red.saturating_add(premul_scale(dst.red, inv_alpha)),
-        green: src.green.saturating_add(premul_scale(dst.green, inv_alpha)),
-        blue: src.blue.saturating_add(premul_scale(dst.blue, inv_alpha)),
-        alpha: src.alpha.saturating_add(premul_scale(dst.alpha, inv_alpha)),
-    }
-}
-
-fn read_capture_pixel(capture: &WidgetCapture, x: u32, y: u32) -> PremulPixel {
-    let offset = y as usize * capture.stride() + x as usize * 4;
-    let pixel = &capture.bytes()[offset..offset + 4];
-    match capture.format() {
-        WidgetCaptureFormat::Argb32Premultiplied => {
-            #[cfg(target_endian = "little")]
-            {
-                PremulPixel {
-                    blue: pixel[0],
-                    green: pixel[1],
-                    red: pixel[2],
-                    alpha: pixel[3],
-                }
-            }
-            #[cfg(target_endian = "big")]
-            {
-                PremulPixel {
-                    alpha: pixel[0],
-                    red: pixel[1],
-                    green: pixel[2],
-                    blue: pixel[3],
-                }
-            }
-        }
-        WidgetCaptureFormat::Rgba8Premultiplied => PremulPixel {
-            red: pixel[0],
-            green: pixel[1],
-            blue: pixel[2],
-            alpha: pixel[3],
-        },
-    }
-}
-
-#[cfg(test)]
-fn write_argb32_premultiplied_pixel(
-    capture: &mut WidgetCapture,
-    x: u32,
-    y: u32,
-    pixel: PremulPixel,
-) {
-    let offset = y as usize * capture.stride() + x as usize * 4;
-    let bytes = &mut capture.bytes_mut()[offset..offset + 4];
-    #[cfg(target_endian = "little")]
-    {
-        bytes[0] = pixel.blue;
-        bytes[1] = pixel.green;
-        bytes[2] = pixel.red;
-        bytes[3] = pixel.alpha;
-    }
-    #[cfg(target_endian = "big")]
-    {
-        bytes[0] = pixel.alpha;
-        bytes[1] = pixel.red;
-        bytes[2] = pixel.green;
-        bytes[3] = pixel.blue;
-    }
-}
-
-fn read_argb32_premultiplied_pixel_from_bytes(
-    bytes: &[u8],
-    stride: usize,
-    x: u32,
-    y: u32,
-) -> PremulPixel {
-    let offset = y as usize * stride + x as usize * 4;
-    let pixel = &bytes[offset..offset + 4];
-    #[cfg(target_endian = "little")]
-    {
-        PremulPixel {
-            blue: pixel[0],
-            green: pixel[1],
-            red: pixel[2],
-            alpha: pixel[3],
-        }
-    }
-    #[cfg(target_endian = "big")]
-    {
-        PremulPixel {
-            alpha: pixel[0],
-            red: pixel[1],
-            green: pixel[2],
-            blue: pixel[3],
-        }
-    }
-}
-
-fn write_argb32_premultiplied_pixel_to_bytes(
-    bytes: &mut [u8],
-    stride: usize,
-    x: u32,
-    y: u32,
-    pixel: PremulPixel,
-) {
-    let offset = y as usize * stride + x as usize * 4;
-    let target = &mut bytes[offset..offset + 4];
-    #[cfg(target_endian = "little")]
-    {
-        target[0] = pixel.blue;
-        target[1] = pixel.green;
-        target[2] = pixel.red;
-        target[3] = pixel.alpha;
-    }
-    #[cfg(target_endian = "big")]
-    {
-        target[0] = pixel.alpha;
-        target[1] = pixel.red;
-        target[2] = pixel.green;
-        target[3] = pixel.blue;
-    }
-}
-
-#[cfg(test)]
-fn blend_capture_part_into_window(
-    target: &mut WidgetCapture,
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-) -> Result<()> {
-    let full_region = PixelRect {
-        left: 0,
-        top: 0,
-        right: i32::try_from(target.width_px()).map_err(|_| qt_error("target width overflow"))?,
-        bottom: i32::try_from(target.height_px())
-            .map_err(|_| qt_error("target height overflow"))?,
-    };
-    blend_capture_part_into_window_region(target, target_scale_factor, part, full_region)
-}
-
-fn part_visible_rect_device_bounds_from_dims(
-    width_px: u32,
-    height_px: u32,
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-    rect: PartVisibleRect,
-) -> Result<Option<PixelRect>> {
-    if (part.capture.scale_factor() - target_scale_factor).abs() > 0.001 {
-        return Err(qt_error(format!(
-            "window capture part {} uses scale factor {}, expected {}",
-            part.node_id,
-            part.capture.scale_factor(),
-            target_scale_factor
-        )));
-    }
-
-    let target_width = i32::try_from(width_px).map_err(|_| qt_error("target width overflow"))?;
-    let target_height = i32::try_from(height_px).map_err(|_| qt_error("target height overflow"))?;
-    let dst_x = (f64::from(part.x) * target_scale_factor).round() as i32;
-    let dst_y = (f64::from(part.y) * target_scale_factor).round() as i32;
-    let rect_x = (f64::from(rect.x) * target_scale_factor).round() as i32;
-    let rect_y = (f64::from(rect.y) * target_scale_factor).round() as i32;
-    let rect_width = (f64::from(rect.width) * target_scale_factor).round() as i32;
-    let rect_height = (f64::from(rect.height) * target_scale_factor).round() as i32;
-    if rect_width <= 0 || rect_height <= 0 {
-        return Ok(None);
-    }
-
-    let full = PixelRect {
-        left: dst_x + rect_x,
-        top: dst_y + rect_y,
-        right: dst_x + rect_x + rect_width,
-        bottom: dst_y + rect_y + rect_height,
-    };
-    Ok(full.intersect(PixelRect {
-        left: 0,
-        top: 0,
-        right: target_width,
-        bottom: target_height,
-    }))
-}
-
-fn part_visible_device_regions_from_dims(
-    width_px: u32,
-    height_px: u32,
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-) -> Result<Vec<PixelRect>> {
-    if part.visible_rects.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut regions = Vec::new();
-    for rect in &part.visible_rects {
-        if let Some(region) = part_visible_rect_device_bounds_from_dims(
-            width_px,
-            height_px,
-            target_scale_factor,
-            part,
-            *rect,
-        )? {
-            regions.push(region);
-        }
-    }
-    Ok(merge_pixel_rects(regions))
-}
-
-fn part_device_bounds_from_dims(
-    width_px: u32,
-    height_px: u32,
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-) -> Result<Option<PixelRect>> {
-    let regions =
-        part_visible_device_regions_from_dims(width_px, height_px, target_scale_factor, part)?;
-    let mut iter = regions.into_iter();
-    let Some(first) = iter.next() else {
-        return Ok(None);
-    };
-    let union = iter.fold(first, |acc, region| PixelRect {
-        left: acc.left.min(region.left),
-        top: acc.top.min(region.top),
-        right: acc.right.max(region.right),
-        bottom: acc.bottom.max(region.bottom),
-    });
-    Ok(Some(union))
-}
-
-fn dirty_region_device_bounds(
-    width_px: u32,
-    height_px: u32,
-    scale_factor: f64,
-    region: WindowCompositorDirtyRegion,
-) -> Result<Option<PixelRect>> {
-    let target_width = i32::try_from(width_px).map_err(|_| qt_error("target width overflow"))?;
-    let target_height = i32::try_from(height_px).map_err(|_| qt_error("target height overflow"))?;
-    let left = (f64::from(region.x) * scale_factor).round() as i32;
-    let top = (f64::from(region.y) * scale_factor).round() as i32;
-    let width = (f64::from(region.width) * scale_factor).round() as i32;
-    let height = (f64::from(region.height) * scale_factor).round() as i32;
-    if width <= 0 || height <= 0 {
-        return Ok(None);
-    }
-
-    Ok(PixelRect {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-    }
-    .intersect(PixelRect {
-        left: 0,
-        top: 0,
-        right: target_width,
-        bottom: target_height,
-    }))
-}
-
-fn part_capture_device_bounds(
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-) -> Result<PixelRect> {
-    if (part.capture.scale_factor() - target_scale_factor).abs() > 0.001 {
-        return Err(qt_error(format!(
-            "window capture part {} uses scale factor {}, expected {}",
-            part.node_id,
-            part.capture.scale_factor(),
-            target_scale_factor
-        )));
-    }
-
-    let left = (f64::from(part.x) * target_scale_factor).round() as i32;
-    let top = (f64::from(part.y) * target_scale_factor).round() as i32;
-    let right = left
-        + i32::try_from(part.capture.width_px()).map_err(|_| qt_error("part width overflow"))?;
-    let bottom = top
-        + i32::try_from(part.capture.height_px()).map_err(|_| qt_error("part height overflow"))?;
-
-    Ok(PixelRect {
-        left,
-        top,
-        right,
-        bottom,
-    })
-}
-
-fn dirty_region_local_pixel_rect(
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-    region: WindowCompositorDirtyRegion,
-) -> Result<Option<PixelRect>> {
-    let left = (f64::from(region.x) * target_scale_factor).round() as i32;
-    let top = (f64::from(region.y) * target_scale_factor).round() as i32;
-    let width = (f64::from(region.width) * target_scale_factor).round() as i32;
-    let height = (f64::from(region.height) * target_scale_factor).round() as i32;
-    if width <= 0 || height <= 0 {
-        return Ok(None);
-    }
-
-    let part_bounds = part_capture_device_bounds(target_scale_factor, part)?;
-    let Some(intersection) = PixelRect {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-    }
-    .intersect(part_bounds) else {
-        return Ok(None);
-    };
-
-    Ok(Some(PixelRect {
-        left: intersection.left - part_bounds.left,
-        top: intersection.top - part_bounds.top,
-        right: intersection.right - part_bounds.left,
-        bottom: intersection.bottom - part_bounds.top,
-    }))
-}
-
-fn pixel_rect_area(rect: PixelRect) -> usize {
-    if rect.is_empty() {
-        return 0;
-    }
-
-    let width = usize::try_from(rect.right - rect.left).expect("pixel rect width non-negative");
-    let height = usize::try_from(rect.bottom - rect.top).expect("pixel rect height non-negative");
-    width.saturating_mul(height)
-}
-
-fn logical_vello_dirty_rect_to_local_pixel_rect(
-    layout: &qt::QtWidgetCaptureLayout,
-    rect: VelloDirtyRect,
-) -> Result<Option<PixelRect>> {
-    let inflate_px = 2_i32;
-    let left = (rect.x * layout.scale_factor).floor() as i32 - inflate_px;
-    let top = (rect.y * layout.scale_factor).floor() as i32 - inflate_px;
-    let right = ((rect.x + rect.width) * layout.scale_factor).ceil() as i32 + inflate_px;
-    let bottom = ((rect.y + rect.height) * layout.scale_factor).ceil() as i32 + inflate_px;
-    if left >= right || top >= bottom {
-        return Ok(None);
-    }
-
-    Ok(PixelRect {
-        left,
-        top,
-        right,
-        bottom,
-    }
-    .intersect(PixelRect {
-        left: 0,
-        top: 0,
-        right: i32::try_from(layout.width_px).map_err(|_| qt_error("layout width overflow"))?,
-        bottom: i32::try_from(layout.height_px).map_err(|_| qt_error("layout height overflow"))?,
-    }))
-}
-
-fn vello_dirty_rects_to_local_pixel_rects(
-    layout: &qt::QtWidgetCaptureLayout,
-    dirty_rects: &[VelloDirtyRect],
-) -> Result<Vec<PixelRect>> {
-    const VELLO_DIRTY_MAX_REGIONS: usize = 2;
-    const VELLO_DIRTY_MAX_PAIR_EXPANSION_RATIO: f64 = 1.6;
-    const VELLO_DIRTY_MERGE_ALL_EXPANSION_RATIO: f64 = 1.9;
-    const VELLO_DIRTY_MERGE_ALL_FULL_RATIO: f64 = 0.72;
-
-    let mut regions = Vec::new();
-    for rect in dirty_rects {
-        if let Some(region) = logical_vello_dirty_rect_to_local_pixel_rect(layout, *rect)? {
-            regions.push(region);
-        }
-    }
-    let full_area = usize::try_from(layout.width_px)
-        .expect("width fits usize")
-        .saturating_mul(usize::try_from(layout.height_px).expect("height fits usize"));
-    Ok(coalesce_pixel_rects_for_budget(
-        regions,
-        full_area,
-        VELLO_DIRTY_MAX_REGIONS,
-        VELLO_DIRTY_MAX_PAIR_EXPANSION_RATIO,
-        VELLO_DIRTY_MERGE_ALL_EXPANSION_RATIO,
-        VELLO_DIRTY_MERGE_ALL_FULL_RATIO,
-    ))
-}
-
-#[cfg(test)]
-fn clear_argb32_region(target: &mut WidgetCapture, region: PixelRect) -> Result<()> {
-    if target.format() != WidgetCaptureFormat::Argb32Premultiplied {
-        return Err(qt_error(
-            "partial compose target must be argb32-premultiplied",
-        ));
-    }
-
-    let Some(region) = region.intersect(PixelRect {
-        left: 0,
-        top: 0,
-        right: i32::try_from(target.width_px()).map_err(|_| qt_error("target width overflow"))?,
-        bottom: i32::try_from(target.height_px())
-            .map_err(|_| qt_error("target height overflow"))?,
-    }) else {
-        return Ok(());
-    };
-
-    for y in region.top..region.bottom {
-        for x in region.left..region.right {
-            write_argb32_premultiplied_pixel(
-                target,
-                u32::try_from(x).expect("non-negative destination x"),
-                u32::try_from(y).expect("non-negative destination y"),
-                PremulPixel {
-                    red: 0,
-                    green: 0,
-                    blue: 0,
-                    alpha: 0,
-                },
-            );
-        }
-    }
-
-    Ok(())
-}
-
-fn clear_argb32_region_in_bytes(
-    bytes: &mut [u8],
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    region: PixelRect,
-) -> Result<()> {
-    let Some(region) = region.intersect(PixelRect {
-        left: 0,
-        top: 0,
-        right: i32::try_from(width_px).map_err(|_| qt_error("target width overflow"))?,
-        bottom: i32::try_from(height_px).map_err(|_| qt_error("target height overflow"))?,
-    }) else {
-        return Ok(());
-    };
-
-    for y in region.top..region.bottom {
-        for x in region.left..region.right {
-            write_argb32_premultiplied_pixel_to_bytes(
-                bytes,
-                stride,
-                u32::try_from(x).expect("non-negative destination x"),
-                u32::try_from(y).expect("non-negative destination y"),
-                PremulPixel {
-                    red: 0,
-                    green: 0,
-                    blue: 0,
-                    alpha: 0,
-                },
-            );
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-fn blend_capture_part_into_window_region(
-    target: &mut WidgetCapture,
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-    region: PixelRect,
-) -> Result<()> {
-    let part_origin_x = (f64::from(part.x) * target_scale_factor).round() as i32;
-    let part_origin_y = (f64::from(part.y) * target_scale_factor).round() as i32;
-    for visible_region in part_visible_device_regions_from_dims(
-        target.width_px(),
-        target.height_px(),
-        target_scale_factor,
-        part,
-    )? {
-        let Some(region) = visible_region.intersect(region) else {
-            continue;
-        };
-
-        for dst_y_px in region.top..region.bottom {
-            let src_y = dst_y_px - part_origin_y;
-            for dst_x_px in region.left..region.right {
-                let src_x = dst_x_px - part_origin_x;
-                let src_pixel = read_capture_pixel(
-                    &part.capture,
-                    u32::try_from(src_x).expect("non-negative source x"),
-                    u32::try_from(src_y).expect("non-negative source y"),
-                );
-                if src_pixel.alpha == 0 {
-                    continue;
-                }
-
-                let dst_pixel = read_capture_pixel(
-                    target,
-                    u32::try_from(dst_x_px).expect("non-negative destination x"),
-                    u32::try_from(dst_y_px).expect("non-negative destination y"),
-                );
-                let out_pixel = premul_over(dst_pixel, src_pixel);
-                write_argb32_premultiplied_pixel(
-                    target,
-                    u32::try_from(dst_x_px).expect("non-negative destination x"),
-                    u32::try_from(dst_y_px).expect("non-negative destination y"),
-                    out_pixel,
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn blend_capture_part_into_bytes_region(
-    bytes: &mut [u8],
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    target_scale_factor: f64,
-    part: &WindowCaptureComposingPart,
-    region: PixelRect,
-) -> Result<()> {
-    let part_origin_x = (f64::from(part.x) * target_scale_factor).round() as i32;
-    let part_origin_y = (f64::from(part.y) * target_scale_factor).round() as i32;
-    for visible_region in
-        part_visible_device_regions_from_dims(width_px, height_px, target_scale_factor, part)?
-    {
-        let Some(region) = visible_region.intersect(region) else {
-            continue;
-        };
-
-        for dst_y_px in region.top..region.bottom {
-            let src_y = dst_y_px - part_origin_y;
-            for dst_x_px in region.left..region.right {
-                let src_x = dst_x_px - part_origin_x;
-                let src_pixel = read_capture_pixel(
-                    &part.capture,
-                    u32::try_from(src_x).expect("non-negative source x"),
-                    u32::try_from(src_y).expect("non-negative source y"),
-                );
-                if src_pixel.alpha == 0 {
-                    continue;
-                }
-
-                let dst_pixel = read_argb32_premultiplied_pixel_from_bytes(
-                    bytes,
-                    stride,
-                    u32::try_from(dst_x_px).expect("non-negative destination x"),
-                    u32::try_from(dst_y_px).expect("non-negative destination y"),
-                );
-                let out_pixel = premul_over(dst_pixel, src_pixel);
-                write_argb32_premultiplied_pixel_to_bytes(
-                    bytes,
-                    stride,
-                    u32::try_from(dst_x_px).expect("non-negative destination x"),
-                    u32::try_from(dst_y_px).expect("non-negative destination y"),
-                    out_pixel,
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-fn compose_window_capture_regions(
-    base: &WidgetCapture,
-    scale_factor: f64,
-    parts: &[WindowCaptureComposingPart],
-    regions: &[PixelRect],
-) -> Result<WidgetCapture> {
-    let mut capture = base.clone();
-    for region in regions {
-        if region.is_empty() {
-            continue;
-        }
-        clear_argb32_region(&mut capture, *region)?;
-        for part in parts {
-            blend_capture_part_into_window_region(&mut capture, scale_factor, part, *region)?;
-        }
-    }
-    Ok(capture)
-}
-
-fn compose_window_capture_regions_in_place(
-    bytes: &mut [u8],
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    parts: &[WindowCaptureComposingPart],
-    regions: &[PixelRect],
-) -> Result<()> {
-    for region in regions {
-        if region.is_empty() {
-            continue;
-        }
-        clear_argb32_region_in_bytes(bytes, width_px, height_px, stride, *region)?;
-        for part in parts {
-            blend_capture_part_into_bytes_region(
-                bytes,
-                width_px,
-                height_px,
-                stride,
-                scale_factor,
-                part,
-                *region,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-fn collect_scene_node_dirty_regions(
-    width_px: u32,
-    height_px: u32,
-    scale_factor: f64,
-    dirty_nodes: &HashSet<u32>,
-    old_parts: &HashMap<u32, WindowCaptureComposingPart>,
-    new_parts: &HashMap<u32, WindowCaptureComposingPart>,
-) -> Result<Vec<PixelRect>> {
-    let mut regions = Vec::new();
-    for node_id in dirty_nodes {
-        if let Some(old_part) = old_parts.get(node_id) {
-            if let Some(region) =
-                part_device_bounds_from_dims(width_px, height_px, scale_factor, old_part)?
-            {
-                regions.push(region);
-            }
-        }
-        if let Some(new_part) = new_parts.get(node_id) {
-            if let Some(region) =
-                part_device_bounds_from_dims(width_px, height_px, scale_factor, new_part)?
-            {
-                regions.push(region);
-            }
-        }
-    }
-
-    Ok(merge_pixel_rects(regions))
-}
-
-#[cfg(test)]
-fn compose_window_capture_group(
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    parts: &[WindowCaptureComposingPart],
-) -> Result<WidgetCapture> {
-    let mut capture = WidgetCapture::new_zeroed(
-        WidgetCaptureFormat::Argb32Premultiplied,
-        width_px,
-        height_px,
-        stride,
-        scale_factor,
-    )
-    .map_err(|error| qt_error(error.message().to_owned()))?;
-
-    for part in parts {
-        blend_capture_part_into_window(&mut capture, scale_factor, part)?;
-    }
-
-    Ok(capture)
-}
-
-fn compose_window_capture_group_in_place(
-    bytes: &mut [u8],
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    parts: &[WindowCaptureComposingPart],
-) -> Result<()> {
-    clear_argb32_region_in_bytes(
-        bytes,
-        width_px,
-        height_px,
-        stride,
-        PixelRect {
-            left: 0,
-            top: 0,
-            right: i32::try_from(width_px).map_err(|_| qt_error("target width overflow"))?,
-            bottom: i32::try_from(height_px).map_err(|_| qt_error("target height overflow"))?,
-        },
-    )?;
-    for part in parts {
-        blend_capture_part_into_bytes_region(
-            bytes,
-            width_px,
-            height_px,
-            stride,
-            scale_factor,
-            part,
-            PixelRect {
-                left: 0,
-                top: 0,
-                right: i32::try_from(width_px).map_err(|_| qt_error("target width overflow"))?,
-                bottom: i32::try_from(height_px).map_err(|_| qt_error("target height overflow"))?,
-            },
-        )?;
-    }
-    Ok(())
-}
-
-fn compose_window_capture_groups(
-    grouping: WindowCaptureGrouping,
-    parts: Vec<WindowCaptureComposingPart>,
-) -> Vec<WindowCaptureGroup> {
-    let groups = group_window_capture_parts(grouping, parts);
-    groups
-        .into_iter()
-        .map(|parts| WindowCaptureGroup { parts })
-        .collect()
-}
-
-fn capture_window_widget_exact(window: &impl NodeHandle) -> Result<WidgetCapture> {
-    ensure_live_node(window)?;
-    capture_qt_widget_exact_with_children(window, true)
-}
-
-fn capture_window_overlay_part_exact(
-    generation: u64,
-    window_bounds: &QtDebugNodeBounds,
-    node_id: u32,
-    allow_cached_vello: bool,
-) -> Result<Option<WindowCaptureComposingPart>> {
-    let node = node_by_id(generation, node_id)?;
-    let bounds = debug_node_bounds(node_id)?;
-    if !bounds.visible || bounds.width <= 0 || bounds.height <= 0 {
-        return Ok(None);
-    }
-
-    let Some(capture) = capture_vello_widget_exact(&node, allow_cached_vello, None)? else {
-        return Ok(None);
-    };
-
-    let visible_rects = capture_widget_visible_rects(node_id)?;
-    if visible_rects.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(WindowCaptureComposingPart {
-        node_id,
-        x: bounds.screen_x - window_bounds.screen_x,
-        y: bounds.screen_y - window_bounds.screen_y,
-        width: bounds.width,
-        height: bounds.height,
-        visible_rects,
-        capture: Arc::new(capture),
-    }))
-}
-
-fn collect_window_overlay_parts(
-    generation: u64,
-    window_id: u32,
-    window_bounds: &QtDebugNodeBounds,
-    allow_cached_vello: bool,
-) -> Result<Vec<WindowCaptureComposingPart>> {
-    let subtree_ids = {
-        let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-        state.ensure_generation(generation)?;
-        state.tree.subtree_handles(window_id).map_err(invalid_arg)?
-    };
-
-    let mut parts = Vec::new();
-    for node_id in subtree_ids {
-        if let Some(part) = capture_window_overlay_part_exact(
-            generation,
-            window_bounds,
-            node_id,
-            allow_cached_vello,
-        )? {
-            parts.push(part);
-        }
-    }
-
-    Ok(parts)
-}
-
-fn split_window_overlay_dirty_state(
-    window_id: u32,
-    cached_parts: &[WindowCaptureComposingPart],
-    dirty_nodes: &HashSet<u32>,
-    dirty_region_hints: &[WindowCompositorDirtyRegion],
-) -> (
-    HashSet<u32>,
-    Vec<WindowCompositorDirtyRegion>,
-    HashSet<u32>,
-    Vec<WindowCompositorDirtyRegion>,
-    bool,
-) {
-    let cached_node_ids: HashSet<u32> = cached_parts.iter().map(|part| part.node_id).collect();
-    let overlay_dirty_nodes = dirty_nodes
-        .iter()
-        .copied()
-        .filter(|node_id| cached_node_ids.contains(node_id))
-        .collect::<HashSet<_>>();
-    let overlay_dirty_region_hints = dirty_region_hints
-        .iter()
-        .copied()
-        .filter(|region| cached_node_ids.contains(&region.node_id))
-        .collect::<Vec<_>>();
-    let base_dirty_nodes = dirty_nodes
-        .iter()
-        .copied()
-        .filter(|node_id| *node_id != window_id && !cached_node_ids.contains(node_id))
-        .collect::<HashSet<_>>();
-    let base_dirty_region_hints = dirty_region_hints
-        .iter()
-        .copied()
-        .filter(|region| !cached_node_ids.contains(&region.node_id))
-        .collect::<Vec<_>>();
-    let overlay_frame_tick = dirty_nodes.contains(&window_id);
-
-    (
-        overlay_dirty_nodes,
-        overlay_dirty_region_hints,
-        base_dirty_nodes,
-        base_dirty_region_hints,
-        overlay_frame_tick,
-    )
-}
-
-fn prepare_window_compositor_frame(
-    node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    dirty_flags: u8,
-    interactive_resize: bool,
-) -> Result<Option<Box<QtPreparedWindowCompositorFrame>>> {
-    if !qt::qt_host_started() {
-        return Err(invalid_arg(
-            "call QtApp.start before preparing a window compositor",
-        ));
-    }
-
-    let generation = current_app_generation()?;
-    let window = node_by_id(generation, node_id)?;
-    let class = ensure_live_node(&window)?;
-    let binding = widget_registry().binding_for_node_class(class);
-    if binding.kind_name != "window" {
-        return Err(invalid_arg(format!(
-            "node {node_id} is not a window widget"
-        )));
-    }
-
-    let layout =
-        qt::qt_capture_widget_layout(node_id).map_err(|error| qt_error(error.what().to_owned()))?;
-    if layout.width_px != width_px
-        || layout.height_px != height_px
-        || layout.stride != stride
-        || (layout.scale_factor - scale_factor).abs() > 0.001
-    {
-        clear_window_compositor_cache(node_id);
-        return Ok(None);
-    }
-
-    let previous_cache = load_window_compositor_cache(node_id);
-    let dirty_flags = WindowCompositorDirtyFlags::from_bits(dirty_flags);
-    let has_geometry = dirty_flags.contains(WindowCompositorDirtyFlags::GEOMETRY);
-    let has_scene = dirty_flags.contains(WindowCompositorDirtyFlags::SCENE);
-    let has_pixels = dirty_flags.contains(WindowCompositorDirtyFlags::PIXELS);
-    if has_geometry && interactive_resize {
-        drop(take_window_compositor_geometry_nodes(node_id));
-    }
-    if has_scene {
-        drop(take_window_compositor_scene_nodes(node_id));
-        drop(take_window_compositor_scene_subtrees(node_id));
-    }
-    let dirty_nodes = if has_pixels {
-        take_window_compositor_dirty_nodes(node_id)
-    } else {
-        HashSet::new()
-    };
-    let dirty_region_hints = if has_pixels {
-        take_window_compositor_dirty_regions(node_id)
-    } else {
-        Vec::new()
-    };
-    if has_geometry || has_scene {
-        clear_window_compositor_dirty_nodes(node_id);
-    }
-
-    let window_bounds = debug_node_bounds(node_id)?;
-    let cached_parts = previous_cache
-        .as_ref()
-        .map(|cache| cache.parts.clone())
-        .unwrap_or_default();
-    let (
-        overlay_dirty_nodes,
-        overlay_dirty_region_hints,
-        base_dirty_nodes,
-        base_dirty_region_hints,
-        overlay_frame_tick,
-    ) = split_window_overlay_dirty_state(node_id, &cached_parts, &dirty_nodes, &dirty_region_hints);
-    let recapture_overlays =
-        previous_cache.is_none() || has_geometry || has_scene || overlay_frame_tick;
-    let parts = if recapture_overlays {
-        collect_window_overlay_parts(generation, node_id, &window_bounds, true)?
-    } else if has_pixels
-        && (!overlay_dirty_nodes.is_empty() || !overlay_dirty_region_hints.is_empty())
-    {
-        refresh_window_parts_from_cache(
-            generation,
-            &cached_parts,
-            &overlay_dirty_nodes,
-            &overlay_dirty_region_hints,
-            true,
-        )?
-    } else {
-        cached_parts
-    };
-    let current_cache = WindowCompositorCache {
-        generation,
-        width_px: layout.width_px,
-        height_px: layout.height_px,
-        stride: layout.stride,
-        scale_factor: layout.scale_factor,
-        parts,
-    };
-    store_window_compositor_cache(node_id, current_cache.clone());
-    let prepared_dirty_nodes = if recapture_overlays {
-        current_cache
-            .parts
-            .iter()
-            .map(|part| part.node_id)
-            .collect::<HashSet<_>>()
-    } else {
-        overlay_dirty_nodes
-    };
-    let base_upload_kind = if previous_cache.is_none()
-        || has_geometry
-        || has_scene
-        || !base_dirty_nodes.is_empty()
-        || !base_dirty_region_hints.is_empty()
-    {
-        WindowCompositorPartUploadKind::Full
-    } else {
-        WindowCompositorPartUploadKind::None
-    };
-    Ok(Some(build_prepared_window_compositor_frame(
-        &current_cache,
-        previous_cache.as_ref(),
-        dirty_flags,
-        &prepared_dirty_nodes,
-        &overlay_dirty_region_hints,
-        base_upload_kind,
-    )?))
-}
-
-pub(crate) fn qt_paint_window_compositor(
-    node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    dirty_flags: u8,
-    interactive_resize: bool,
-    bytes: &mut [u8],
-) -> Result<bool> {
-    if !qt::qt_host_started() {
-        return Err(invalid_arg(
-            "call QtApp.start before painting a window compositor",
-        ));
-    }
-
-    let generation = current_app_generation()?;
-    let window = node_by_id(generation, node_id)?;
-    let class = ensure_live_node(&window)?;
-    let binding = widget_registry().binding_for_node_class(class);
-    if binding.kind_name != "window" {
-        return Err(invalid_arg(format!(
-            "node {node_id} is not a window widget"
-        )));
-    }
-
-    let layout =
-        qt::qt_capture_widget_layout(node_id).map_err(|error| qt_error(error.what().to_owned()))?;
-    if layout.width_px != width_px
-        || layout.height_px != height_px
-        || layout.stride != stride
-        || (layout.scale_factor - scale_factor).abs() > 0.001
-    {
-        clear_window_compositor_cache(node_id);
-        return Ok(false);
-    }
-    let required_len = layout
-        .stride
-        .checked_mul(height_px as usize)
-        .ok_or_else(|| qt_error("window compositor target buffer size overflow"))?;
-    if bytes.len() < required_len {
-        return Err(qt_error(
-            "window compositor target buffer is smaller than required",
-        ));
-    }
-    let dirty_flags = WindowCompositorDirtyFlags::from_bits(dirty_flags);
-    let has_geometry = dirty_flags.contains(WindowCompositorDirtyFlags::GEOMETRY);
-    let has_scene = dirty_flags.contains(WindowCompositorDirtyFlags::SCENE);
-    let has_pixels = dirty_flags.contains(WindowCompositorDirtyFlags::PIXELS);
-    let geometry_dirty_nodes = if has_geometry && interactive_resize {
-        take_window_compositor_geometry_nodes(node_id)
-    } else {
-        HashSet::new()
-    };
-    let (scene_dirty_nodes, scene_dirty_subtrees) = if has_scene {
-        (
-            take_window_compositor_scene_nodes(node_id),
-            take_window_compositor_scene_subtrees(node_id),
-        )
-    } else {
-        (HashSet::new(), HashSet::new())
-    };
-    let (dirty_nodes, dirty_region_hints) = if has_pixels {
-        (
-            take_window_compositor_dirty_nodes(node_id),
-            take_window_compositor_dirty_regions(node_id),
-        )
-    } else {
-        (HashSet::new(), Vec::new())
-    };
-
-    if has_geometry {
-        clear_window_compositor_dirty_nodes(node_id);
-        if interactive_resize
-            && reuse_window_compositor_resize_frame(
-                generation,
-                node_id,
-                &layout,
-                &geometry_dirty_nodes,
-                bytes,
-            )?
-            .is_none()
-        {
-            rebuild_window_compositor_frame(generation, node_id, &layout, !has_pixels, bytes)?;
-        } else if !interactive_resize {
-            rebuild_window_compositor_frame(generation, node_id, &layout, !has_pixels, bytes)?;
-        }
-    } else {
-        if has_scene
-            && reuse_window_compositor_scene_frame(
-                generation,
-                node_id,
-                &layout,
-                &scene_dirty_nodes,
-                &scene_dirty_subtrees,
-                bytes,
-            )?
-            .is_none()
-        {
-            clear_window_compositor_dirty_nodes(node_id);
-            rebuild_window_compositor_frame(generation, node_id, &layout, false, bytes)?;
-            return Ok(true);
-        }
-
-        if has_pixels {
-            if reuse_window_compositor_frame(
-                generation,
-                node_id,
-                &layout,
-                true,
-                &dirty_nodes,
-                &dirty_region_hints,
-                bytes,
-            )?
-            .is_none()
-            {
-                clear_window_compositor_dirty_nodes(node_id);
-                rebuild_window_compositor_frame(generation, node_id, &layout, false, bytes)?;
-            }
-        } else if !has_scene
-            && reuse_window_compositor_frame(
-                generation,
-                node_id,
-                &layout,
-                false,
-                &HashSet::new(),
-                &[],
-                bytes,
-            )?
-            .is_none()
-        {
-            rebuild_window_compositor_frame(generation, node_id, &layout, true, bytes)?;
-        }
-    }
-
-    Ok(true)
-}
-
-pub(crate) fn qt_prepare_window_compositor_frame(
-    node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    dirty_flags: u8,
-    interactive_resize: bool,
-) -> Result<Option<Box<QtPreparedWindowCompositorFrame>>> {
-    prepare_window_compositor_frame(
-        node_id,
-        width_px,
-        height_px,
-        stride,
-        scale_factor,
-        dirty_flags,
-        interactive_resize,
-    )
-}
-
-pub(crate) fn qt_window_compositor_frame_part_count(
-    frame: &QtPreparedWindowCompositorFrame,
-) -> usize {
-    frame.part_count()
-}
-
-pub(crate) fn qt_window_compositor_frame_part_meta(
-    frame: &QtPreparedWindowCompositorFrame,
-    index: usize,
-) -> Result<QtWindowCompositorPartMeta> {
-    Ok(frame.part(index)?.meta)
-}
-
-pub(crate) fn qt_window_compositor_frame_part_visible_rects(
-    frame: &QtPreparedWindowCompositorFrame,
-    index: usize,
-) -> Result<Vec<QtRect>> {
-    Ok(frame.part(index)?.visible_rects.clone())
-}
-
-pub(crate) fn qt_window_compositor_frame_part_upload_kind(
-    frame: &QtPreparedWindowCompositorFrame,
-    index: usize,
-) -> Result<u8> {
-    Ok(upload_kind_tag(frame.part(index)?.upload_kind))
-}
-
-pub(crate) fn qt_window_compositor_frame_base_upload_kind(
-    frame: &QtPreparedWindowCompositorFrame,
-) -> u8 {
-    upload_kind_tag(frame.base_upload_kind())
-}
-
-pub(crate) fn qt_window_compositor_frame_part_dirty_rects(
-    frame: &QtPreparedWindowCompositorFrame,
-    index: usize,
-) -> Result<Vec<QtRect>> {
-    Ok(frame.part(index)?.dirty_rects.clone())
-}
-
-pub(crate) fn qt_window_compositor_frame_part_bytes<'a>(
-    frame: &'a QtPreparedWindowCompositorFrame,
-    index: usize,
-) -> Result<&'a [u8]> {
-    Ok(frame.part(index)?.capture.bytes())
-}
-
-pub(crate) fn qt_prepare_texture_widget_frame(
-    node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    stride: usize,
-    scale_factor: f64,
-    rhi_interop: crate::qt::ffi::QtRhiInteropTransport,
-) -> Result<Box<QtPreparedTextureWidgetFrame>> {
-    if !qt::qt_host_started() {
-        return Err(invalid_arg(
-            "call QtApp.start before preparing texture widget frames",
-        ));
-    }
-
-    let generation = current_app_generation()?;
-    let node = node_by_id(generation, node_id)?;
-    ensure_live_node(&node)?;
-
-    let layout =
-        qt::qt_capture_widget_layout(node_id).map_err(|error| qt_error(error.what().to_owned()))?;
-    if layout.width_px != width_px
-        || layout.height_px != height_px
-        || layout.stride != stride
-        || (layout.scale_factor - scale_factor).abs() > 0.001
-    {
-        return Err(qt_error(
-            "texture widget capture layout changed between prepare and render",
-        ));
-    }
-
-    let Some(window_id) = window_ancestor_id_for_node(generation, node_id)? else {
-        return Err(qt_error(format!(
-            "texture widget node {node_id} is not attached to a window",
-        )));
-    };
-    let window = node_by_id(generation, window_id)?;
-    tick_window_frame_exact(&window)?;
-    take_window_next_frame_request_exact(&window)?;
-    let time = node_frame_time(&window)?;
-    let instance = widget_instance_for_node_id(node_id)?;
-    let mut scene = vello::Scene::new();
-    let mut next_frame_requested = false;
-    let mut logical_dirty_rects = Vec::new();
-    let mut frame = VelloFrame::new(
-        f64::from(layout.width_px) / layout.scale_factor.max(f64::EPSILON),
-        f64::from(layout.height_px) / layout.scale_factor.max(f64::EPSILON),
-        layout.scale_factor,
-        time,
-        &mut scene,
-        &mut next_frame_requested,
-        &mut logical_dirty_rects,
-    );
-    match instance.paint(widget_runtime::PaintDevice::Vello(&mut frame)) {
-        Ok(()) => {}
-        Err(error) if error.is_unsupported_paint_device() => {
-            return Err(qt_error(format!(
-                "node {node_id} does not support texture widget rendering"
-            )));
-        }
-        Err(error) => return Err(qt_error(error.to_string())),
-    }
-    let gpu_interop = qt_rhi_interop_from_transport(rhi_interop)?;
-    let dirty_rects = vello_dirty_rects_to_local_pixel_rects(&layout, &logical_dirty_rects)?
-        .into_iter()
-        .map(pixel_rect_to_qt_rect)
-        .collect();
-    match vello_wgpu::render_vello_scene_to_native_texture(
-        node_id,
-        layout.width_px,
-        layout.height_px,
-        layout.scale_factor,
-        &scene,
-        gpu_interop,
-    ) {
-        Ok(native_texture_lease) => Ok(Box::new(QtPreparedTextureWidgetFrame {
-            upload_kind: WindowCompositorPartUploadKind::Full,
-            dirty_rects,
-            next_frame_requested,
-            native_texture_lease: Box::new(native_texture_lease),
-        })),
-        Err(error) => Err(qt_error(format!(
-            "failed to prepare imported texture widget frame for node {node_id}: {error}",
-        ))),
-    }
-}
-
-pub(crate) fn qt_texture_widget_frame_layout(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> QtPreparedTextureWidgetFrameLayout {
-    frame.layout()
-}
-
-pub(crate) fn qt_texture_widget_frame_upload_kind(frame: &QtPreparedTextureWidgetFrame) -> u8 {
-    upload_kind_tag(frame.upload_kind)
-}
-
-pub(crate) fn qt_texture_widget_frame_native_texture_info(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> Result<QtNativeTextureLeaseInfo> {
-    Ok(qt_native_texture_lease_info_to_ffi(
-        frame.native_texture_lease.info(),
-    ))
-}
-
-pub(crate) fn qt_texture_widget_frame_next_frame_requested(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> bool {
-    frame.next_frame_requested
-}
-
-pub(crate) fn qt_texture_widget_frame_dirty_rects(
-    frame: &QtPreparedTextureWidgetFrame,
-) -> Result<Vec<QtRect>> {
-    Ok(frame.dirty_rects.clone())
-}
-
-pub(crate) fn qt_mark_window_compositor_pixels_dirty(window_id: u32, node_id: u32) {
-    mark_window_compositor_dirty_node(window_id, node_id);
-}
-
-pub(crate) fn qt_mark_window_compositor_scene_dirty(window_id: u32, node_id: u32) {
-    mark_window_compositor_scene_node(window_id, node_id);
-}
-
-pub(crate) fn qt_mark_window_compositor_geometry_dirty(window_id: u32, node_id: u32) {
-    mark_window_compositor_geometry_node(window_id, node_id);
-}
-
-pub(crate) fn qt_window_frame_tick(node_id: u32) -> Result<()> {
-    let node = wrap_node_id(node_id)?;
-    tick_window_frame_exact(&node)
-}
-
-pub(crate) fn qt_window_take_next_frame_request(node_id: u32) -> Result<bool> {
-    let node = wrap_node_id(node_id)?;
-    take_window_next_frame_request_exact(&node)
-}
-
-pub(crate) fn qt_mark_window_compositor_pixels_dirty_region(
-    window_id: u32,
-    node_id: u32,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-) {
-    mark_window_compositor_dirty_region(window_id, node_id, x, y, width, height);
-}
-
-fn window_ancestor_id_for_node(generation: u64, node_id: u32) -> Result<Option<u32>> {
-    let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.ensure_generation(generation)?;
-
-    let mut current = Some(node_id);
-    while let Some(id) = current {
-        let class = state
-            .tree
-            .class(id)
-            .ok_or_else(|| invalid_arg(format!("node {id} not found")))?;
-        if widget_registry().binding_for_node_class(class).kind_name == "window" {
-            return Ok(Some(id));
-        }
-        current = state.tree.get_parent(id);
-    }
-
-    Ok(None)
-}
-
-fn read_frame_f64_prop(window: &impl NodeHandle, js_name: &str) -> Result<f64> {
-    let Some(value) = read_prop_exact(window, js_name)? else {
-        return Err(invalid_arg(format!("missing window frame prop {js_name}",)));
-    };
-
-    match value {
-        QtValue::F64(value) => Ok(value),
-        other => Err(invalid_arg(format!(
-            "window frame prop {js_name} returned {} instead of f64",
-            qt_value_type_name(&other),
-        ))),
-    }
-}
-
-fn read_frame_bool_prop(window: &impl NodeHandle, js_name: &str) -> Result<bool> {
-    let Some(value) = read_prop_exact(window, js_name)? else {
-        return Err(invalid_arg(format!("missing window frame prop {js_name}",)));
-    };
-
-    match value {
-        QtValue::Bool(value) => Ok(value),
-        other => Err(invalid_arg(format!(
-            "window frame prop {js_name} returned {} instead of bool",
-            qt_value_type_name(&other),
-        ))),
-    }
-}
-
-fn write_frame_bool_prop(window: &impl NodeHandle, js_name: &str, value: bool) -> Result<()> {
-    apply_prop_by_name(window, js_name, QtValue::Bool(value))?
-        .ok_or_else(|| invalid_arg(format!("missing window frame prop {js_name}")))
-}
-
-fn tick_window_frame_exact(window: &impl NodeHandle) -> Result<()> {
-    write_frame_bool_prop(window, "tick", true)
-}
-
-fn take_window_next_frame_request_exact(window: &impl NodeHandle) -> Result<bool> {
-    let requested = read_frame_bool_prop(window, "nextFrameRequested")?;
-    if requested {
-        write_frame_bool_prop(window, "nextFrameRequested", false)?;
-    }
-    Ok(requested)
-}
-
-fn node_frame_time(node: &impl NodeHandle) -> Result<VelloFrameTime> {
-    let elapsed_ms = read_frame_f64_prop(node, "elapsedMs")?;
-    let delta_ms = read_frame_f64_prop(node, "deltaMs")?;
-
-    Ok(VelloFrameTime {
-        elapsed: Duration::from_secs_f64(elapsed_ms.max(0.0) / 1000.0),
-        delta: Duration::from_secs_f64(delta_ms.max(0.0) / 1000.0),
-    })
-}
-
-fn capture_vello_widget_exact(
-    node: &impl NodeHandle,
-    allow_cached_capture: bool,
-    previous_capture: Option<&WidgetCapture>,
-) -> Result<Option<WidgetCapture>> {
-    let _ = allow_cached_capture;
-    let _ = previous_capture;
-    ensure_live_node(node)?;
-    if node.inner().binding().host.class != "TexturePaintHostWidget" {
-        return Ok(None);
-    }
-
-    capture_qt_widget_exact_with_children(node, false).map(Some)
-}
-
-fn capture_painted_widget_exact_with_children(
-    node: &impl NodeHandle,
-    include_children: bool,
-    allow_cached_vello: bool,
-    previous_capture: Option<&WidgetCapture>,
-) -> Result<WidgetCapture> {
-    if let Some(capture) = capture_vello_widget_exact(node, allow_cached_vello, previous_capture)? {
-        return Ok(capture);
-    }
-
-    capture_qt_widget_exact_with_children(node, include_children)
-}
-
-fn capture_window_part_exact(
-    generation: u64,
-    window_bounds: &QtDebugNodeBounds,
-    node_id: u32,
-    allow_cached_vello: bool,
-) -> Result<Option<WindowCaptureComposingPart>> {
-    let node = node_by_id(generation, node_id)?;
-    let bounds = debug_node_bounds(node_id)?;
-    if !bounds.visible || bounds.width <= 0 || bounds.height <= 0 {
-        return Ok(None);
-    }
-
-    let visible_rects = capture_widget_visible_rects(node_id)?;
-    if visible_rects.is_empty() {
-        return Ok(None);
-    }
-
-    let capture =
-        capture_painted_widget_exact_with_children(&node, false, allow_cached_vello, None)?;
-    Ok(Some(WindowCaptureComposingPart {
-        node_id,
-        x: bounds.screen_x - window_bounds.screen_x,
-        y: bounds.screen_y - window_bounds.screen_y,
-        width: bounds.width,
-        height: bounds.height,
-        visible_rects,
-        capture: Arc::new(capture),
-    }))
-}
-
 pub(crate) fn capture_widget_exact(node: &impl NodeHandle) -> Result<WidgetCapture> {
     let class = ensure_live_node(node)?;
     let binding = widget_registry().binding_for_node_class(class);
     if binding.kind_name == "window" {
-        return capture_window_widget_exact(node);
+        return window_compositor::capture_window_widget_exact(node);
     }
 
-    capture_painted_widget_exact_with_children(node, true, true, None)
-}
-
-fn collect_window_capture_parts(
-    generation: u64,
-    window_id: u32,
-    window_bounds: &QtDebugNodeBounds,
-    allow_cached_vello: bool,
-) -> Result<Vec<WindowCaptureComposingPart>> {
-    let subtree_ids = {
-        let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-        state.ensure_generation(generation)?;
-        state.tree.subtree_handles(window_id).map_err(invalid_arg)?
-    };
-
-    let mut parts = Vec::new();
-    for node_id in subtree_ids {
-        if let Some(part) =
-            capture_window_part_exact(generation, window_bounds, node_id, allow_cached_vello)?
-        {
-            parts.push(part);
-        }
-    }
-
-    Ok(parts)
-}
-
-fn refresh_window_parts_from_cache(
-    generation: u64,
-    cached_parts: &[WindowCaptureComposingPart],
-    dirty_nodes: &HashSet<u32>,
-    dirty_region_hints: &[WindowCompositorDirtyRegion],
-    reuse_cached_geometry: bool,
-) -> Result<Vec<WindowCaptureComposingPart>> {
-    if dirty_nodes.is_empty() {
-        return Ok(cached_parts.to_vec());
-    }
-
-    let cached_node_ids: HashSet<u32> = cached_parts.iter().map(|part| part.node_id).collect();
-    if !dirty_nodes.is_subset(&cached_node_ids) {
-        return Err(qt_error(
-            "window compositor dirty nodes no longer match cached parts",
-        ));
-    }
-
-    let mut parts = Vec::with_capacity(cached_parts.len());
-    for cached in cached_parts {
-        if dirty_nodes.contains(&cached.node_id) {
-            let node = node_by_id(generation, cached.node_id)?;
-            let (x, y, width, height, visible_rects) = if reuse_cached_geometry {
-                (
-                    cached.x,
-                    cached.y,
-                    cached.width,
-                    cached.height,
-                    cached.visible_rects.clone(),
-                )
-            } else {
-                let bounds = debug_node_bounds(cached.node_id)?;
-                if !bounds.visible || bounds.width <= 0 || bounds.height <= 0 {
-                    continue;
-                }
-                let visible_rects = capture_widget_visible_rects(cached.node_id)?;
-                if visible_rects.is_empty() {
-                    continue;
-                }
-                (
-                    cached.x,
-                    cached.y,
-                    bounds.width,
-                    bounds.height,
-                    visible_rects,
-                )
-            };
-            let capture = if let Some(capture) =
-                capture_vello_widget_exact(&node, false, Some(cached.capture.as_ref()))?
-            {
-                capture
-            } else {
-                let local_dirty_regions = dirty_region_hints
-                    .iter()
-                    .filter(|region| region.node_id == cached.node_id)
-                    .filter_map(|region| {
-                        window_dirty_region_to_part_local_logical_rect(cached, *region)
-                    })
-                    .collect::<Vec<_>>();
-                if local_dirty_regions.is_empty() {
-                    capture_qt_widget_exact_with_children(&node, false)?
-                } else {
-                    if cached.capture.format() == WidgetCaptureFormat::Argb32Premultiplied {
-                        let mut capture = cached.capture.as_ref().clone();
-                        capture_qt_widget_regions_into_capture(
-                            &node,
-                            false,
-                            &mut capture,
-                            &local_dirty_regions,
-                        )?;
-                        capture
-                    } else {
-                        capture_qt_widget_exact_with_children(&node, false)?
-                    }
-                }
-            };
-            parts.push(WindowCaptureComposingPart {
-                node_id: cached.node_id,
-                x,
-                y,
-                width,
-                height,
-                visible_rects,
-                capture: Arc::new(capture),
-            });
-        } else {
-            parts.push(cached.clone());
-        }
-    }
-
-    Ok(parts)
-}
-
-fn load_window_compositor_cache(window_id: u32) -> Option<WindowCompositorCache> {
-    let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.window_compositor_cache(window_id).cloned()
-}
-
-fn store_window_compositor_cache(window_id: u32, cache: WindowCompositorCache) {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.set_window_compositor_cache(window_id, cache);
-}
-
-fn clear_window_compositor_cache(window_id: u32) {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.clear_window_compositor_cache(window_id);
-}
-
-fn build_prepared_window_compositor_frame(
-    current_cache: &WindowCompositorCache,
-    previous_cache: Option<&WindowCompositorCache>,
-    dirty_flags: WindowCompositorDirtyFlags,
-    dirty_nodes: &HashSet<u32>,
-    dirty_region_hints: &[WindowCompositorDirtyRegion],
-    base_upload_kind: WindowCompositorPartUploadKind,
-) -> Result<Box<QtPreparedWindowCompositorFrame>> {
-    const PREPARED_FRAME_MAX_SUBRECT_UPLOADS: usize = 1;
-    const PREPARED_FRAME_FULL_UPLOAD_AREA_RATIO: f64 = 0.25;
-
-    let previous_parts = previous_cache.map(|cache| {
-        cache
-            .parts
-            .iter()
-            .map(|part| (part.node_id, part))
-            .collect::<HashMap<_, _>>()
-    });
-    let force_full_upload = previous_cache.is_none();
-    let mut parts = Vec::with_capacity(current_cache.parts.len());
-
-    for part in &current_cache.parts {
-        let previous_part = previous_parts
-            .as_ref()
-            .and_then(|parts_by_node| parts_by_node.get(&part.node_id))
-            .copied();
-        let mut upload_kind = WindowCompositorPartUploadKind::None;
-        let mut dirty_rects = Vec::new();
-
-        if force_full_upload {
-            upload_kind = WindowCompositorPartUploadKind::Full;
-        } else if dirty_flags.contains(WindowCompositorDirtyFlags::GEOMETRY)
-            || dirty_flags.contains(WindowCompositorDirtyFlags::SCENE)
-        {
-            let capture_reused = previous_part
-                .map(|previous| Arc::ptr_eq(&previous.capture, &part.capture))
-                .unwrap_or(false);
-            if !capture_reused {
-                upload_kind = WindowCompositorPartUploadKind::Full;
-            }
-        }
-
-        if upload_kind != WindowCompositorPartUploadKind::Full
-            && dirty_flags.contains(WindowCompositorDirtyFlags::PIXELS)
-            && dirty_nodes.contains(&part.node_id)
-        {
-            for region in dirty_region_hints
-                .iter()
-                .copied()
-                .filter(|region| region.node_id == part.node_id)
-            {
-                if let Some(local_rect) =
-                    dirty_region_local_pixel_rect(current_cache.scale_factor, part, region)?
-                {
-                    dirty_rects.push(local_rect);
-                }
-            }
-
-            let full_area = usize::try_from(part.capture.width_px())
-                .expect("part width fits usize")
-                .saturating_mul(
-                    usize::try_from(part.capture.height_px()).expect("part height fits usize"),
-                );
-            dirty_rects = coalesce_pixel_rects_for_budget(dirty_rects, full_area, 2, 1.5, 1.6, 0.5);
-            if dirty_rects.is_empty() {
-                upload_kind = WindowCompositorPartUploadKind::Full;
-            } else {
-                let dirty_area = dirty_rects
-                    .iter()
-                    .copied()
-                    .map(pixel_rect_area)
-                    .sum::<usize>();
-                if dirty_rects.len() > PREPARED_FRAME_MAX_SUBRECT_UPLOADS
-                    || (full_area != 0
-                        && (dirty_area as f64 / full_area as f64)
-                            >= PREPARED_FRAME_FULL_UPLOAD_AREA_RATIO)
-                {
-                    dirty_rects.clear();
-                    upload_kind = WindowCompositorPartUploadKind::Full;
-                } else {
-                    upload_kind = WindowCompositorPartUploadKind::SubRects;
-                }
-            }
-        }
-
-        parts.push(QtPreparedWindowCompositorPart {
-            meta: part.into_compositor_meta(),
-            visible_rects: part
-                .visible_rects
-                .iter()
-                .map(|rect| QtRect {
-                    x: rect.x,
-                    y: rect.y,
-                    width: rect.width,
-                    height: rect.height,
-                })
-                .collect(),
-            upload_kind,
-            dirty_rects: dirty_rects.into_iter().map(pixel_rect_to_qt_rect).collect(),
-            capture: Arc::clone(&part.capture),
-        });
-    }
-
-    Ok(Box::new(QtPreparedWindowCompositorFrame {
-        base_upload_kind,
-        parts,
-    }))
-}
-
-fn mark_window_compositor_scene_node(window_id: u32, node_id: u32) {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.mark_window_compositor_scene_node(window_id, node_id);
-}
-
-fn mark_window_compositor_geometry_node(window_id: u32, node_id: u32) {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.mark_window_compositor_geometry_node(window_id, node_id);
-}
-
-fn mark_window_compositor_scene_subtree(window_id: u32, node_id: u32) {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.mark_window_compositor_scene_subtree(window_id, node_id);
-}
-
-fn mark_window_compositor_dirty_node(window_id: u32, node_id: u32) {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.mark_window_compositor_dirty_node(window_id, node_id);
-}
-
-fn mark_window_compositor_dirty_region(
-    window_id: u32,
-    node_id: u32,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-) {
-    if width <= 0 || height <= 0 {
-        return;
-    }
-
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.mark_window_compositor_dirty_region(
-        window_id,
-        WindowCompositorDirtyRegion {
-            node_id,
-            x,
-            y,
-            width,
-            height,
-        },
-    );
-}
-
-fn take_window_compositor_dirty_nodes(window_id: u32) -> HashSet<u32> {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.take_window_compositor_dirty_nodes(window_id)
-}
-
-fn take_window_compositor_scene_nodes(window_id: u32) -> HashSet<u32> {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.take_window_compositor_scene_nodes(window_id)
-}
-
-fn take_window_compositor_geometry_nodes(window_id: u32) -> HashSet<u32> {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.take_window_compositor_geometry_nodes(window_id)
-}
-
-fn take_window_compositor_scene_subtrees(window_id: u32) -> HashSet<u32> {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.take_window_compositor_scene_subtrees(window_id)
-}
-
-fn take_window_compositor_dirty_regions(window_id: u32) -> Vec<WindowCompositorDirtyRegion> {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.take_window_compositor_dirty_regions(window_id)
-}
-
-fn clear_window_compositor_dirty_nodes(window_id: u32) {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.clear_window_compositor_dirty_nodes(window_id);
-}
-
-fn coalesce_scene_subtree_roots(tree: &NodeTree, roots: &HashSet<u32>) -> HashSet<u32> {
-    if roots.is_empty() {
-        return HashSet::new();
-    }
-
-    let mut minimal = HashSet::new();
-    'candidate: for root in roots {
-        let mut current = tree.get_parent(*root);
-        while let Some(parent_id) = current {
-            if roots.contains(&parent_id) {
-                continue 'candidate;
-            }
-            current = tree.get_parent(parent_id);
-        }
-        minimal.insert(*root);
-    }
-
-    minimal
-}
-
-fn minimize_scene_subtree_roots(generation: u64, roots: &HashSet<u32>) -> Result<HashSet<u32>> {
-    if roots.is_empty() {
-        return Ok(HashSet::new());
-    }
-
-    let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    state.ensure_generation(generation)?;
-    Ok(coalesce_scene_subtree_roots(&state.tree, roots))
-}
-
-fn rebuild_window_compositor_frame(
-    generation: u64,
-    window_id: u32,
-    layout: &qt::QtWidgetCaptureLayout,
-    allow_cached_vello: bool,
-    bytes: &mut [u8],
-) -> Result<()> {
-    let window_bounds = debug_node_bounds(window_id)?;
-    let parts =
-        collect_window_capture_parts(generation, window_id, &window_bounds, allow_cached_vello)?;
-    compose_window_capture_group_in_place(
-        bytes,
-        layout.width_px,
-        layout.height_px,
-        layout.stride,
-        layout.scale_factor,
-        &parts,
-    )?;
-    let cache = WindowCompositorCache {
-        generation,
-        width_px: layout.width_px,
-        height_px: layout.height_px,
-        stride: layout.stride,
-        scale_factor: layout.scale_factor,
-        parts,
-    };
-    store_window_compositor_cache(window_id, cache);
-    Ok(())
-}
-
-fn resize_reuse_cache_compatible(
-    cache: &WindowCompositorCache,
-    generation: u64,
-    layout: &qt::QtWidgetCaptureLayout,
-) -> bool {
-    cache.generation == generation && (cache.scale_factor - layout.scale_factor).abs() <= 0.001
-}
-
-fn reuse_window_compositor_resize_frame(
-    generation: u64,
-    window_id: u32,
-    layout: &qt::QtWidgetCaptureLayout,
-    geometry_dirty_nodes: &HashSet<u32>,
-    bytes: &mut [u8],
-) -> Result<Option<()>> {
-    let Some(cache) = load_window_compositor_cache(window_id) else {
-        return Ok(None);
-    };
-    if !resize_reuse_cache_compatible(&cache, generation, layout) {
-        return Ok(None);
-    }
-
-    let window_bounds = debug_node_bounds(window_id)?;
-    let cached_parts: HashMap<u32, &WindowCaptureComposingPart> = cache
-        .parts
-        .iter()
-        .map(|part| (part.node_id, part))
-        .collect();
-    let mut parts = Vec::with_capacity(cache.parts.len().max(geometry_dirty_nodes.len()));
-
-    for cached in &cache.parts {
-        if !geometry_dirty_nodes.contains(&cached.node_id) {
-            parts.push(cached.clone());
-            continue;
-        }
-
-        let node = node_by_id(generation, cached.node_id)?;
-        let bounds = debug_node_bounds(cached.node_id)?;
-        if !bounds.visible || bounds.width <= 0 || bounds.height <= 0 {
-            continue;
-        }
-
-        let visible_rects = capture_widget_visible_rects(cached.node_id)?;
-        if visible_rects.is_empty() {
-            continue;
-        }
-
-        let capture = if cached.width == bounds.width && cached.height == bounds.height {
-            cached.capture.clone()
-        } else {
-            Arc::new(capture_painted_widget_exact_with_children(
-                &node, false, false, None,
-            )?)
-        };
-
-        parts.push(WindowCaptureComposingPart {
-            node_id: cached.node_id,
-            x: bounds.screen_x - window_bounds.screen_x,
-            y: bounds.screen_y - window_bounds.screen_y,
-            width: bounds.width,
-            height: bounds.height,
-            visible_rects,
-            capture,
-        });
-    }
-
-    for node_id in geometry_dirty_nodes {
-        if cached_parts.contains_key(node_id) {
-            continue;
-        }
-
-        let node = node_by_id(generation, *node_id)?;
-        let bounds = debug_node_bounds(*node_id)?;
-        if !bounds.visible || bounds.width <= 0 || bounds.height <= 0 {
-            continue;
-        }
-
-        let visible_rects = capture_widget_visible_rects(*node_id)?;
-        if visible_rects.is_empty() {
-            continue;
-        }
-
-        parts.push(WindowCaptureComposingPart {
-            node_id: *node_id,
-            x: bounds.screen_x - window_bounds.screen_x,
-            y: bounds.screen_y - window_bounds.screen_y,
-            width: bounds.width,
-            height: bounds.height,
-            visible_rects,
-            capture: Arc::new(capture_painted_widget_exact_with_children(
-                &node, false, false, None,
-            )?),
-        });
-    }
-
-    compose_window_capture_group_in_place(
-        bytes,
-        layout.width_px,
-        layout.height_px,
-        layout.stride,
-        layout.scale_factor,
-        &parts,
-    )?;
-    let refreshed_cache = WindowCompositorCache {
-        generation,
-        width_px: layout.width_px,
-        height_px: layout.height_px,
-        stride: layout.stride,
-        scale_factor: layout.scale_factor,
-        parts,
-    };
-    store_window_compositor_cache(window_id, refreshed_cache);
-    Ok(Some(()))
-}
-
-fn reuse_window_compositor_scene_frame(
-    generation: u64,
-    window_id: u32,
-    layout: &qt::QtWidgetCaptureLayout,
-    dirty_scene_nodes: &HashSet<u32>,
-    dirty_scene_subtrees: &HashSet<u32>,
-    bytes: &mut [u8],
-) -> Result<Option<()>> {
-    let Some(cache) = load_window_compositor_cache(window_id) else {
-        return Ok(None);
-    };
-    if cache.generation != generation
-        || cache.width_px != layout.width_px
-        || cache.height_px != layout.height_px
-        || cache.stride != layout.stride
-        || (cache.scale_factor - layout.scale_factor).abs() > 0.001
-    {
-        return Ok(None);
-    }
-    if (dirty_scene_nodes.is_empty() && dirty_scene_subtrees.is_empty())
-        || dirty_scene_nodes.contains(&window_id)
-        || dirty_scene_subtrees.contains(&window_id)
-    {
-        return Ok(None);
-    }
-
-    let window_bounds = debug_node_bounds(window_id)?;
-    let window_subtree_ids = {
-        let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-        state.ensure_generation(generation)?;
-        state.tree.subtree_handles(window_id).map_err(invalid_arg)?
-    };
-    let cached_parts: HashMap<u32, WindowCaptureComposingPart> = cache
-        .parts
-        .iter()
-        .cloned()
-        .map(|part| (part.node_id, part))
-        .collect();
-
-    if dirty_scene_subtrees.is_empty() {
-        let mut parts = Vec::new();
-        let mut new_dirty_parts = HashMap::new();
-        for node_id in window_subtree_ids {
-            if dirty_scene_nodes.contains(&node_id) {
-                if let Some(part) =
-                    capture_window_part_exact(generation, &window_bounds, node_id, false)?
-                {
-                    new_dirty_parts.insert(node_id, part.clone());
-                    parts.push(part);
-                }
-            } else if let Some(cached) = cached_parts.get(&node_id) {
-                parts.push(cached.clone());
-            }
-        }
-
-        let dirty_regions = collect_scene_node_dirty_regions(
-            layout.width_px,
-            layout.height_px,
-            layout.scale_factor,
-            dirty_scene_nodes,
-            &cached_parts,
-            &new_dirty_parts,
-        )?;
-        if !dirty_regions.is_empty() {
-            compose_window_capture_regions_in_place(
-                bytes,
-                layout.width_px,
-                layout.height_px,
-                layout.stride,
-                layout.scale_factor,
-                &parts,
-                &dirty_regions,
-            )?;
-        }
-        let refreshed_cache = WindowCompositorCache {
-            generation,
-            width_px: layout.width_px,
-            height_px: layout.height_px,
-            stride: layout.stride,
-            scale_factor: layout.scale_factor,
-            parts,
-        };
-        store_window_compositor_cache(window_id, refreshed_cache);
-        return Ok(Some(()));
-    }
-
-    let minimal_subtree_roots = minimize_scene_subtree_roots(generation, dirty_scene_subtrees)?;
-    let mut affected_subtree_nodes = HashSet::new();
-    {
-        let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-        state.ensure_generation(generation)?;
-        for node_id in &minimal_subtree_roots {
-            for subtree_id in state.tree.subtree_handles(*node_id).map_err(invalid_arg)? {
-                affected_subtree_nodes.insert(subtree_id);
-            }
-        }
-    }
-    let mut parts = Vec::new();
-    for node_id in window_subtree_ids {
-        if affected_subtree_nodes.contains(&node_id) || dirty_scene_nodes.contains(&node_id) {
-            let allow_cached_vello = !dirty_scene_nodes.contains(&node_id);
-            if let Some(part) =
-                capture_window_part_exact(generation, &window_bounds, node_id, allow_cached_vello)?
-            {
-                parts.push(part);
-            }
-        } else if let Some(cached) = cached_parts.get(&node_id) {
-            parts.push(cached.clone());
-        } else {
-            return Ok(None);
-        }
-    }
-
-    compose_window_capture_group_in_place(
-        bytes,
-        layout.width_px,
-        layout.height_px,
-        layout.stride,
-        layout.scale_factor,
-        &parts,
-    )?;
-    let refreshed_cache = WindowCompositorCache {
-        generation,
-        width_px: layout.width_px,
-        height_px: layout.height_px,
-        stride: layout.stride,
-        scale_factor: layout.scale_factor,
-        parts,
-    };
-    store_window_compositor_cache(window_id, refreshed_cache);
-    Ok(Some(()))
-}
-
-fn reuse_window_compositor_frame(
-    generation: u64,
-    window_id: u32,
-    layout: &qt::QtWidgetCaptureLayout,
-    refresh_pixels: bool,
-    dirty_nodes: &HashSet<u32>,
-    dirty_region_hints: &[WindowCompositorDirtyRegion],
-    bytes: &mut [u8],
-) -> Result<Option<()>> {
-    let Some(cache) = load_window_compositor_cache(window_id) else {
-        return Ok(None);
-    };
-    if cache.generation != generation
-        || cache.width_px != layout.width_px
-        || cache.height_px != layout.height_px
-        || cache.stride != layout.stride
-        || (cache.scale_factor - layout.scale_factor).abs() > 0.001
-    {
-        return Ok(None);
-    }
-
-    if !refresh_pixels {
-        return Ok(Some(()));
-    }
-
-    let parts = match refresh_window_parts_from_cache(
-        generation,
-        &cache.parts,
-        dirty_nodes,
-        dirty_region_hints,
-        true,
-    ) {
-        Ok(parts) => parts,
-        Err(_) => return Ok(None),
-    };
-    let mut dirty_regions = Vec::new();
-    let mut nodes_with_region_hints = HashSet::new();
-    for region_hint in dirty_region_hints {
-        nodes_with_region_hints.insert(region_hint.node_id);
-        if let Some(region) = dirty_region_device_bounds(
-            layout.width_px,
-            layout.height_px,
-            layout.scale_factor,
-            *region_hint,
-        )? {
-            dirty_regions.push(region);
-        }
-    }
-    for part in &parts {
-        if dirty_nodes.contains(&part.node_id) && !nodes_with_region_hints.contains(&part.node_id) {
-            if let Some(region) = part_device_bounds_from_dims(
-                layout.width_px,
-                layout.height_px,
-                layout.scale_factor,
-                part,
-            )? {
-                dirty_regions.push(region);
-            }
-        }
-    }
-    let dirty_regions = merge_pixel_rects(dirty_regions);
-    if !dirty_regions.is_empty() {
-        compose_window_capture_regions_in_place(
-            bytes,
-            layout.width_px,
-            layout.height_px,
-            layout.stride,
-            layout.scale_factor,
-            &parts,
-            &dirty_regions,
-        )?;
-    }
-    let refreshed_cache = WindowCompositorCache {
-        generation,
-        width_px: layout.width_px,
-        height_px: layout.height_px,
-        stride: layout.stride,
-        scale_factor: layout.scale_factor,
-        parts,
-    };
-    store_window_compositor_cache(window_id, refreshed_cache);
-    Ok(Some(()))
-}
-
-fn group_window_capture_parts(
-    grouping: WindowCaptureGrouping,
-    parts: Vec<WindowCaptureComposingPart>,
-) -> Vec<Vec<WindowCaptureComposingPart>> {
-    match grouping {
-        WindowCaptureGrouping::Segmented => parts.into_iter().map(|part| vec![part]).collect(),
-        WindowCaptureGrouping::WholeWindow => {
-            if parts.is_empty() {
-                Vec::new()
-            } else {
-                vec![parts]
-            }
-        }
-    }
-}
-
-pub(crate) fn capture_window_frame_exact(
-    window_id: u32,
-    grouping: WindowCaptureGrouping,
-) -> Result<WindowCaptureFrame> {
-    if !qt::qt_host_started() {
-        return Err(invalid_arg(
-            "call QtApp.start before capturing a window frame",
-        ));
-    }
-
-    let generation = current_app_generation()?;
-    let window = node_by_id(generation, window_id)?;
-    let class = ensure_live_node(&window)?;
-    let binding = widget_registry().binding_for_node_class(class);
-    if binding.kind_name != "window" {
-        return Err(invalid_arg(format!(
-            "node {window_id} is not a window widget"
-        )));
-    }
-
-    let window_bounds = debug_node_bounds(window_id)?;
-    let frame_seq = read_frame_f64_prop(&window, "seq")?;
-    let elapsed_ms = read_frame_f64_prop(&window, "elapsedMs")?;
-    let delta_ms = read_frame_f64_prop(&window, "deltaMs")?;
-    qt::qt_capture_widget_layout(window_id).map_err(|error| qt_error(error.what().to_owned()))?;
-    let parts = collect_window_capture_parts(generation, window_id, &window_bounds, true)?;
-    let groups = compose_window_capture_groups(grouping, parts);
-
-    Ok(WindowCaptureFrame {
-        window_id,
-        frame_seq,
-        elapsed_ms,
-        delta_ms,
-        grouping,
-        groups,
-    })
+    window_compositor::capture_painted_widget_exact_with_children(node, true)
 }
 
 pub(crate) fn apply_string_prop_by_id(
@@ -4986,15 +2131,15 @@ pub(crate) fn debug_emit_app_event(name: String) -> Result<()> {
 }
 
 pub(crate) fn request_next_frame_exact(node: &impl NodeHandle) -> Result<()> {
-    write_frame_bool_prop(node, "nextFrameRequested", true)?;
+    window_compositor::write_frame_bool_prop(node, "nextFrameRequested", true)?;
     request_repaint_exact(node)
 }
 
 pub(crate) fn read_window_frame_state_exact(node: &impl NodeHandle) -> Result<QtWindowFrameState> {
     Ok(QtWindowFrameState {
-        seq: read_frame_f64_prop(node, "seq")?,
-        elapsed_ms: read_frame_f64_prop(node, "elapsedMs")?,
-        delta_ms: read_frame_f64_prop(node, "deltaMs")?,
+        seq: window_compositor::read_frame_f64_prop(node, "seq")?,
+        elapsed_ms: window_compositor::read_frame_f64_prop(node, "elapsedMs")?,
+        delta_ms: window_compositor::read_frame_f64_prop(node, "deltaMs")?,
     })
 }
 
@@ -5048,7 +2193,11 @@ pub(crate) fn debug_node_at_point(screen_x: i32, screen_y: i32) -> Result<Option
 }
 
 pub(crate) fn debug_capture_window_frame(window_id: u32) -> Result<QtWindowCaptureFrame> {
-    capture_window_frame_exact(window_id, WindowCaptureGrouping::Segmented)?.into_api_frame()
+    window_compositor::capture_window_frame_exact(
+        window_id,
+        window_compositor::WindowCaptureGrouping::Segmented,
+    )?
+    .into_api_frame()
 }
 
 pub(crate) fn debug_set_inspect_mode(enabled: bool) -> Result<()> {
@@ -5242,20 +2391,34 @@ fn event_values_to_qt_values(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
 
     use super::{
-        build_prepared_window_compositor_frame, coalesce_pixel_rects_for_budget,
-        coalesce_scene_subtree_roots, collect_scene_node_dirty_regions,
-        compose_window_capture_group, compose_window_capture_regions, group_window_capture_parts,
-        lower_exact_prop_value, read_capture_pixel, resize_reuse_cache_compatible,
-        split_window_overlay_dirty_state, vello_dirty_rects_to_local_pixel_rects,
-        write_argb32_premultiplied_pixel, ExactPropValue, ListenerPayload, PartVisibleRect,
-        PixelRect, PremulPixel, QtListenerValue, RuntimeState, WindowCaptureComposingPart,
-        WindowCaptureGroup, WindowCaptureGrouping, WindowCompositorCache,
-        WindowCompositorDirtyFlags, WindowCompositorDirtyRegion,
+        ExactPropValue, ListenerPayload, QtListenerValue, RuntimeState, lower_exact_prop_value,
     };
-    use crate::qt;
+    use crate::window_compositor::{
+        WindowCaptureGrouping,
+        pipeline::{
+            WindowCaptureGroup, coalesce_scene_subtree_roots_in_tree, group_window_capture_parts,
+            resize_reuse_cache_compatible, split_window_overlay_dirty_state,
+            window_dirty_region_to_part_local_logical_rect,
+        },
+        prepare::{
+            PixelRect, PremulPixel, build_prepared_window_compositor_frame,
+            coalesce_pixel_rects_for_budget, collect_scene_node_dirty_regions,
+            compose_window_capture_group, compose_window_capture_regions, read_capture_pixel,
+            write_argb32_premultiplied_pixel,
+        },
+        state::{
+            PartVisibleRect, WindowCaptureComposingPart, WindowCompositorCache,
+            WindowCompositorDirtyFlags, WindowCompositorDirtyRegion, WindowCompositorLayerEntry,
+            WindowCompositorLayerSourceKind, WindowCompositorPartUploadKind,
+        },
+    };
+    use crate::{qt, window_compositor::prepare::vello_dirty_rects_to_local_pixel_rects};
     use qt_solid_runtime::tree::NodeTree;
     use qt_solid_widget_core::{
         decl::{FlexDirection, NodeClass, WidgetTypeId},
@@ -5291,6 +2454,13 @@ mod tests {
             .expect("capture")
             .into(),
         }
+    }
+
+    fn layer_entry(part: WindowCaptureComposingPart) -> WindowCompositorLayerEntry {
+        WindowCompositorLayerEntry::from_capture_part(
+            part,
+            WindowCompositorLayerSourceKind::CpuCapture,
+        )
     }
 
     fn rgba_capture(red: u8, green: u8, blue: u8, alpha: u8) -> Arc<WidgetCapture> {
@@ -5362,7 +2532,7 @@ mod tests {
             height_px: 1,
             stride: 4,
             scale_factor: 1.0,
-            parts: vec![WindowCaptureComposingPart {
+            parts: vec![layer_entry(WindowCaptureComposingPart {
                 node_id: 7,
                 x: 0,
                 y: 0,
@@ -5370,7 +2540,7 @@ mod tests {
                 height: 1,
                 visible_rects: full_visible_rect(1, 1),
                 capture: Arc::clone(&capture),
-            }],
+            })],
         };
 
         let frame = build_prepared_window_compositor_frame(
@@ -5379,12 +2549,64 @@ mod tests {
             WindowCompositorDirtyFlags::from_bits(0),
             &HashSet::new(),
             &[],
-            super::WindowCompositorPartUploadKind::Full,
+            WindowCompositorPartUploadKind::Full,
         )
         .expect("frame");
-        let bytes = frame.part(0).expect("part").capture.bytes();
+        let bytes = frame
+            .part(0)
+            .expect("part")
+            .capture
+            .as_deref()
+            .expect("cpu capture")
+            .bytes();
 
         assert_eq!(bytes.as_ptr(), capture.bytes().as_ptr());
+    }
+
+    #[test]
+    fn prepared_frame_cached_texture_part_omits_cpu_bytes() {
+        let capture = argb_capture(PremulPixel {
+            red: 1,
+            green: 2,
+            blue: 3,
+            alpha: 255,
+        });
+        let cache = WindowCompositorCache {
+            generation: 1,
+            width_px: 1,
+            height_px: 1,
+            stride: 4,
+            scale_factor: 1.0,
+            parts: vec![WindowCompositorLayerEntry::from_capture_part(
+                WindowCaptureComposingPart {
+                    node_id: 7,
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                    visible_rects: full_visible_rect(1, 1),
+                    capture,
+                },
+                WindowCompositorLayerSourceKind::CachedTexture,
+            )],
+        };
+
+        let frame = build_prepared_window_compositor_frame(
+            &cache,
+            None,
+            WindowCompositorDirtyFlags::from_bits(0),
+            &HashSet::new(),
+            &[],
+            WindowCompositorPartUploadKind::Full,
+        )
+        .expect("frame");
+        let part = frame.part(0).expect("part");
+
+        assert_eq!(
+            part.source_kind,
+            WindowCompositorLayerSourceKind::CachedTexture
+        );
+        assert!(part.capture.is_none());
     }
 
     #[test]
@@ -5408,7 +2630,7 @@ mod tests {
             height_px: 64,
             stride: 256,
             scale_factor: 1.0,
-            parts: vec![part.clone()],
+            parts: vec![layer_entry(part.clone())],
         };
         let current_cache = WindowCompositorCache {
             generation: 1,
@@ -5416,7 +2638,7 @@ mod tests {
             height_px: 64,
             stride: 256,
             scale_factor: 1.0,
-            parts: vec![part],
+            parts: vec![layer_entry(part)],
         };
         let dirty_nodes = HashSet::from([7]);
         let dirty_regions = vec![WindowCompositorDirtyRegion {
@@ -5433,15 +2655,12 @@ mod tests {
             WindowCompositorDirtyFlags::PIXELS,
             &dirty_nodes,
             &dirty_regions,
-            super::WindowCompositorPartUploadKind::None,
+            WindowCompositorPartUploadKind::None,
         )
         .expect("frame");
         let part = frame.part(0).expect("part");
 
-        assert_eq!(
-            part.upload_kind,
-            super::WindowCompositorPartUploadKind::SubRects
-        );
+        assert_eq!(part.upload_kind, WindowCompositorPartUploadKind::SubRects);
         assert_eq!(
             part.dirty_rects,
             vec![crate::qt::QtRect {
@@ -5451,7 +2670,10 @@ mod tests {
                 height: 1,
             }]
         );
-        assert!(Arc::ptr_eq(&part.capture, &capture));
+        assert!(Arc::ptr_eq(
+            part.capture.as_ref().expect("cpu capture"),
+            &capture
+        ));
     }
 
     #[test]
@@ -5475,7 +2697,7 @@ mod tests {
             height_px: 64,
             stride: 256,
             scale_factor: 1.0,
-            parts: vec![part.clone()],
+            parts: vec![layer_entry(part.clone())],
         };
         let current_cache = WindowCompositorCache {
             generation: 1,
@@ -5483,7 +2705,7 @@ mod tests {
             height_px: 64,
             stride: 256,
             scale_factor: 1.0,
-            parts: vec![part],
+            parts: vec![layer_entry(part)],
         };
         let dirty_nodes = HashSet::from([7]);
         let dirty_regions = vec![WindowCompositorDirtyRegion {
@@ -5500,15 +2722,12 @@ mod tests {
             WindowCompositorDirtyFlags::PIXELS,
             &dirty_nodes,
             &dirty_regions,
-            super::WindowCompositorPartUploadKind::None,
+            WindowCompositorPartUploadKind::None,
         )
         .expect("frame");
         let part = frame.part(0).expect("part");
 
-        assert_eq!(
-            part.upload_kind,
-            super::WindowCompositorPartUploadKind::Full
-        );
+        assert_eq!(part.upload_kind, WindowCompositorPartUploadKind::Full);
         assert!(part.dirty_rects.is_empty());
     }
 
@@ -5533,7 +2752,7 @@ mod tests {
             height_px: 64,
             stride: 256,
             scale_factor: 1.0,
-            parts: vec![part.clone()],
+            parts: vec![layer_entry(part.clone())],
         };
         let current_cache = WindowCompositorCache {
             generation: 1,
@@ -5541,7 +2760,7 @@ mod tests {
             height_px: 64,
             stride: 256,
             scale_factor: 1.0,
-            parts: vec![part],
+            parts: vec![layer_entry(part)],
         };
         let dirty_nodes = HashSet::from([7]);
         let dirty_regions = vec![
@@ -5567,21 +2786,18 @@ mod tests {
             WindowCompositorDirtyFlags::PIXELS,
             &dirty_nodes,
             &dirty_regions,
-            super::WindowCompositorPartUploadKind::None,
+            WindowCompositorPartUploadKind::None,
         )
         .expect("frame");
         let part = frame.part(0).expect("part");
 
-        assert_eq!(
-            part.upload_kind,
-            super::WindowCompositorPartUploadKind::Full
-        );
+        assert_eq!(part.upload_kind, WindowCompositorPartUploadKind::Full);
         assert!(part.dirty_rects.is_empty());
     }
 
     #[test]
     fn split_window_overlay_dirty_state_separates_base_from_overlay() {
-        let cached_parts = vec![capture_part(7), capture_part(8)];
+        let cached_parts = vec![layer_entry(capture_part(7)), layer_entry(capture_part(8))];
         let dirty_nodes = HashSet::from([2, 7, 9]);
         let dirty_regions = vec![
             WindowCompositorDirtyRegion {
@@ -5634,37 +2850,6 @@ mod tests {
     }
 
     #[test]
-    fn prepared_texture_widget_frame_reports_imported_native_texture_source_kind() {
-        let frame = super::QtPreparedTextureWidgetFrame {
-            upload_kind: super::WindowCompositorPartUploadKind::None,
-            dirty_rects: Vec::new(),
-            next_frame_requested: true,
-            native_texture_lease: Box::new(qt_wgpu_renderer::QtNativeTextureLease::new(
-                qt_wgpu_renderer::QtNativeTextureLeaseInfo {
-                    backend_tag: 4,
-                    format_tag: 2,
-                    width_px: 320,
-                    height_px: 180,
-                    object: 0x1234,
-                    layout: 7,
-                },
-                Arc::new(()),
-            )),
-        };
-
-        let layout = super::qt_texture_widget_frame_layout(&frame);
-        assert_eq!(layout.width_px, 320);
-        assert_eq!(layout.height_px, 180);
-        assert_eq!(layout.stride, 0);
-        assert_eq!(
-            super::qt_texture_widget_frame_native_texture_info(&frame)
-                .expect("native texture info")
-                .object,
-            0x1234
-        );
-    }
-
-    #[test]
     fn window_compositor_dirty_flags_preserve_combined_bits() {
         let combined = WindowCompositorDirtyFlags::GEOMETRY | WindowCompositorDirtyFlags::PIXELS;
 
@@ -5693,7 +2878,7 @@ mod tests {
             height_px: 600,
             stride: 3200,
             scale_factor: 2.0,
-            parts: vec![capture_part(10)],
+            parts: vec![layer_entry(capture_part(10))],
         };
         let layout = crate::qt::QtWidgetCaptureLayout {
             format_tag: 0,
@@ -6039,7 +3224,7 @@ mod tests {
         tree.insert_child(3, 4, None).expect("insert");
 
         let roots = HashSet::from([2_u32, 3_u32, 4_u32]);
-        let minimal = coalesce_scene_subtree_roots(&tree, &roots);
+        let minimal = coalesce_scene_subtree_roots_in_tree(&tree, &roots);
 
         assert_eq!(minimal, HashSet::from([2_u32]));
     }
@@ -6049,10 +3234,10 @@ mod tests {
         let mut state = RuntimeState::new();
         state.app_generation = Some(1);
 
-        state.mark_window_compositor_dirty_node(7, 9);
+        state.compositor.mark_dirty_node(7, 9);
 
         assert_eq!(
-            state.window_compositor_dirty_nodes.get(&7),
+            state.compositor.dirty_nodes_for_test(7),
             Some(&HashSet::from([9_u32]))
         );
     }
@@ -6062,10 +3247,10 @@ mod tests {
         let mut state = RuntimeState::new();
         state.app_generation = Some(1);
 
-        state.mark_window_compositor_geometry_node(7, 9);
+        state.compositor.mark_geometry_node(7, 9);
 
         assert_eq!(
-            state.take_window_compositor_geometry_nodes(7),
+            state.compositor.take_geometry_nodes(7),
             HashSet::from([9_u32])
         );
     }
@@ -6249,7 +3434,7 @@ mod tests {
         };
 
         assert_eq!(
-            super::window_dirty_region_to_part_local_logical_rect(
+            window_dirty_region_to_part_local_logical_rect(
                 &part,
                 WindowCompositorDirtyRegion {
                     node_id: 7,
@@ -6267,7 +3452,7 @@ mod tests {
             })
         );
         assert_eq!(
-            super::window_dirty_region_to_part_local_logical_rect(
+            window_dirty_region_to_part_local_logical_rect(
                 &part,
                 WindowCompositorDirtyRegion {
                     node_id: 7,

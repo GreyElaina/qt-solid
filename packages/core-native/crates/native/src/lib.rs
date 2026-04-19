@@ -4,6 +4,7 @@ mod qt;
 mod runtime;
 mod trace;
 mod vello_wgpu;
+mod window_compositor;
 mod window_host;
 
 #[macro_export]

@@ -1,5 +1,7 @@
 #include "rust_widget_binding_host.h"
 
+#include <QtCore/QEvent>
+#include <QtCore/QVariant>
 #include <functional>
 #include <vector>
 
@@ -53,6 +55,7 @@ public:
   void bind_rust_widget(std::uint32_t node_id, std::uint8_t kind_tag) override {
     rust_node_id_ = node_id;
     kind_tag_ = kind_tag;
+    sync_window_metadata();
   }
 
   void set_frameless(bool value) {
@@ -162,6 +165,7 @@ protected:
 
   void showEvent(QShowEvent *event) override {
     QWidget::showEvent(event);
+    sync_window_metadata();
     autonomous_repaint_timer_.start();
   }
 
@@ -170,7 +174,27 @@ protected:
     QWidget::hideEvent(event);
   }
 
+  bool event(QEvent *event) override {
+    const bool handled = QWidget::event(event);
+    if (event != nullptr &&
+        (event->type() == QEvent::WinIdChange ||
+         event->type() == QEvent::PlatformSurface ||
+         event->type() == QEvent::Show)) {
+      sync_window_metadata();
+    }
+    return handled;
+  }
+
 private:
+  void sync_window_metadata() {
+    constexpr auto property_name = "_qt_solid_root_node_id";
+    if (windowHandle() == nullptr) {
+      return;
+    }
+    windowHandle()->setProperty(property_name,
+                                QVariant::fromValue<qulonglong>(rust_node_id_));
+  }
+
   void apply_window_flags() {
     const bool visible = isVisible();
     const QRect saved_geometry = geometry();
