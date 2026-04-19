@@ -164,7 +164,6 @@ void TexturePaintHostWidget::mark_frame_dirty() {
   Q_D(TexturePaintHostWidget);
   mark_unified_compositor_widget_dirty(this, d->node_id, rect());
   update();
-  qt_solid_spike::qt::window_host_request_wake();
 }
 
 bool TexturePaintHostWidget::event(QEvent *event) {

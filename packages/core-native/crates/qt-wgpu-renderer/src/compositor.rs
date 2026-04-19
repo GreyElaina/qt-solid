@@ -1,9 +1,11 @@
 use std::{
     collections::HashMap,
+    env,
     ffi::c_void,
     num::{NonZeroIsize, NonZeroU32},
     ptr::NonNull,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -119,7 +121,9 @@ pub enum QtCompositorImageFormat {
 impl QtCompositorImageFormat {
     fn texture_format(self) -> wgpu::TextureFormat {
         match self {
-            Self::Bgra8UnormPremultiplied => wgpu::TextureFormat::Bgra8Unorm,
+            // Qt backingstore bytes are display-space premultiplied BGRA.
+            // Sample them as sRGB so compositor output does not get gamma-applied twice.
+            Self::Bgra8UnormPremultiplied => wgpu::TextureFormat::Bgra8UnormSrgb,
             Self::Rgba8UnormPremultiplied => wgpu::TextureFormat::Rgba8Unorm,
         }
     }
@@ -238,9 +242,20 @@ impl CachedImageTexture {
     }
 }
 
+fn base_texture_usage() -> wgpu::TextureUsages {
+    wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING
+}
+
+fn layer_texture_usage() -> wgpu::TextureUsages {
+    wgpu::TextureUsages::COPY_DST
+        | wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::STORAGE_BINDING
+}
+
 struct CompositorPipelineState {
     bind_group_layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::RenderPipeline,
+    sampled_pipeline: wgpu::RenderPipeline,
+    cached_texture_pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
 }
 
@@ -267,6 +282,10 @@ struct WindowCompositorContext {
 type WindowCompositorContextHandle = Arc<Mutex<WindowCompositorContext>>;
 
 static WINDOW_COMPOSITORS: Lazy<Mutex<HashMap<SurfaceKey, WindowCompositorContextHandle>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+static TIMING_ENABLED: Lazy<bool> =
+    Lazy::new(|| std::env::var_os("QT_SOLID_WGPU_TIMING").is_some());
+static COMPOSITOR_TIMINGS: Lazy<Mutex<HashMap<SurfaceKey, CompositorTimingStats>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 const COMPOSITOR_SHADER: &str = r#"
@@ -299,6 +318,165 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return textureSample(layer_texture, layer_sampler, input.uv);
 }
 "#;
+
+const COMPOSITOR_CACHED_TEXTURE_SHADER: &str = r#"
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = vec4<f32>(input.position, 0.0, 1.0);
+    output.uv = input.uv;
+    return output;
+}
+
+@group(0) @binding(0)
+var layer_sampler: sampler;
+
+@group(0) @binding(1)
+var layer_texture: texture_2d<f32>;
+
+fn srgb_channel_to_linear(value: f32) -> f32 {
+    if (value <= 0.04045) {
+        return value / 12.92;
+    }
+    return pow((value + 0.055) / 1.055, 2.4);
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    let sample = textureSample(layer_texture, layer_sampler, input.uv);
+    return vec4<f32>(
+        srgb_channel_to_linear(sample.r),
+        srgb_channel_to_linear(sample.g),
+        srgb_channel_to_linear(sample.b),
+        sample.a,
+    );
+}
+"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CompositorTimingStage {
+    UploadBase,
+    UploadLayers,
+    AcquireSurface,
+    EncodeDraw,
+    SubmitPresent,
+    RenderOverlayLayer,
+}
+
+#[derive(Default)]
+struct TimingAggregate {
+    count: u64,
+    total: Duration,
+}
+
+impl TimingAggregate {
+    fn add_sample(&mut self, duration: Duration) {
+        self.count += 1;
+        self.total += duration;
+    }
+
+    fn average_ms(&self) -> f64 {
+        if self.count == 0 {
+            return 0.0;
+        }
+        self.total.as_secs_f64() * 1000.0 / self.count as f64
+    }
+}
+
+#[derive(Default)]
+struct CompositorTimingStats {
+    decisions: u64,
+    presented: u64,
+    upload_base: TimingAggregate,
+    upload_layers: TimingAggregate,
+    acquire_surface: TimingAggregate,
+    encode_draw: TimingAggregate,
+    submit_present: TimingAggregate,
+    render_overlay_layer: TimingAggregate,
+}
+
+impl CompositorTimingStats {
+    fn stage_mut(&mut self, stage: CompositorTimingStage) -> &mut TimingAggregate {
+        match stage {
+            CompositorTimingStage::UploadBase => &mut self.upload_base,
+            CompositorTimingStage::UploadLayers => &mut self.upload_layers,
+            CompositorTimingStage::AcquireSurface => &mut self.acquire_surface,
+            CompositorTimingStage::EncodeDraw => &mut self.encode_draw,
+            CompositorTimingStage::SubmitPresent => &mut self.submit_present,
+            CompositorTimingStage::RenderOverlayLayer => &mut self.render_overlay_layer,
+        }
+    }
+}
+
+fn timing_enabled() -> bool {
+    *TIMING_ENABLED
+}
+
+fn maybe_log_timing(key: SurfaceKey, stats: &CompositorTimingStats) {
+    if stats.decisions == 0 || stats.decisions % 120 != 0 {
+        return;
+    }
+
+    eprintln!(
+        "qt-wgpu timing kind={} primary=0x{:x} secondary=0x{:x} decisions={} presented={} upload_base_ms={:.3} upload_layers_ms={:.3} acquire_surface_ms={:.3} encode_draw_ms={:.3} submit_present_ms={:.3} render_overlay_layer_ms={:.3}",
+        key.surface_kind,
+        key.primary_handle,
+        key.secondary_handle,
+        stats.decisions,
+        stats.presented,
+        stats.upload_base.average_ms(),
+        stats.upload_layers.average_ms(),
+        stats.acquire_surface.average_ms(),
+        stats.encode_draw.average_ms(),
+        stats.submit_present.average_ms(),
+        stats.render_overlay_layer.average_ms(),
+    );
+}
+
+pub fn record_compositor_present_decision(target: QtCompositorTarget, presented: bool) {
+    if !timing_enabled() {
+        return;
+    }
+
+    let key = target.surface_key();
+    let mut timings = COMPOSITOR_TIMINGS
+        .lock()
+        .expect("qt wgpu compositor timing mutex poisoned");
+    let stats = timings.entry(key).or_default();
+    stats.decisions += 1;
+    if presented {
+        stats.presented += 1;
+    }
+    maybe_log_timing(key, stats);
+}
+
+pub fn record_compositor_timing(
+    target: QtCompositorTarget,
+    stage: CompositorTimingStage,
+    duration: Duration,
+) {
+    if !timing_enabled() {
+        return;
+    }
+
+    let key = target.surface_key();
+    let mut timings = COMPOSITOR_TIMINGS
+        .lock()
+        .expect("qt wgpu compositor timing mutex poisoned");
+    let stats = timings.entry(key).or_default();
+    stats.stage_mut(stage).add_sample(duration);
+    maybe_log_timing(key, stats);
+}
 
 pub fn present_compositor_frame(
     target: QtCompositorTarget,
@@ -336,7 +514,7 @@ pub fn with_window_compositor_layer_texture<T, F>(
     run: F,
 ) -> Result<T>
 where
-    F: FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::Texture, &wgpu::TextureView) -> Result<T>,
+    F: FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView) -> Result<T>,
 {
     let context_handle = load_or_create_window_compositor(target)?;
     let mut context = context_handle
@@ -354,6 +532,7 @@ where
             format,
             width_px,
             height_px,
+            layer_texture_usage(),
             &format!("qt-solid-wgpu-layer-{node_id}"),
         );
         context.layer_textures.insert(node_id, next_entry);
@@ -364,7 +543,7 @@ where
             node_id
         ))
     })?;
-    run(&context.device, &context.queue, &entry.texture, &entry.view)
+    run(&context.device, &context.queue, &entry.view)
 }
 
 fn load_or_create_window_compositor(
@@ -381,6 +560,54 @@ fn load_or_create_window_compositor(
     let compositor = Arc::new(Mutex::new(WindowCompositorContext::new(target)?));
     compositors.insert(key, Arc::clone(&compositor));
     Ok(compositor)
+}
+
+fn preferred_surface_format(
+    formats: &[wgpu::TextureFormat],
+    default_format: wgpu::TextureFormat,
+) -> wgpu::TextureFormat {
+    if default_format.is_srgb() {
+        return default_format;
+    }
+
+    let srgb_variant = default_format.add_srgb_suffix();
+    if formats.contains(&srgb_variant) {
+        srgb_variant
+    } else {
+        default_format
+    }
+}
+
+fn preferred_present_mode(
+    present_modes: &[wgpu::PresentMode],
+    default_present_mode: wgpu::PresentMode,
+) -> wgpu::PresentMode {
+    preferred_present_mode_with_experiment(
+        present_modes,
+        default_present_mode,
+        should_prefer_immediate_present_mode(),
+    )
+}
+
+fn preferred_present_mode_with_experiment(
+    present_modes: &[wgpu::PresentMode],
+    default_present_mode: wgpu::PresentMode,
+    prefer_immediate: bool,
+) -> wgpu::PresentMode {
+    if prefer_immediate && present_modes.contains(&wgpu::PresentMode::Immediate) {
+        wgpu::PresentMode::Immediate
+    } else if present_modes.contains(&wgpu::PresentMode::Mailbox) {
+        wgpu::PresentMode::Mailbox
+    } else if present_modes.contains(&wgpu::PresentMode::Fifo) {
+        wgpu::PresentMode::Fifo
+    } else {
+        default_present_mode
+    }
+}
+
+fn should_prefer_immediate_present_mode() -> bool {
+    cfg!(target_os = "macos")
+        && env::var_os("QT_SOLID_WGPU_PRESENT_IMMEDIATE").is_some_and(|value| value == "1")
 }
 
 impl WindowCompositorContext {
@@ -402,10 +629,17 @@ impl WindowCompositorContext {
             ..Default::default()
         }))
         .map_err(|error| QtWgpuRendererError::new(error.to_string()))?;
+        let capabilities = surface.get_capabilities(&adapter);
         let config = surface
             .get_default_config(&adapter, target.width_px, target.height_px)
-            .ok_or_else(|| {
-                QtWgpuRendererError::new("failed to derive wgpu surface configuration")
+            .ok_or_else(|| QtWgpuRendererError::new("failed to derive wgpu surface configuration"))
+            .map(|mut config| {
+                config.format = preferred_surface_format(&capabilities.formats, config.format);
+                config.present_mode =
+                    preferred_present_mode(&capabilities.present_modes, config.present_mode);
+                config.desired_maximum_frame_latency = 2;
+                config.alpha_mode = wgpu::CompositeAlphaMode::Auto;
+                config
             })?;
         surface.configure(&device, &config);
         let pipeline = create_pipeline_state(&device, config.format);
@@ -429,28 +663,52 @@ impl WindowCompositorContext {
         layers: &[QtCompositorLayerUpload<'_>],
     ) -> Result<()> {
         self.reconfigure_if_needed(base.width_px, base.height_px)?;
-        upload_image(
-            &self.device,
-            &self.queue,
-            &self.pipeline,
-            &mut self.base_texture,
-            base.format,
-            base.width_px,
-            base.height_px,
-            base.stride,
-            base.upload_kind,
-            base.dirty_rects,
-            base.bytes,
-            "qt-solid-wgpu-base-texture",
-        )?;
+        let upload_base_started = Instant::now();
+        if base.upload_kind != QtCompositorUploadKind::None {
+            upload_image(
+                &self.device,
+                &self.queue,
+                &self.pipeline,
+                &mut self.base_texture,
+                base.format,
+                base.width_px,
+                base.height_px,
+                base.stride,
+                base.upload_kind,
+                base.dirty_rects,
+                base.bytes,
+                "qt-solid-wgpu-base-texture",
+            )?;
+        } else if self.base_texture.is_none() {
+            return Err(QtWgpuRendererError::new(
+                "qt compositor cannot reuse base texture before first upload",
+            ));
+        }
+        record_compositor_timing(
+            self.target,
+            CompositorTimingStage::UploadBase,
+            upload_base_started.elapsed(),
+        );
 
+        let upload_layers_started = Instant::now();
         let mut prepared_layers = Vec::with_capacity(layers.len());
         for layer in layers {
             let cached = upload_layer_texture(self, layer)?;
             prepared_layers.push((layer, cached.bind_group.clone()));
         }
+        record_compositor_timing(
+            self.target,
+            CompositorTimingStage::UploadLayers,
+            upload_layers_started.elapsed(),
+        );
 
+        let acquire_surface_started = Instant::now();
         let surface_texture = self.acquire_surface_texture()?;
+        record_compositor_timing(
+            self.target,
+            CompositorTimingStage::AcquireSurface,
+            acquire_surface_started.elapsed(),
+        );
         let surface_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -460,6 +718,7 @@ impl WindowCompositorContext {
                 label: Some("qt-solid-wgpu-compositor-encoder"),
             });
 
+        let encode_draw_started = Instant::now();
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("qt-solid-wgpu-compositor-pass"),
@@ -477,7 +736,7 @@ impl WindowCompositorContext {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline.pipeline);
+            pass.set_pipeline(&self.pipeline.sampled_pipeline);
 
             if let Some(base_texture) = &self.base_texture {
                 draw_quad(
@@ -498,6 +757,11 @@ impl WindowCompositorContext {
             }
 
             for (layer, bind_group) in prepared_layers {
+                if layer.source_kind == QtCompositorLayerSourceKind::CachedTexture {
+                    pass.set_pipeline(&self.pipeline.cached_texture_pipeline);
+                } else {
+                    pass.set_pipeline(&self.pipeline.sampled_pipeline);
+                }
                 for visible_rect in layer.visible_rects {
                     if visible_rect.width <= 0 || visible_rect.height <= 0 {
                         continue;
@@ -528,9 +792,21 @@ impl WindowCompositorContext {
                 }
             }
         }
+        record_compositor_timing(
+            self.target,
+            CompositorTimingStage::EncodeDraw,
+            encode_draw_started.elapsed(),
+        );
 
+        let submit_present_started = Instant::now();
         self.queue.submit([encoder.finish()]);
         surface_texture.present();
+        record_compositor_timing(
+            self.target,
+            CompositorTimingStage::SubmitPresent,
+            submit_present_started.elapsed(),
+        );
+        record_compositor_present_decision(self.target, true);
         Ok(())
     }
 
@@ -619,6 +895,7 @@ fn upload_layer_texture<'a>(
                 layer.format,
                 layer.width_px,
                 layer.height_px,
+                layer_texture_usage(),
                 &format!("qt-solid-wgpu-layer-{}", layer.node_id),
             )
         });
@@ -629,6 +906,7 @@ fn upload_layer_texture<'a>(
             layer.format,
             layer.width_px,
             layer.height_px,
+            layer_texture_usage(),
             &format!("qt-solid-wgpu-layer-{}", layer.node_id),
         );
         upload_kind = QtCompositorUploadKind::Full;
@@ -667,7 +945,13 @@ fn upload_image(
         .unwrap_or(true);
     if needs_recreate {
         *slot = Some(create_cached_texture(
-            device, pipeline, format, width_px, height_px, label,
+            device,
+            pipeline,
+            format,
+            width_px,
+            height_px,
+            base_texture_usage(),
+            label,
         ));
     }
     let effective_upload_kind = if needs_recreate {
@@ -697,6 +981,7 @@ fn create_cached_texture(
     format: QtCompositorImageFormat,
     width_px: u32,
     height_px: u32,
+    usage: wgpu::TextureUsages,
     label: &str,
 ) -> CachedImageTexture {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -710,7 +995,7 @@ fn create_cached_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: format.texture_format(),
-        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -944,9 +1229,13 @@ fn create_pipeline_state(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
 ) -> CompositorPipelineState {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let sampled_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("qt-solid-wgpu-compositor-shader"),
         source: wgpu::ShaderSource::Wgsl(COMPOSITOR_SHADER.into()),
+    });
+    let cached_texture_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("qt-solid-wgpu-compositor-cached-texture-shader"),
+        source: wgpu::ShaderSource::Wgsl(COMPOSITOR_CACHED_TEXTURE_SHADER.into()),
     });
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("qt-solid-wgpu-compositor-bind-group-layout"),
@@ -974,45 +1263,52 @@ fn create_pipeline_state(
         bind_group_layouts: &[&bind_group_layout],
         immediate_size: 0,
     });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("qt-solid-wgpu-compositor-pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[CompositeVertex::layout()],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: surface_format,
-                blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                    alpha: wgpu::BlendComponent {
-                        src_factor: wgpu::BlendFactor::One,
-                        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                        operation: wgpu::BlendOperation::Add,
-                    },
-                }),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
+    let create_pipeline = |label: &str, shader: &wgpu::ShaderModule| -> wgpu::RenderPipeline {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_main"),
+                buffers: &[CompositeVertex::layout()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let sampled_pipeline = create_pipeline("qt-solid-wgpu-compositor-pipeline", &sampled_shader);
+    let cached_texture_pipeline = create_pipeline(
+        "qt-solid-wgpu-compositor-cached-texture-pipeline",
+        &cached_texture_shader,
+    );
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("qt-solid-wgpu-compositor-sampler"),
         mag_filter: wgpu::FilterMode::Linear,
@@ -1023,7 +1319,8 @@ fn create_pipeline_state(
 
     CompositorPipelineState {
         bind_group_layout,
-        pipeline,
+        sampled_pipeline,
+        cached_texture_pipeline,
         sampler,
     }
 }
@@ -1192,5 +1489,66 @@ mod tests {
             panic!("expected Wayland window handle");
         };
         assert_eq!(window.surface.as_ptr() as usize, 11);
+    }
+
+    #[test]
+    fn layer_texture_usage_includes_storage_binding() {
+        assert!(layer_texture_usage().contains(wgpu::TextureUsages::STORAGE_BINDING));
+        assert!(!base_texture_usage().contains(wgpu::TextureUsages::STORAGE_BINDING));
+    }
+
+    #[test]
+    fn bgra_backingstore_sampling_uses_srgb() {
+        assert_eq!(
+            QtCompositorImageFormat::Bgra8UnormPremultiplied.texture_format(),
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        assert_eq!(
+            QtCompositorImageFormat::Rgba8UnormPremultiplied.texture_format(),
+            wgpu::TextureFormat::Rgba8Unorm
+        );
+    }
+
+    #[test]
+    fn preferred_surface_format_upgrades_to_srgb_when_available() {
+        let formats = [
+            wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        ];
+        assert_eq!(
+            preferred_surface_format(&formats, wgpu::TextureFormat::Bgra8Unorm),
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        assert_eq!(
+            preferred_surface_format(&formats, wgpu::TextureFormat::Bgra8UnormSrgb),
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+    }
+
+    #[test]
+    fn preferred_present_mode_prefers_mailbox() {
+        let present_modes = [wgpu::PresentMode::Fifo, wgpu::PresentMode::Mailbox];
+        assert_eq!(
+            preferred_present_mode(&present_modes, wgpu::PresentMode::Fifo),
+            wgpu::PresentMode::Mailbox
+        );
+    }
+
+    #[test]
+    fn preferred_present_mode_falls_back_to_fifo() {
+        let present_modes = [wgpu::PresentMode::Fifo, wgpu::PresentMode::Immediate];
+        assert_eq!(
+            preferred_present_mode(&present_modes, wgpu::PresentMode::Immediate),
+            wgpu::PresentMode::Fifo
+        );
+    }
+
+    #[test]
+    fn preferred_present_mode_can_prefer_immediate_for_experiment() {
+        let present_modes = [wgpu::PresentMode::Fifo, wgpu::PresentMode::Immediate];
+        assert_eq!(
+            preferred_present_mode_with_experiment(&present_modes, wgpu::PresentMode::Fifo, true,),
+            wgpu::PresentMode::Immediate
+        );
     }
 }

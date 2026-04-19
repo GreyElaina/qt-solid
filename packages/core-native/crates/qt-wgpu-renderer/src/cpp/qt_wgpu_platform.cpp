@@ -30,6 +30,7 @@
 #endif
 
 #include <memory>
+#include <cstdint>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -54,6 +55,15 @@ enum class LinuxBackendKind {
 struct PlatformPluginDescriptor {
   const char *wrapper_key;
   const char *delegate_key;
+};
+
+struct BackingStorePixels {
+  std::uint32_t width_px = 0;
+  std::uint32_t height_px = 0;
+  std::size_t stride = 0;
+  rust::Slice<const std::uint8_t> bytes =
+      rust::Slice<const std::uint8_t>(nullptr, 0);
+  QImage image;
 };
 
 bool is_supported_texture_source(QWidget *widget) {
@@ -82,6 +92,27 @@ collect_scaled_dirty_rects(const QRegion &region, const QPoint &offset,
     });
   }
   return dirty_rects;
+}
+
+std::optional<BackingStorePixels>
+read_backingstore_pixels(QPlatformBackingStore *delegate) {
+  QImage image = delegate->toImage();
+  if (image.isNull()) {
+    return std::nullopt;
+  }
+  if (image.format() != QImage::Format_ARGB32_Premultiplied) {
+    image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  }
+
+  BackingStorePixels pixels;
+  pixels.width_px = static_cast<std::uint32_t>(image.width());
+  pixels.height_px = static_cast<std::uint32_t>(image.height());
+  pixels.stride = static_cast<std::size_t>(image.bytesPerLine());
+  pixels.bytes = rust::Slice<const std::uint8_t>(
+      reinterpret_cast<const std::uint8_t *>(image.constBits()),
+      static_cast<std::size_t>(image.sizeInBytes()));
+  pixels.image = std::move(image);
+  return pixels;
 }
 
 #if defined(Q_OS_LINUX)
@@ -432,35 +463,44 @@ public:
       }
     }
 
-    QImage image = delegate_->toImage();
-    if (image.isNull()) {
-      qWarning("qt wgpu compositor received null backingstore image");
-      return FlushFailed;
-    }
-    if (image.format() != QImage::Format_ARGB32_Premultiplied) {
-      image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    }
-
-    const auto target =
-        resolve_compositor_target(window, static_cast<std::uint32_t>(image.width()),
-                                  static_cast<std::uint32_t>(image.height()),
-                                  source_device_pixel_ratio);
-    if (!target.has_value()) {
-      qWarning("qt wgpu compositor failed to resolve raw handles for platform");
-      return FlushFailed;
-    }
-
-    const auto bytes = rust::Slice<const std::uint8_t>(
-        reinterpret_cast<const std::uint8_t *>(image.constBits()),
-        static_cast<std::size_t>(image.sizeInBytes()));
-    auto base_dirty_rects = collect_scaled_dirty_rects(
-        region, offset, source_device_pixel_ratio, source_transform_factor);
     try {
+      auto base_dirty_rects = collect_scaled_dirty_rects(
+          region, offset, source_device_pixel_ratio, source_transform_factor);
+      const auto present_plan = qt_solid_spike::qt::qt_plan_present_window_with_wgpu(
+          node_id_value.toUInt(), base_dirty_rects);
+      if (!present_plan.must_present) {
+        return FlushSuccess;
+      }
+      rust::Slice<const std::uint8_t> base_bytes(nullptr, 0);
+      std::size_t base_stride = present_plan.cached_stride;
+      std::uint32_t target_width_px = present_plan.cached_width_px;
+      std::uint32_t target_height_px = present_plan.cached_height_px;
+      if (present_plan.needs_base_upload) {
+        const auto pixels = read_backingstore_pixels(delegate_.get());
+        if (!pixels.has_value()) {
+          qWarning("qt wgpu compositor received null backingstore pixels");
+          return FlushFailed;
+        }
+        base_bytes = pixels->bytes;
+        base_stride = pixels->stride;
+        target_width_px = pixels->width_px;
+        target_height_px = pixels->height_px;
+      } else if (target_width_px == 0 || target_height_px == 0) {
+        qWarning("qt wgpu compositor missing cached surface size for texture-only flush");
+        return FlushFailed;
+      }
+      const auto target = resolve_compositor_target(window, target_width_px,
+                                                    target_height_px,
+                                                    source_device_pixel_ratio);
+      if (!target.has_value()) {
+        qWarning("qt wgpu compositor failed to resolve raw handles for platform");
+        return FlushFailed;
+      }
       if (qt_solid_spike::qt::qt_present_window_with_wgpu(
-              node_id_value.toUInt(), *target,
-              static_cast<std::size_t>(image.bytesPerLine()),
-              source_device_pixel_ratio, false, std::move(base_dirty_rects),
-              bytes)) {
+              node_id_value.toUInt(), *target, base_stride,
+              source_device_pixel_ratio, present_plan.needs_base_upload,
+              std::move(base_dirty_rects),
+              base_bytes)) {
         return FlushSuccess;
       }
     } catch (const rust::Error &error) {

@@ -60,6 +60,16 @@ pub(crate) struct WindowCompositorDirtyRegion {
     pub(crate) height: i32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WindowCompositorPendingState {
+    pub(crate) geometry_nodes: HashSet<u32>,
+    pub(crate) scene_nodes: HashSet<u32>,
+    pub(crate) scene_subtrees: HashSet<u32>,
+    pub(crate) frame_tick_nodes: HashSet<u32>,
+    pub(crate) dirty_nodes: HashSet<u32>,
+    pub(crate) dirty_regions: Vec<WindowCompositorDirtyRegion>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct WindowCaptureComposingPart {
     pub(crate) node_id: u32,
@@ -125,12 +135,14 @@ pub(crate) struct QtPreparedWindowCompositorPart {
     pub(crate) upload_kind: WindowCompositorPartUploadKind,
     pub(crate) dirty_rects: Vec<QtRect>,
     pub(crate) source_kind: WindowCompositorLayerSourceKind,
+    pub(crate) needs_layer_redraw: bool,
     pub(crate) capture: Option<Arc<WidgetCapture>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct QtPreparedWindowCompositorFrame {
     pub(crate) base_upload_kind: WindowCompositorPartUploadKind,
+    pub(crate) overlay_layout_changed: bool,
     pub(crate) parts: Vec<QtPreparedWindowCompositorPart>,
 }
 
@@ -280,6 +292,7 @@ pub(crate) struct CompositorState {
     geometry_nodes: HashMap<u32, HashSet<u32>>,
     scene_nodes: HashMap<u32, HashSet<u32>>,
     scene_subtrees: HashMap<u32, HashSet<u32>>,
+    frame_tick_nodes: HashMap<u32, HashSet<u32>>,
     dirty_nodes: HashMap<u32, HashSet<u32>>,
     dirty_regions: HashMap<u32, Vec<WindowCompositorDirtyRegion>>,
 }
@@ -292,6 +305,7 @@ impl CompositorState {
             geometry_nodes: HashMap::new(),
             scene_nodes: HashMap::new(),
             scene_subtrees: HashMap::new(),
+            frame_tick_nodes: HashMap::new(),
             dirty_nodes: HashMap::new(),
             dirty_regions: HashMap::new(),
         }
@@ -303,6 +317,7 @@ impl CompositorState {
         self.geometry_nodes.clear();
         self.scene_nodes.clear();
         self.scene_subtrees.clear();
+        self.frame_tick_nodes.clear();
         self.dirty_nodes.clear();
         self.dirty_regions.clear();
     }
@@ -355,6 +370,13 @@ impl CompositorState {
             .insert(node_id);
     }
 
+    pub(crate) fn mark_frame_tick_node(&mut self, window_id: u32, node_id: u32) {
+        self.frame_tick_nodes
+            .entry(window_id)
+            .or_default()
+            .insert(node_id);
+    }
+
     pub(crate) fn mark_dirty_region(
         &mut self,
         window_id: u32,
@@ -383,6 +405,10 @@ impl CompositorState {
         self.scene_subtrees.remove(&window_id).unwrap_or_default()
     }
 
+    pub(crate) fn take_frame_tick_nodes(&mut self, window_id: u32) -> HashSet<u32> {
+        self.frame_tick_nodes.remove(&window_id).unwrap_or_default()
+    }
+
     pub(crate) fn take_dirty_regions(
         &mut self,
         window_id: u32,
@@ -394,6 +420,7 @@ impl CompositorState {
         self.geometry_nodes.remove(&window_id);
         self.scene_nodes.remove(&window_id);
         self.scene_subtrees.remove(&window_id);
+        self.frame_tick_nodes.remove(&window_id);
         self.dirty_nodes.remove(&window_id);
         self.dirty_regions.remove(&window_id);
     }
@@ -423,6 +450,10 @@ impl CompositorState {
             .get(&window_id)
             .is_some_and(|nodes| !nodes.is_empty())
             || self
+                .frame_tick_nodes
+                .get(&window_id)
+                .is_some_and(|nodes| !nodes.is_empty())
+            || self
                 .dirty_regions
                 .get(&window_id)
                 .is_some_and(|regions| !regions.is_empty())
@@ -430,6 +461,41 @@ impl CompositorState {
             flags = flags | WindowCompositorDirtyFlags::PIXELS;
         }
         flags
+    }
+
+    pub(crate) fn pending_state_snapshot(&self, window_id: u32) -> WindowCompositorPendingState {
+        WindowCompositorPendingState {
+            geometry_nodes: self
+                .geometry_nodes
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+            scene_nodes: self
+                .scene_nodes
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+            scene_subtrees: self
+                .scene_subtrees
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+            frame_tick_nodes: self
+                .frame_tick_nodes
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+            dirty_nodes: self
+                .dirty_nodes
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+            dirty_regions: self
+                .dirty_regions
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+        }
     }
 
     #[cfg(test)]
@@ -488,5 +554,24 @@ mod tests {
         state.mark_geometry_node(7, 9);
 
         assert_eq!(state.take_geometry_nodes(7), HashSet::from([9_u32]));
+    }
+
+    #[test]
+    fn frame_tick_nodes_are_tracked_separately() {
+        let mut state = CompositorState::new();
+
+        state.mark_frame_tick_node(7, 11);
+        state.mark_frame_tick_node(7, 13);
+
+        assert!(
+            state
+                .pending_dirty_flags(7)
+                .contains(WindowCompositorDirtyFlags::PIXELS)
+        );
+        assert_eq!(
+            state.take_frame_tick_nodes(7),
+            HashSet::from([11_u32, 13_u32])
+        );
+        assert_eq!(state.take_frame_tick_nodes(7), HashSet::new());
     }
 }

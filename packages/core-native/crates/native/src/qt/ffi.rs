@@ -1,3 +1,4 @@
+use crate::qt::ffi::bridge::QtWindowCompositorPresentPlan;
 use crate::window_compositor::QtPreparedWindowCompositorFrame;
 
 #[cxx::bridge(namespace = "qt_solid_spike::qt")]
@@ -109,6 +110,15 @@ pub(crate) mod bridge {
         scale_factor: f64,
     }
 
+    #[derive(Clone, Copy, Debug)]
+    struct QtWindowCompositorPresentPlan {
+        must_present: bool,
+        needs_base_upload: bool,
+        cached_width_px: u32,
+        cached_height_px: u32,
+        cached_stride: usize,
+    }
+
     extern "Rust" {
         type QtPreparedWindowCompositorFrame;
 
@@ -145,17 +155,20 @@ pub(crate) mod bridge {
             stride: usize,
             scale_factor: f64,
             dirty_flags: u8,
-            interactive_resize: bool,
         ) -> Result<Box<QtPreparedWindowCompositorFrame>>;
         fn qt_present_window_with_wgpu(
             node_id: u32,
             target: QtCompositorTarget,
             stride: usize,
             scale_factor: f64,
-            interactive_resize: bool,
+            needs_base_upload: bool,
             base_dirty_rects: Vec<QtRect>,
             bytes: &[u8],
         ) -> Result<bool>;
+        fn qt_plan_present_window_with_wgpu(
+            node_id: u32,
+            base_dirty_rects: Vec<QtRect>,
+        ) -> Result<QtWindowCompositorPresentPlan>;
         fn qt_window_compositor_frame_part_count(frame: &QtPreparedWindowCompositorFrame) -> usize;
         fn qt_window_compositor_frame_part_meta(
             frame: &QtPreparedWindowCompositorFrame,
@@ -382,7 +395,6 @@ pub(crate) fn qt_prepare_window_compositor_frame(
     stride: usize,
     scale_factor: f64,
     dirty_flags: u8,
-    interactive_resize: bool,
 ) -> napi::Result<Box<QtPreparedWindowCompositorFrame>> {
     crate::window_compositor::qt_prepare_window_compositor_frame(
         node_id,
@@ -391,7 +403,6 @@ pub(crate) fn qt_prepare_window_compositor_frame(
         stride,
         scale_factor,
         dirty_flags,
-        interactive_resize,
     )?
     .ok_or_else(|| napi::Error::from_reason("window compositor layout mismatch"))
 }
@@ -401,7 +412,7 @@ pub(crate) fn qt_present_window_with_wgpu(
     target: QtCompositorTarget,
     stride: usize,
     scale_factor: f64,
-    interactive_resize: bool,
+    needs_base_upload: bool,
     base_dirty_rects: Vec<QtRect>,
     bytes: &[u8],
 ) -> napi::Result<bool> {
@@ -410,10 +421,17 @@ pub(crate) fn qt_present_window_with_wgpu(
         target,
         stride,
         scale_factor,
-        interactive_resize,
+        needs_base_upload,
         base_dirty_rects,
         bytes,
     )
+}
+
+pub(crate) fn qt_plan_present_window_with_wgpu(
+    node_id: u32,
+    base_dirty_rects: Vec<QtRect>,
+) -> napi::Result<QtWindowCompositorPresentPlan> {
+    crate::window_compositor::qt_plan_present_window_with_wgpu(node_id, base_dirty_rects)
 }
 
 pub(crate) fn qt_window_compositor_frame_part_count(

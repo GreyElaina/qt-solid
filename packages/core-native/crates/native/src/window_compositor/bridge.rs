@@ -1,6 +1,9 @@
 use napi::Result;
 
-use crate::qt::{QtRect, QtWindowCompositorPartMeta, ffi::QtCompositorTarget};
+use crate::qt::{
+    QtRect, QtWindowCompositorPartMeta,
+    ffi::{QtCompositorTarget, bridge::QtWindowCompositorPresentPlan},
+};
 
 use super::{
     QtPreparedWindowCompositorFrame, frame_clock, mark_window_compositor_dirty_node,
@@ -37,7 +40,6 @@ pub(crate) fn qt_prepare_window_compositor_frame(
     stride: usize,
     scale_factor: f64,
     dirty_flags: u8,
-    interactive_resize: bool,
 ) -> Result<Option<Box<QtPreparedWindowCompositorFrame>>> {
     pipeline::prepare_window_compositor_frame(
         node_id,
@@ -46,7 +48,6 @@ pub(crate) fn qt_prepare_window_compositor_frame(
         stride,
         scale_factor,
         dirty_flags,
-        interactive_resize,
     )
 }
 
@@ -55,7 +56,7 @@ pub(crate) fn qt_present_window_with_wgpu(
     target: QtCompositorTarget,
     stride: usize,
     scale_factor: f64,
-    interactive_resize: bool,
+    needs_base_upload: bool,
     base_dirty_rects: Vec<QtRect>,
     bytes: &[u8],
 ) -> Result<bool> {
@@ -64,10 +65,17 @@ pub(crate) fn qt_present_window_with_wgpu(
         target,
         stride,
         scale_factor,
-        interactive_resize,
+        needs_base_upload,
         base_dirty_rects,
         bytes,
     )
+}
+
+pub(crate) fn qt_plan_present_window_with_wgpu(
+    node_id: u32,
+    base_dirty_rects: Vec<QtRect>,
+) -> Result<QtWindowCompositorPresentPlan> {
+    pipeline::plan_present_window_with_wgpu(node_id, base_dirty_rects)
 }
 
 pub(crate) fn qt_window_compositor_frame_part_count(

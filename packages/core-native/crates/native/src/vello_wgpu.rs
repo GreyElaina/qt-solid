@@ -1,12 +1,65 @@
-use std::sync::mpsc;
+use std::{
+    collections::HashMap,
+    num::NonZeroUsize,
+    sync::{Mutex, mpsc},
+    time::Instant,
+};
 
+use once_cell::sync::Lazy;
 use qt_solid_widget_core::runtime::{WidgetCapture, WidgetCaptureFormat};
 use qt_wgpu_renderer::{
     QtCompositorTarget, with_window_compositor_device_queue, with_window_compositor_layer_texture,
 };
-use vello::{AaConfig, RenderParams, Renderer, RendererOptions, Scene, peniko::Color, wgpu};
+use vello::{
+    AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene, peniko::Color, wgpu,
+};
 
 use crate::runtime::qt_error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RendererCacheKey {
+    surface_kind: u8,
+    primary_handle: u64,
+    secondary_handle: u64,
+}
+
+static VELLO_RENDERERS: Lazy<Mutex<HashMap<RendererCacheKey, Renderer>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn renderer_cache_key(target: QtCompositorTarget) -> RendererCacheKey {
+    RendererCacheKey {
+        surface_kind: target.surface_kind,
+        primary_handle: target.primary_handle,
+        secondary_handle: target.secondary_handle,
+    }
+}
+
+fn renderer_options() -> RendererOptions {
+    RendererOptions {
+        antialiasing_support: AaSupport::area_only(),
+        num_init_threads: NonZeroUsize::new(1),
+        ..Default::default()
+    }
+}
+
+fn with_cached_renderer<T>(
+    target: QtCompositorTarget,
+    device: &wgpu::Device,
+    run: impl FnOnce(&mut Renderer) -> qt_wgpu_renderer::Result<T>,
+) -> qt_wgpu_renderer::Result<T> {
+    let key = renderer_cache_key(target);
+    let mut renderers = VELLO_RENDERERS
+        .lock()
+        .expect("vello renderer cache mutex poisoned");
+    let renderer = match renderers.entry(key) {
+        std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::hash_map::Entry::Vacant(entry) => entry.insert(
+            Renderer::new(device, renderer_options())
+                .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))?,
+        ),
+    };
+    run(renderer)
+}
 
 fn scaled_scene_for_render(scene: &Scene, scale_factor: f64) -> Scene {
     let mut scaled_scene = Scene::new();
@@ -102,8 +155,6 @@ pub(crate) fn render_vello_scene_to_capture(
     scene: &Scene,
 ) -> napi::Result<WidgetCapture> {
     with_window_compositor_device_queue(target, |device, queue| {
-        let mut renderer = Renderer::new(device, RendererOptions::default())
-            .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))?;
         let scaled_scene = scaled_scene_for_render(scene, scale_factor);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("qt-solid-vello-capture-texture"),
@@ -122,24 +173,26 @@ pub(crate) fn render_vello_scene_to_capture(
             view_formats: &[],
         });
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        renderer
-            .render_to_texture(
-                device,
-                queue,
-                &scaled_scene,
-                &texture_view,
-                &RenderParams {
-                    base_color: Color::from_rgba8(0, 0, 0, 0),
-                    width: width_px,
-                    height: height_px,
-                    antialiasing_method: AaConfig::Area,
-                },
-            )
-            .map_err(|error| {
-                qt_wgpu_renderer::QtWgpuRendererError::new(format!(
-                    "failed to render vello scene to compositor texture for node {node_id}: {error}",
-                ))
-            })?;
+        with_cached_renderer(target, device, |renderer| {
+            renderer
+                .render_to_texture(
+                    device,
+                    queue,
+                    &scaled_scene,
+                    &texture_view,
+                    &RenderParams {
+                        base_color: Color::from_rgba8(0, 0, 0, 0),
+                        width: width_px,
+                        height: height_px,
+                        antialiasing_method: AaConfig::Area,
+                    },
+                )
+                .map_err(|error| {
+                    qt_wgpu_renderer::QtWgpuRendererError::new(format!(
+                        "failed to render vello scene to compositor texture for node {node_id}: {error}",
+                    ))
+                })
+        })?;
         let bytes = read_rgba_texture(device, queue, &texture, width_px, height_px)?;
         let stride = width_px as usize * 4;
         let mut capture = WidgetCapture::new_zeroed(
@@ -170,29 +223,49 @@ pub(crate) fn render_vello_scene_into_compositor_layer(
         qt_wgpu_renderer::QtCompositorImageFormat::Rgba8UnormPremultiplied,
         width_px,
         height_px,
-        |device, queue, _texture, texture_view| {
-            let mut renderer = Renderer::new(device, RendererOptions::default())
-                .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))?;
+        |device, queue, texture_view| {
             let scaled_scene = scaled_scene_for_render(scene, scale_factor);
-            renderer
-                .render_to_texture(
-                    device,
-                    queue,
-                    &scaled_scene,
-                    texture_view,
-                    &RenderParams {
-                        base_color: Color::from_rgba8(0, 0, 0, 0),
-                        width: width_px,
-                        height: height_px,
-                        antialiasing_method: AaConfig::Area,
-                    },
-                )
-                .map_err(|error| {
-                    qt_wgpu_renderer::QtWgpuRendererError::new(format!(
-                        "failed to render vello scene to compositor layer for node {node_id}: {error}",
-                    ))
-                })
+            let started = Instant::now();
+            with_cached_renderer(target, device, |renderer| {
+                renderer
+                    .render_to_texture(
+                        device,
+                        queue,
+                        &scaled_scene,
+                        texture_view,
+                        &RenderParams {
+                            base_color: Color::from_rgba8(0, 0, 0, 0),
+                            width: width_px,
+                            height: height_px,
+                            antialiasing_method: AaConfig::Area,
+                        },
+                    )
+                    .map_err(|error| {
+                        qt_wgpu_renderer::QtWgpuRendererError::new(format!(
+                            "failed to render vello scene to compositor layer for node {node_id}: {error}",
+                        ))
+                    })
+            })?;
+            qt_wgpu_renderer::record_compositor_timing(
+                target,
+                qt_wgpu_renderer::CompositorTimingStage::RenderOverlayLayer,
+                started.elapsed(),
+            );
+            Ok(())
         },
     )
     .map_err(|error| qt_error(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::renderer_options;
+
+    #[test]
+    fn renderer_options_only_enable_area_antialiasing() {
+        let options = renderer_options();
+        assert!(options.antialiasing_support.area);
+        assert!(!options.antialiasing_support.msaa8);
+        assert!(!options.antialiasing_support.msaa16);
+    }
 }

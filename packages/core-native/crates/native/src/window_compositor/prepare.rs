@@ -5,10 +5,8 @@ use std::{
 
 use napi::Result;
 use qt_solid_widget_core::runtime::{WidgetCapture, WidgetCaptureFormat};
-#[cfg(test)]
 use qt_solid_widget_core::vello::VelloDirtyRect;
 
-#[cfg(test)]
 use crate::qt;
 use crate::{
     qt::QtRect,
@@ -352,7 +350,6 @@ fn pixel_rect_area(rect: PixelRect) -> usize {
     width.saturating_mul(height)
 }
 
-#[cfg(test)]
 fn logical_vello_dirty_rect_to_local_pixel_rect(
     layout: &qt::QtWidgetCaptureLayout,
     rect: VelloDirtyRect,
@@ -380,7 +377,6 @@ fn logical_vello_dirty_rect_to_local_pixel_rect(
     }))
 }
 
-#[cfg(test)]
 pub(crate) fn vello_dirty_rects_to_local_pixel_rects(
     layout: &qt::QtWidgetCaptureLayout,
     dirty_rects: &[VelloDirtyRect],
@@ -863,6 +859,7 @@ pub(crate) fn build_prepared_window_compositor_frame(
     dirty_nodes: &HashSet<u32>,
     dirty_region_hints: &[WindowCompositorDirtyRegion],
     base_upload_kind: WindowCompositorPartUploadKind,
+    overlay_layout_changed: bool,
 ) -> Result<Box<QtPreparedWindowCompositorFrame>> {
     const PREPARED_FRAME_MAX_SUBRECT_UPLOADS: usize = 1;
     const PREPARED_FRAME_FULL_UPLOAD_AREA_RATIO: f64 = 0.25;
@@ -882,6 +879,7 @@ pub(crate) fn build_prepared_window_compositor_frame(
             .as_ref()
             .and_then(|parts_by_node| parts_by_node.get(&part.node_id))
             .copied();
+        let needs_layer_redraw = force_full_upload || dirty_nodes.contains(&part.node_id);
         let mut upload_kind = WindowCompositorPartUploadKind::None;
         let mut dirty_rects = Vec::new();
 
@@ -957,6 +955,7 @@ pub(crate) fn build_prepared_window_compositor_frame(
             upload_kind,
             dirty_rects: dirty_rects.into_iter().map(pixel_rect_to_qt_rect).collect(),
             source_kind: part.source_kind(),
+            needs_layer_redraw,
             capture: match part.source_kind() {
                 WindowCompositorLayerSourceKind::CpuCapture => part.capture().cloned(),
                 WindowCompositorLayerSourceKind::CachedTexture => None,
@@ -966,6 +965,7 @@ pub(crate) fn build_prepared_window_compositor_frame(
 
     Ok(Box::new(QtPreparedWindowCompositorFrame {
         base_upload_kind,
+        overlay_layout_changed,
         parts,
     }))
 }

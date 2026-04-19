@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use self::state::{
     PartVisibleRect, WindowCompositorCache, WindowCompositorDirtyFlags,
-    WindowCompositorDirtyRegion, WindowCompositorPartUploadKind,
+    WindowCompositorDirtyRegion, WindowCompositorPartUploadKind, WindowCompositorPendingState,
 };
 use napi::Result;
 use qt_solid_widget_core::runtime::{WidgetCapture, WidgetCaptureFormat};
@@ -22,7 +22,8 @@ use crate::{
 pub(crate) use bridge::{
     qt_mark_window_compositor_geometry_dirty, qt_mark_window_compositor_pixels_dirty,
     qt_mark_window_compositor_pixels_dirty_region, qt_mark_window_compositor_scene_dirty,
-    qt_paint_window_compositor, qt_prepare_window_compositor_frame, qt_present_window_with_wgpu,
+    qt_paint_window_compositor, qt_plan_present_window_with_wgpu,
+    qt_prepare_window_compositor_frame, qt_present_window_with_wgpu,
     qt_window_compositor_frame_base_upload_kind, qt_window_compositor_frame_part_bytes,
     qt_window_compositor_frame_part_count, qt_window_compositor_frame_part_dirty_rects,
     qt_window_compositor_frame_part_meta, qt_window_compositor_frame_part_upload_kind,
@@ -40,6 +41,10 @@ pub(crate) use texture_widget::capture_painted_widget_exact_with_children;
 
 fn load_window_compositor_cache(window_id: u32) -> Option<WindowCompositorCache> {
     crate::runtime::with_compositor_state(|state| state.cache(window_id).cloned())
+}
+
+fn snapshot_window_compositor_pending_state(window_id: u32) -> WindowCompositorPendingState {
+    crate::runtime::with_compositor_state(|state| state.pending_state_snapshot(window_id))
 }
 
 fn store_window_compositor_cache(window_id: u32, cache: WindowCompositorCache) {
@@ -72,6 +77,12 @@ pub(crate) fn mark_window_compositor_scene_subtree(window_id: u32, node_id: u32)
 
 fn mark_window_compositor_dirty_node(window_id: u32, node_id: u32) {
     crate::runtime::with_compositor_state_mut(|state| state.mark_dirty_node(window_id, node_id));
+}
+
+pub(crate) fn mark_window_compositor_frame_tick_node(window_id: u32, node_id: u32) {
+    crate::runtime::with_compositor_state_mut(|state| {
+        state.mark_frame_tick_node(window_id, node_id)
+    });
 }
 
 fn mark_window_compositor_dirty_region(
@@ -114,6 +125,10 @@ fn take_window_compositor_geometry_nodes(window_id: u32) -> HashSet<u32> {
 
 fn take_window_compositor_scene_subtrees(window_id: u32) -> HashSet<u32> {
     crate::runtime::with_compositor_state_mut(|state| state.take_scene_subtrees(window_id))
+}
+
+fn take_window_compositor_frame_tick_nodes(window_id: u32) -> HashSet<u32> {
+    crate::runtime::with_compositor_state_mut(|state| state.take_frame_tick_nodes(window_id))
 }
 
 fn take_window_compositor_dirty_regions(window_id: u32) -> Vec<WindowCompositorDirtyRegion> {

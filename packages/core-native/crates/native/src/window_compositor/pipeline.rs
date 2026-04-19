@@ -8,6 +8,7 @@ use napi::Result;
 use qt_solid_runtime::tree::NodeTree;
 use qt_solid_widget_core::runtime::{WidgetCapture, WidgetCaptureFormat};
 
+use crate::qt::ffi::bridge::QtWindowCompositorPresentPlan;
 use crate::{
     api::{
         QtCapturedWidgetComposingPart, QtDebugNodeBounds, QtWindowCaptureFrame,
@@ -30,18 +31,21 @@ use super::state::{
     PartVisibleRect, QtPreparedWindowCompositorFrame, WindowCaptureComposingPart,
     WindowCompositorCache, WindowCompositorDirtyFlags, WindowCompositorDirtyRegion,
     WindowCompositorLayerEntry, WindowCompositorLayerSourceKind, WindowCompositorPartUploadKind,
+    WindowCompositorPendingState,
 };
 use super::texture_widget::{
-    capture_painted_widget_exact_with_children, render_texture_widget_part_into_compositor_layer,
+    TextureWidgetLayerRenderResult, capture_painted_widget_exact_with_children,
+    render_texture_widget_part_into_compositor_layer,
 };
 use super::{
     base_upload_kind_to_compositor, capture_qt_widget_exact_with_children,
     capture_qt_widget_regions_into_capture, capture_widget_visible_rects,
     clear_window_compositor_cache, clear_window_compositor_dirty_nodes,
     compositor_target_to_renderer, effective_window_compositor_dirty_flags,
-    load_window_compositor_cache, qt_rects_to_compositor, store_window_compositor_cache,
-    store_window_compositor_target, take_window_compositor_dirty_nodes,
-    take_window_compositor_dirty_regions, take_window_compositor_geometry_nodes,
+    load_window_compositor_cache, qt_rects_to_compositor, snapshot_window_compositor_pending_state,
+    store_window_compositor_cache, store_window_compositor_target,
+    take_window_compositor_dirty_nodes, take_window_compositor_dirty_regions,
+    take_window_compositor_frame_tick_nodes, take_window_compositor_geometry_nodes,
     take_window_compositor_scene_nodes, take_window_compositor_scene_subtrees,
     upload_kind_to_compositor, widget_capture_format_to_compositor,
 };
@@ -171,6 +175,54 @@ fn cache_entries_from_capture_parts(
         .collect()
 }
 
+fn scale_logical_rect_to_compositor(
+    rect: QtRect,
+    scale_factor: f64,
+    bounds_width_px: u32,
+    bounds_height_px: u32,
+) -> Option<qt_wgpu_renderer::QtCompositorRect> {
+    let left = (f64::from(rect.x) * scale_factor).round() as i32;
+    let top = (f64::from(rect.y) * scale_factor).round() as i32;
+    let right = (f64::from(rect.x + rect.width) * scale_factor).round() as i32;
+    let bottom = (f64::from(rect.y + rect.height) * scale_factor).round() as i32;
+
+    let clipped_left = left.clamp(0, bounds_width_px as i32);
+    let clipped_top = top.clamp(0, bounds_height_px as i32);
+    let clipped_right = right.clamp(0, bounds_width_px as i32);
+    let clipped_bottom = bottom.clamp(0, bounds_height_px as i32);
+    (clipped_right > clipped_left && clipped_bottom > clipped_top).then_some(
+        qt_wgpu_renderer::QtCompositorRect {
+            x: clipped_left,
+            y: clipped_top,
+            width: clipped_right - clipped_left,
+            height: clipped_bottom - clipped_top,
+        },
+    )
+}
+
+fn part_geometry_to_compositor(
+    meta: &crate::qt::QtWindowCompositorPartMeta,
+) -> (i32, i32, i32, i32) {
+    let x = (f64::from(meta.x) * meta.scale_factor).round() as i32;
+    let y = (f64::from(meta.y) * meta.scale_factor).round() as i32;
+    let width = i32::try_from(meta.width_px).expect("part width_px fits i32");
+    let height = i32::try_from(meta.height_px).expect("part height_px fits i32");
+    (x, y, width, height)
+}
+
+fn visible_rects_to_compositor(
+    meta: &crate::qt::QtWindowCompositorPartMeta,
+    visible_rects: &[QtRect],
+) -> Vec<qt_wgpu_renderer::QtCompositorRect> {
+    visible_rects
+        .iter()
+        .copied()
+        .filter_map(|rect| {
+            scale_logical_rect_to_compositor(rect, meta.scale_factor, meta.width_px, meta.height_px)
+        })
+        .collect()
+}
+
 fn cpu_capture_parts_from_layer_entries(
     parts: &[WindowCompositorLayerEntry],
 ) -> Result<Vec<WindowCaptureComposingPart>> {
@@ -276,12 +328,13 @@ pub(crate) fn split_window_overlay_dirty_state(
     cached_parts: &[WindowCompositorLayerEntry],
     dirty_nodes: &HashSet<u32>,
     dirty_region_hints: &[WindowCompositorDirtyRegion],
+    frame_tick_nodes: &HashSet<u32>,
 ) -> (
     HashSet<u32>,
     Vec<WindowCompositorDirtyRegion>,
     HashSet<u32>,
     Vec<WindowCompositorDirtyRegion>,
-    bool,
+    HashSet<u32>,
 ) {
     let cached_node_ids: HashSet<u32> = cached_parts.iter().map(|part| part.node_id).collect();
     let overlay_dirty_nodes = dirty_nodes
@@ -304,15 +357,162 @@ pub(crate) fn split_window_overlay_dirty_state(
         .copied()
         .filter(|region| !cached_node_ids.contains(&region.node_id))
         .collect::<Vec<_>>();
-    let overlay_frame_tick = dirty_nodes.contains(&window_id);
+    let overlay_frame_tick_nodes = frame_tick_nodes
+        .iter()
+        .copied()
+        .filter(|node_id| cached_node_ids.contains(node_id))
+        .collect::<HashSet<_>>();
 
     (
         overlay_dirty_nodes,
         overlay_dirty_region_hints,
         base_dirty_nodes,
         base_dirty_region_hints,
-        overlay_frame_tick,
+        overlay_frame_tick_nodes,
     )
+}
+
+fn layer_entry_metadata_matches(
+    previous: &WindowCompositorLayerEntry,
+    current: &WindowCompositorLayerEntry,
+) -> bool {
+    previous.node_id == current.node_id
+        && previous.x == current.x
+        && previous.y == current.y
+        && previous.width == current.width
+        && previous.height == current.height
+        && previous.visible_rects == current.visible_rects
+        && previous.format_tag == current.format_tag
+        && previous.width_px == current.width_px
+        && previous.height_px == current.height_px
+        && previous.stride == current.stride
+        && (previous.scale_factor - current.scale_factor).abs() <= 0.001
+        && previous.source_kind() == current.source_kind()
+}
+
+fn diff_overlay_layout(
+    previous_cache: Option<&WindowCompositorCache>,
+    current_cache: &WindowCompositorCache,
+) -> (bool, HashSet<u32>) {
+    let Some(previous_cache) = previous_cache else {
+        return (
+            !current_cache.parts.is_empty(),
+            current_cache
+                .parts
+                .iter()
+                .map(|part| part.node_id)
+                .collect(),
+        );
+    };
+
+    let previous_parts = previous_cache
+        .parts
+        .iter()
+        .map(|part| (part.node_id, part))
+        .collect::<HashMap<_, _>>();
+    let current_parts = current_cache
+        .parts
+        .iter()
+        .map(|part| (part.node_id, part))
+        .collect::<HashMap<_, _>>();
+    let mut changed_nodes = HashSet::new();
+    let mut layout_changed = previous_cache.parts.len() != current_cache.parts.len();
+
+    for current in &current_cache.parts {
+        match previous_parts.get(&current.node_id).copied() {
+            Some(previous) if layer_entry_metadata_matches(previous, current) => {}
+            _ => {
+                changed_nodes.insert(current.node_id);
+                layout_changed = true;
+            }
+        }
+    }
+
+    for previous in &previous_cache.parts {
+        if !current_parts.contains_key(&previous.node_id) {
+            layout_changed = true;
+        }
+    }
+
+    (layout_changed, changed_nodes)
+}
+
+fn plan_window_compositor_present_for_state(
+    window_id: u32,
+    cache: Option<&WindowCompositorCache>,
+    pending_state: &WindowCompositorPendingState,
+    has_base_dirty_rects: bool,
+) -> QtWindowCompositorPresentPlan {
+    let Some(cache) = cache else {
+        return QtWindowCompositorPresentPlan {
+            must_present: true,
+            needs_base_upload: true,
+            cached_width_px: 0,
+            cached_height_px: 0,
+            cached_stride: 0,
+        };
+    };
+
+    let overlay_node_ids = cache
+        .parts
+        .iter()
+        .map(|part| part.node_id)
+        .collect::<HashSet<_>>();
+    let has_base_pixel_dirty = pending_state
+        .dirty_nodes
+        .iter()
+        .any(|node_id| *node_id != window_id && !overlay_node_ids.contains(node_id))
+        || pending_state
+            .dirty_regions
+            .iter()
+            .any(|region| !overlay_node_ids.contains(&region.node_id));
+    let has_base_layout_dirty = pending_state
+        .geometry_nodes
+        .iter()
+        .any(|node_id| !overlay_node_ids.contains(node_id))
+        || pending_state
+            .scene_nodes
+            .iter()
+            .any(|node_id| !overlay_node_ids.contains(node_id))
+        || pending_state
+            .scene_subtrees
+            .iter()
+            .any(|node_id| *node_id != window_id && !overlay_node_ids.contains(node_id));
+    let has_overlay_pixel_dirty = pending_state
+        .dirty_nodes
+        .iter()
+        .any(|node_id| overlay_node_ids.contains(node_id))
+        || pending_state
+            .dirty_regions
+            .iter()
+            .any(|region| overlay_node_ids.contains(&region.node_id))
+        || pending_state
+            .frame_tick_nodes
+            .iter()
+            .any(|node_id| overlay_node_ids.contains(node_id));
+    let has_overlay_layout_dirty = pending_state
+        .geometry_nodes
+        .iter()
+        .any(|node_id| overlay_node_ids.contains(node_id))
+        || pending_state
+            .scene_nodes
+            .iter()
+            .any(|node_id| overlay_node_ids.contains(node_id))
+        || pending_state
+            .scene_subtrees
+            .iter()
+            .any(|node_id| overlay_node_ids.contains(node_id) || *node_id == window_id);
+    let needs_base_upload = has_base_pixel_dirty || has_base_layout_dirty;
+    let must_present =
+        has_base_dirty_rects || needs_base_upload || has_overlay_pixel_dirty || has_overlay_layout_dirty;
+
+    QtWindowCompositorPresentPlan {
+        must_present,
+        needs_base_upload,
+        cached_width_px: cache.width_px,
+        cached_height_px: cache.height_px,
+        cached_stride: cache.stride,
+    }
 }
 
 pub(crate) fn coalesce_scene_subtree_roots(
@@ -373,7 +573,6 @@ pub(crate) fn prepare_window_compositor_frame(
     stride: usize,
     scale_factor: f64,
     dirty_flags: u8,
-    interactive_resize: bool,
 ) -> Result<Option<Box<QtPreparedWindowCompositorFrame>>> {
     if !qt::qt_host_started() {
         return Err(invalid_arg(
@@ -407,13 +606,26 @@ pub(crate) fn prepare_window_compositor_frame(
     let has_geometry = dirty_flags.contains(WindowCompositorDirtyFlags::GEOMETRY);
     let has_scene = dirty_flags.contains(WindowCompositorDirtyFlags::SCENE);
     let has_pixels = dirty_flags.contains(WindowCompositorDirtyFlags::PIXELS);
-    if has_geometry && interactive_resize {
-        drop(take_window_compositor_geometry_nodes(node_id));
-    }
-    if has_scene {
-        drop(take_window_compositor_scene_nodes(node_id));
-        drop(take_window_compositor_scene_subtrees(node_id));
-    }
+    let geometry_dirty_nodes = if has_geometry {
+        take_window_compositor_geometry_nodes(node_id)
+    } else {
+        HashSet::new()
+    };
+    let scene_dirty_nodes = if has_scene {
+        take_window_compositor_scene_nodes(node_id)
+    } else {
+        HashSet::new()
+    };
+    let scene_dirty_subtrees = if has_scene {
+        take_window_compositor_scene_subtrees(node_id)
+    } else {
+        HashSet::new()
+    };
+    let frame_tick_nodes = if has_pixels {
+        take_window_compositor_frame_tick_nodes(node_id)
+    } else {
+        HashSet::new()
+    };
     let dirty_nodes = if has_pixels {
         take_window_compositor_dirty_nodes(node_id)
     } else {
@@ -427,7 +639,6 @@ pub(crate) fn prepare_window_compositor_frame(
     if has_geometry || has_scene {
         clear_window_compositor_dirty_nodes(node_id);
     }
-
     let window_bounds = debug_node_bounds(node_id)?;
     let cached_parts = previous_cache
         .as_ref()
@@ -438,19 +649,28 @@ pub(crate) fn prepare_window_compositor_frame(
         overlay_dirty_region_hints,
         base_dirty_nodes,
         base_dirty_region_hints,
-        overlay_frame_tick,
-    ) = split_window_overlay_dirty_state(node_id, &cached_parts, &dirty_nodes, &dirty_region_hints);
-    let recapture_overlays =
-        previous_cache.is_none() || has_geometry || has_scene || overlay_frame_tick;
-    let parts = if recapture_overlays {
+        overlay_frame_tick_nodes,
+    ) = split_window_overlay_dirty_state(
+        node_id,
+        &cached_parts,
+        &dirty_nodes,
+        &dirty_region_hints,
+        &frame_tick_nodes,
+    );
+    let recapture_overlay_metadata = previous_cache.is_none() || has_geometry || has_scene;
+    let overlay_refresh_nodes = overlay_dirty_nodes
+        .union(&overlay_frame_tick_nodes)
+        .copied()
+        .collect::<HashSet<_>>();
+    let parts = if recapture_overlay_metadata {
         collect_window_overlay_parts(generation, node_id, &window_bounds)?
     } else if has_pixels
-        && (!overlay_dirty_nodes.is_empty() || !overlay_dirty_region_hints.is_empty())
+        && (!overlay_refresh_nodes.is_empty() || !overlay_dirty_region_hints.is_empty())
     {
         refresh_window_parts_from_cache(
             generation,
             &cached_parts,
-            &overlay_dirty_nodes,
+            &overlay_refresh_nodes,
             &overlay_dirty_region_hints,
             true,
         )?
@@ -465,19 +685,37 @@ pub(crate) fn prepare_window_compositor_frame(
         scale_factor: layout.scale_factor,
         parts,
     };
+    let (overlay_layout_changed, changed_overlay_nodes) =
+        diff_overlay_layout(previous_cache.as_ref(), &current_cache);
+    let overlay_node_ids = current_cache
+        .parts
+        .iter()
+        .map(|part| part.node_id)
+        .collect::<HashSet<_>>();
+    let base_layout_dirty = geometry_dirty_nodes
+        .iter()
+        .any(|node_id| !overlay_node_ids.contains(node_id))
+        || scene_dirty_nodes
+            .iter()
+            .any(|node_id| !overlay_node_ids.contains(node_id))
+        || scene_dirty_subtrees.iter().any(|dirty_node_id| {
+            *dirty_node_id != node_id && !overlay_node_ids.contains(dirty_node_id)
+        });
     store_window_compositor_cache(node_id, current_cache.clone());
-    let prepared_dirty_nodes = if recapture_overlays {
+    let prepared_dirty_nodes = if previous_cache.is_none() {
         current_cache
             .parts
             .iter()
             .map(|part| part.node_id)
             .collect::<HashSet<_>>()
     } else {
-        overlay_dirty_nodes
+        overlay_refresh_nodes
+            .union(&changed_overlay_nodes)
+            .copied()
+            .collect::<HashSet<_>>()
     };
     let base_upload_kind = if previous_cache.is_none()
-        || has_geometry
-        || has_scene
+        || base_layout_dirty
         || !base_dirty_nodes.is_empty()
         || !base_dirty_region_hints.is_empty()
     {
@@ -492,6 +730,7 @@ pub(crate) fn prepare_window_compositor_frame(
         &prepared_dirty_nodes,
         &overlay_dirty_region_hints,
         base_upload_kind,
+        overlay_layout_changed,
     )?))
 }
 
@@ -1187,14 +1426,14 @@ pub(crate) fn present_window_with_wgpu(
     target: QtCompositorTarget,
     stride: usize,
     scale_factor: f64,
-    interactive_resize: bool,
+    needs_base_upload: bool,
     base_dirty_rects: Vec<QtRect>,
     bytes: &[u8],
 ) -> Result<bool> {
     let generation = current_app_generation()?;
     store_window_compositor_target(node_id, target);
-    let dirty_flags =
-        effective_window_compositor_dirty_flags(node_id, !base_dirty_rects.is_empty());
+    let has_base_dirty_rects = !base_dirty_rects.is_empty();
+    let dirty_flags = effective_window_compositor_dirty_flags(node_id, needs_base_upload);
     let Some(frame) = prepare_window_compositor_frame(
         node_id,
         target.width_px,
@@ -1202,11 +1441,16 @@ pub(crate) fn present_window_with_wgpu(
         stride,
         scale_factor,
         dirty_flags,
-        interactive_resize,
     )?
     else {
         return Ok(false);
     };
+    if !prepared_frame_requires_present(&frame, has_base_dirty_rects) {
+        let render_target =
+            compositor_target_to_renderer(target).map_err(|error| qt_error(error.to_string()))?;
+        qt_wgpu_renderer::record_compositor_present_decision(render_target, false);
+        return Ok(true);
+    }
     let current_cache = load_window_compositor_cache(node_id);
     let cached_parts = current_cache
         .as_ref()
@@ -1222,6 +1466,13 @@ pub(crate) fn present_window_with_wgpu(
     let render_target =
         compositor_target_to_renderer(target).map_err(|error| qt_error(error.to_string()))?;
     let base_dirty_rects = qt_rects_to_compositor(&base_dirty_rects);
+    let effective_base_upload = needs_base_upload
+        || frame.base_upload_kind() != WindowCompositorPartUploadKind::None;
+    if effective_base_upload && bytes.is_empty() {
+        return Err(qt_error(
+            "window compositor requires backingstore bytes for base upload",
+        ));
+    }
     let base_upload = qt_wgpu_renderer::QtCompositorBaseUpload {
         format: qt_wgpu_renderer::QtCompositorImageFormat::Bgra8UnormPremultiplied,
         width_px: target.width_px,
@@ -1229,7 +1480,7 @@ pub(crate) fn present_window_with_wgpu(
         stride,
         upload_kind: base_upload_kind_to_compositor(
             frame.base_upload_kind(),
-            !base_dirty_rects.is_empty(),
+            effective_base_upload && has_base_dirty_rects,
         ),
         dirty_rects: base_dirty_rects.as_slice(),
         bytes,
@@ -1237,89 +1488,292 @@ pub(crate) fn present_window_with_wgpu(
     let visible_rects = frame
         .parts
         .iter()
-        .map(|part| {
-            part.visible_rects
-                .iter()
-                .map(|rect| qt_wgpu_renderer::QtCompositorRect {
-                    x: rect.x,
-                    y: rect.y,
-                    width: rect.width,
-                    height: rect.height,
-                })
-                .collect::<Vec<_>>()
-        })
+        .map(|part| visible_rects_to_compositor(&part.meta, &part.visible_rects))
         .collect::<Vec<_>>();
     let dirty_rects = frame
         .parts
         .iter()
         .map(|part| qt_rects_to_compositor(&part.dirty_rects))
         .collect::<Vec<_>>();
-    let layer_uploads = frame
+    let mut use_cached_texture_by_index = Vec::with_capacity(frame.parts.len());
+    let mut fallback_captures = HashMap::new();
+    for (index, part) in frame.parts.iter().enumerate() {
+        let direct_render_result = if part.source_kind
+            == WindowCompositorLayerSourceKind::CachedTexture
+            && part.needs_layer_redraw
+        {
+            render_texture_widget_part_into_compositor_layer(
+                generation,
+                render_target,
+                part.meta.node_id,
+            )
+            .ok()
+        } else if part.source_kind == WindowCompositorLayerSourceKind::CachedTexture {
+            Some(TextureWidgetLayerRenderResult {
+                rendered: false,
+                next_frame_requested: false,
+                local_dirty_rects_px: Vec::new(),
+            })
+        } else {
+            None
+        };
+        let use_cached_texture =
+            if part.source_kind == WindowCompositorLayerSourceKind::CachedTexture {
+                !part.needs_layer_redraw || direct_render_result.is_some()
+            } else {
+                false
+            };
+        if !use_cached_texture
+            && part.capture.is_none()
+            && cached_parts
+                .get(&part.meta.node_id)
+                .and_then(|entry| entry.capture())
+                .is_none()
+            && part.source_kind == WindowCompositorLayerSourceKind::CachedTexture
+        {
+            let node = node_by_id(generation, part.meta.node_id)?;
+            let capture = capture_painted_widget_exact_with_children(&node, false)?;
+            fallback_captures.insert(part.meta.node_id, capture);
+        }
+        if use_cached_texture_by_index.len() != index {
+            return Err(qt_error("window compositor layer planning index drifted"));
+        }
+        use_cached_texture_by_index.push(use_cached_texture);
+    }
+
+    let mut layer_uploads = Vec::with_capacity(frame.parts.len());
+    for (((part, visible_rects), dirty_rects), use_cached_texture) in frame
         .parts
         .iter()
         .zip(visible_rects.iter())
         .zip(dirty_rects.iter())
-        .map(|((part, visible_rects), dirty_rects)| {
-            let rendered_direct = part.source_kind
-                == WindowCompositorLayerSourceKind::CachedTexture
-                && render_texture_widget_part_into_compositor_layer(
-                    generation,
-                    render_target,
-                    part.meta.node_id,
-                )
-                .unwrap_or(false);
-            let source_kind = if rendered_direct {
-                qt_wgpu_renderer::QtCompositorLayerSourceKind::CachedTexture
+        .zip(use_cached_texture_by_index.iter().copied())
+    {
+        let source_kind = if use_cached_texture {
+            qt_wgpu_renderer::QtCompositorLayerSourceKind::CachedTexture
+        } else {
+            qt_wgpu_renderer::QtCompositorLayerSourceKind::CpuBytes
+        };
+        let bytes = if use_cached_texture {
+            &[][..]
+        } else if let Some(capture) = part.capture.as_deref() {
+            capture.bytes()
+        } else if let Some(capture) = cached_parts
+            .get(&part.meta.node_id)
+            .and_then(|entry| entry.capture())
+        {
+            capture.bytes()
+        } else if part.source_kind == WindowCompositorLayerSourceKind::CachedTexture {
+            fallback_captures
+                .get(&part.meta.node_id)
+                .expect("fallback capture was planned")
+                .bytes()
+        } else {
+            return Err(qt_error(format!(
+                "window compositor part {} is missing CPU fallback bytes",
+                part.meta.node_id
+            )));
+        };
+        let (x, y, width, height) = part_geometry_to_compositor(&part.meta);
+        layer_uploads.push(qt_wgpu_renderer::QtCompositorLayerUpload {
+            node_id: part.meta.node_id,
+            source_kind,
+            format: widget_capture_format_to_compositor(part.meta.format_tag)?,
+            x,
+            y,
+            width,
+            height,
+            width_px: part.meta.width_px,
+            height_px: part.meta.height_px,
+            stride: part.meta.stride,
+            upload_kind: if use_cached_texture {
+                qt_wgpu_renderer::QtCompositorUploadKind::None
             } else {
-                qt_wgpu_renderer::QtCompositorLayerSourceKind::CpuBytes
-            };
-            let bytes = if rendered_direct {
-                &[][..]
+                upload_kind_to_compositor(part.upload_kind)
+            },
+            dirty_rects: if use_cached_texture {
+                &[]
             } else {
-                part.capture
-                    .as_deref()
-                    .map(|capture| capture.bytes())
-                    .or_else(|| {
-                        cached_parts
-                            .get(&part.meta.node_id)
-                            .and_then(|entry| entry.capture())
-                            .map(|capture| capture.bytes())
-                    })
-                    .ok_or_else(|| {
-                        qt_error(format!(
-                            "window compositor part {} is missing CPU fallback bytes",
-                            part.meta.node_id
-                        ))
-                    })?
-            };
-            Ok(qt_wgpu_renderer::QtCompositorLayerUpload {
-                node_id: part.meta.node_id,
-                source_kind,
-                format: widget_capture_format_to_compositor(part.meta.format_tag)?,
-                x: part.meta.x,
-                y: part.meta.y,
-                width: part.meta.width,
-                height: part.meta.height,
-                width_px: part.meta.width_px,
-                height_px: part.meta.height_px,
-                stride: part.meta.stride,
-                upload_kind: if rendered_direct {
-                    qt_wgpu_renderer::QtCompositorUploadKind::None
-                } else {
-                    upload_kind_to_compositor(part.upload_kind)
-                },
-                dirty_rects: if rendered_direct {
-                    &[]
-                } else {
-                    dirty_rects.as_slice()
-                },
-                visible_rects: visible_rects.as_slice(),
-                bytes,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+                dirty_rects.as_slice()
+            },
+            visible_rects: visible_rects.as_slice(),
+            bytes,
+        });
+    }
 
     qt_wgpu_renderer::present_compositor_frame(render_target, &base_upload, &layer_uploads)
         .map_err(|error| qt_error(error.to_string()))?;
     Ok(true)
+}
+
+pub(crate) fn plan_present_window_with_wgpu(
+    node_id: u32,
+    base_dirty_rects: Vec<QtRect>,
+) -> Result<QtWindowCompositorPresentPlan> {
+    let cache = load_window_compositor_cache(node_id);
+    let pending_state = snapshot_window_compositor_pending_state(node_id);
+    Ok(plan_window_compositor_present_for_state(
+        node_id,
+        cache.as_ref(),
+        &pending_state,
+        !base_dirty_rects.is_empty(),
+    ))
+}
+
+fn prepared_frame_requires_present(
+    frame: &QtPreparedWindowCompositorFrame,
+    has_base_dirty_rects: bool,
+) -> bool {
+    if has_base_dirty_rects || frame.base_upload_kind() != WindowCompositorPartUploadKind::None {
+        return true;
+    }
+    if frame.overlay_layout_changed {
+        return true;
+    }
+
+    frame.parts.iter().any(|part| {
+        part.needs_layer_redraw || part.upload_kind != WindowCompositorPartUploadKind::None
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        part_geometry_to_compositor, prepared_frame_requires_present,
+        scale_logical_rect_to_compositor, visible_rects_to_compositor,
+    };
+    use crate::{
+        qt::{QtRect, QtWindowCompositorPartMeta},
+        window_compositor::state::{
+            QtPreparedWindowCompositorFrame, QtPreparedWindowCompositorPart,
+            WindowCompositorLayerSourceKind, WindowCompositorPartUploadKind,
+        },
+    };
+
+    fn part_meta() -> QtWindowCompositorPartMeta {
+        QtWindowCompositorPartMeta {
+            node_id: 7,
+            format_tag: 2,
+            x: 12,
+            y: 18,
+            width: 128,
+            height: 128,
+            width_px: 256,
+            height_px: 256,
+            stride: 0,
+            scale_factor: 2.0,
+        }
+    }
+
+    fn prepared_part() -> QtPreparedWindowCompositorPart {
+        QtPreparedWindowCompositorPart {
+            meta: part_meta(),
+            visible_rects: vec![],
+            upload_kind: WindowCompositorPartUploadKind::None,
+            dirty_rects: vec![],
+            source_kind: WindowCompositorLayerSourceKind::CachedTexture,
+            needs_layer_redraw: false,
+            capture: None,
+        }
+    }
+
+    #[test]
+    fn compositor_geometry_uses_device_pixels() {
+        let meta = part_meta();
+        assert_eq!(part_geometry_to_compositor(&meta), (24, 36, 256, 256));
+    }
+
+    #[test]
+    fn compositor_visible_rects_are_scaled_and_clamped() {
+        let meta = part_meta();
+        let rects = visible_rects_to_compositor(
+            &meta,
+            &[QtRect {
+                x: 0,
+                y: 0,
+                width: 128,
+                height: 128,
+            }],
+        );
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].x, 0);
+        assert_eq!(rects[0].y, 0);
+        assert_eq!(rects[0].width, 256);
+        assert_eq!(rects[0].height, 256);
+    }
+
+    #[test]
+    fn compositor_scaled_rect_drops_empty_after_clamp() {
+        let rect = scale_logical_rect_to_compositor(
+            QtRect {
+                x: 300,
+                y: 300,
+                width: 10,
+                height: 10,
+            },
+            2.0,
+            256,
+            256,
+        );
+        assert!(rect.is_none());
+    }
+
+    #[test]
+    fn prepared_frame_without_dirty_skips_present() {
+        let frame = QtPreparedWindowCompositorFrame {
+            base_upload_kind: WindowCompositorPartUploadKind::None,
+            overlay_layout_changed: false,
+            parts: vec![prepared_part()],
+        };
+
+        assert!(!prepared_frame_requires_present(&frame, false));
+    }
+
+    #[test]
+    fn prepared_frame_with_base_dirty_forces_present() {
+        let frame = QtPreparedWindowCompositorFrame {
+            base_upload_kind: WindowCompositorPartUploadKind::None,
+            overlay_layout_changed: false,
+            parts: vec![prepared_part()],
+        };
+
+        assert!(prepared_frame_requires_present(&frame, true));
+    }
+
+    #[test]
+    fn prepared_frame_with_layer_redraw_forces_present() {
+        let mut part = prepared_part();
+        part.needs_layer_redraw = true;
+        let frame = QtPreparedWindowCompositorFrame {
+            base_upload_kind: WindowCompositorPartUploadKind::None,
+            overlay_layout_changed: false,
+            parts: vec![part],
+        };
+
+        assert!(prepared_frame_requires_present(&frame, false));
+    }
+
+    #[test]
+    fn prepared_frame_with_upload_forces_present() {
+        let mut part = prepared_part();
+        part.upload_kind = WindowCompositorPartUploadKind::Full;
+        let frame = QtPreparedWindowCompositorFrame {
+            base_upload_kind: WindowCompositorPartUploadKind::None,
+            overlay_layout_changed: false,
+            parts: vec![part],
+        };
+
+        assert!(prepared_frame_requires_present(&frame, false));
+    }
+
+    #[test]
+    fn prepared_frame_with_overlay_layout_change_forces_present() {
+        let frame = QtPreparedWindowCompositorFrame {
+            base_upload_kind: WindowCompositorPartUploadKind::None,
+            overlay_layout_changed: true,
+            parts: vec![prepared_part()],
+        };
+
+        assert!(prepared_frame_requires_present(&frame, false));
+    }
 }

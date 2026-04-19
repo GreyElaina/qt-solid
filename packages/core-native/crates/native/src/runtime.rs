@@ -1764,6 +1764,20 @@ pub(crate) fn request_repaint_exact(node: &impl NodeHandle) -> Result<()> {
     }
     qt::qt_request_repaint(node.inner().id).map_err(|error| qt_error(error.what().to_owned()))
 }
+
+pub(crate) fn request_window_repaint_exact(window: &impl NodeHandle) -> Result<()> {
+    ensure_live_node(window)?;
+    qt::qt_request_repaint(window.inner().id).map_err(|error| qt_error(error.what().to_owned()))
+}
+
+pub(crate) fn request_overlay_next_frame_exact(
+    window: &impl NodeHandle,
+    overlay_node_id: u32,
+) -> Result<()> {
+    ensure_live_node(window)?;
+    window_compositor::mark_window_compositor_frame_tick_node(window.inner().id, overlay_node_id);
+    request_window_repaint_exact(window)
+}
 pub(crate) fn capture_widget_exact(node: &impl NodeHandle) -> Result<WidgetCapture> {
     let class = ensure_live_node(node)?;
     let binding = widget_registry().binding_for_node_class(class);
@@ -2132,7 +2146,7 @@ pub(crate) fn debug_emit_app_event(name: String) -> Result<()> {
 
 pub(crate) fn request_next_frame_exact(node: &impl NodeHandle) -> Result<()> {
     window_compositor::write_frame_bool_prop(node, "nextFrameRequested", true)?;
-    request_repaint_exact(node)
+    request_window_repaint_exact(node)
 }
 
 pub(crate) fn read_window_frame_state_exact(node: &impl NodeHandle) -> Result<QtWindowFrameState> {
@@ -2550,6 +2564,7 @@ mod tests {
             &HashSet::new(),
             &[],
             WindowCompositorPartUploadKind::Full,
+            false,
         )
         .expect("frame");
         let bytes = frame
@@ -2598,6 +2613,7 @@ mod tests {
             &HashSet::new(),
             &[],
             WindowCompositorPartUploadKind::Full,
+            false,
         )
         .expect("frame");
         let part = frame.part(0).expect("part");
@@ -2656,6 +2672,7 @@ mod tests {
             &dirty_nodes,
             &dirty_regions,
             WindowCompositorPartUploadKind::None,
+            false,
         )
         .expect("frame");
         let part = frame.part(0).expect("part");
@@ -2723,6 +2740,7 @@ mod tests {
             &dirty_nodes,
             &dirty_regions,
             WindowCompositorPartUploadKind::None,
+            false,
         )
         .expect("frame");
         let part = frame.part(0).expect("part");
@@ -2787,6 +2805,7 @@ mod tests {
             &dirty_nodes,
             &dirty_regions,
             WindowCompositorPartUploadKind::None,
+            false,
         )
         .expect("frame");
         let part = frame.part(0).expect("part");
@@ -2821,8 +2840,14 @@ mod tests {
             overlay_dirty_regions,
             base_dirty_nodes,
             base_dirty_regions,
-            overlay_frame_tick,
-        ) = split_window_overlay_dirty_state(2, &cached_parts, &dirty_nodes, &dirty_regions);
+            overlay_frame_tick_nodes,
+        ) = split_window_overlay_dirty_state(
+            2,
+            &cached_parts,
+            &dirty_nodes,
+            &dirty_regions,
+            &HashSet::from([7_u32]),
+        );
 
         assert_eq!(overlay_dirty_nodes, HashSet::from([7]));
         assert_eq!(
@@ -2846,7 +2871,7 @@ mod tests {
                 height: 8,
             }]
         );
-        assert!(overlay_frame_tick);
+        assert_eq!(overlay_frame_tick_nodes, HashSet::from([7_u32]));
     }
 
     #[test]

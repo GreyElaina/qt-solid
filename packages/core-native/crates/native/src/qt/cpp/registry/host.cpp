@@ -44,7 +44,6 @@ public:
       tick_frame();
       focus->update();
       update();
-      qt_solid_spike::qt::window_host_request_wake();
     });
   }
 
