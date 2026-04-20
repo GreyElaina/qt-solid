@@ -1,0 +1,10 @@
+[package]
+name = "qt-compositor-x11"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+qt-compositor-core = { version = "0.1.0", path = "../qt-compositor-core" }
+qt-compositor-gpu = { version = "0.1.0", path = "../qt-compositor-gpu" }
+qt-compositor-surface = { version = "0.1.0", path = "../qt-compositor-surface" }
+qt-compositor-types = { version = "0.1.0", path = "../qt-compositor-types" }

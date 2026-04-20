@@ -31,7 +31,8 @@ mod spin_triangle {
     };
     use qt_widget_derive::{Qt, qt_entity, qt_methods};
 
-    use crate::core_widgets::{Paint, TexturePaintHost, VelloFrame};
+    use crate::core_widgets::{Paint, PaintSceneFrame, TexturePaintHost};
+    use qt_solid_widget_core::vello::PaintScene;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct SpinTriangleDirtyBounds {
@@ -123,8 +124,8 @@ mod spin_triangle {
 
     #[qt_methods]
     #[qt(host)]
-    impl Paint<VelloFrame<'_>> for SpinTriangleWidget {
-        fn paint(&mut self, frame: &mut VelloFrame<'_>) {
+    impl Paint<PaintSceneFrame<'_>> for SpinTriangleWidget {
+        fn paint(&mut self, frame: &mut PaintSceneFrame<'_>) {
             let width = frame.width();
             let height = frame.height();
             if width <= 16.0 || height <= 16.0 {
@@ -181,19 +182,17 @@ mod spin_triangle {
 
             let scene = frame.scene();
 
-            scene.fill(
-                Fill::NonZero,
+            scene.set_solid_brush(VelloColor::from_rgba8(7, 12, 20, 255));
+            scene.fill_path(
                 Affine::IDENTITY,
-                VelloColor::from_rgba8(7, 12, 20, 255),
-                None,
+                Fill::NonZero,
                 &Rect::new(0.0, 0.0, width, height),
             );
 
-            scene.stroke(
-                &Stroke::new(1.5),
+            scene.set_solid_brush(VelloColor::from_rgba8(255, 255, 255, 18));
+            scene.stroke_path(
                 Affine::IDENTITY,
-                VelloColor::from_rgba8(255, 255, 255, 18),
-                None,
+                &Stroke::new(1.5),
                 &Rect::new(6.0, 6.0, width - 6.0, height - 6.0),
             );
 
@@ -203,21 +202,11 @@ mod spin_triangle {
             triangle.line_to(vertices[2]);
             triangle.close_path();
 
-            scene.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                VelloColor::from_rgba8(76, 213, 255, 210),
-                None,
-                &triangle,
-            );
+            scene.set_solid_brush(VelloColor::from_rgba8(76, 213, 255, 210));
+            scene.fill_path(Affine::IDENTITY, Fill::NonZero, &triangle);
 
-            scene.stroke(
-                &Stroke::new(triangle_stroke_width),
-                Affine::IDENTITY,
-                VelloColor::from_rgba8(255, 255, 255, 230),
-                None,
-                &triangle,
-            );
+            scene.set_solid_brush(VelloColor::from_rgba8(255, 255, 255, 230));
+            scene.stroke_path(Affine::IDENTITY, &Stroke::new(triangle_stroke_width), &triangle);
 
             let marker_colors = [
                 VelloColor::from_rgba8(255, 99, 132, 255),
@@ -225,11 +214,10 @@ mod spin_triangle {
                 VelloColor::from_rgba8(54, 162, 235, 255),
             ];
             for (vertex, color) in current_vertices.into_iter().zip(marker_colors) {
-                scene.fill(
-                    Fill::NonZero,
+                scene.set_solid_brush(color);
+                scene.fill_path(
                     Affine::IDENTITY,
-                    color,
-                    None,
+                    Fill::NonZero,
                     &Rect::new(
                         vertex.x - marker_radius,
                         vertex.y - marker_radius,

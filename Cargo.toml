@@ -10,6 +10,6 @@ members = [
     "packages/core-widgets",
     "packages/example-widgets",
     "packages/example-widgets/crates/schema",
-    "packages/core-native/crates/widgets-registry", "packages/core-native/crates/qt-wgpu-renderer",
+    "packages/core-native/crates/widgets-registry", "packages/core-native/crates/qt-wgpu-renderer", "packages/core-native/crates/qt-compositor-types", "packages/core-native/crates/qt-compositor-core", "packages/core-native/crates/qt-compositor-gpu", "packages/core-native/crates/qt-compositor-surface", "packages/core-native/crates/qt-compositor-macos", "packages/core-native/crates/qt-compositor-windows", "packages/core-native/crates/qt-compositor-x11", "packages/core-native/crates/qt-compositor-wayland",
 ]
 resolver = "2"

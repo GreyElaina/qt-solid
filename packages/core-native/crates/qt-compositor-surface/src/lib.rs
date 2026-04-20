@@ -1,15 +1,27 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     ffi::c_void,
     num::{NonZeroIsize, NonZeroU32},
     ptr::NonNull,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    sync::{Arc, Condvar, Mutex},
+    thread,
+    time::Instant,
 };
 
 use bytemuck::{Pod, Zeroable};
 use once_cell::sync::Lazy;
+use qt_compositor_core::Compositor;
+use qt_compositor_gpu::{
+    CompositorTimingStage, record_compositor_present_decision, record_compositor_timing,
+};
+use qt_compositor_types::{
+    QT_COMPOSITOR_SURFACE_APPKIT_NS_VIEW, QT_COMPOSITOR_SURFACE_WAYLAND_SURFACE,
+    QT_COMPOSITOR_SURFACE_WIN32_HWND, QT_COMPOSITOR_SURFACE_XCB_WINDOW, QtCompositorBaseUpload,
+    QtCompositorError as QtWgpuRendererError, QtCompositorImageFormat, QtCompositorLayerSourceKind,
+    QtCompositorLayerUpload, QtCompositorRect, QtCompositorSurfaceKey, QtCompositorTarget,
+    QtCompositorUploadKind, Result,
+};
 use raw_window_handle::{
     AppKitDisplayHandle, AppKitWindowHandle, RawDisplayHandle, RawWindowHandle,
     WaylandDisplayHandle, WaylandWindowHandle, Win32WindowHandle, WindowsDisplayHandle,
@@ -17,179 +29,214 @@ use raw_window_handle::{
 };
 use wgpu::util::DeviceExt;
 
-use crate::{QtWgpuRendererError, Result};
-
-pub const QT_COMPOSITOR_SURFACE_APPKIT_NS_VIEW: u8 = 1;
-pub const QT_COMPOSITOR_SURFACE_WIN32_HWND: u8 = 2;
-pub const QT_COMPOSITOR_SURFACE_XCB_WINDOW: u8 = 3;
-pub const QT_COMPOSITOR_SURFACE_WAYLAND_SURFACE: u8 = 4;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct QtCompositorTarget {
-    pub surface_kind: u8,
-    pub primary_handle: u64,
-    pub secondary_handle: u64,
-    pub width_px: u32,
-    pub height_px: u32,
-    pub scale_factor: f64,
+unsafe extern "C" {
+    fn qt_solid_notify_window_compositor_present_complete(window_id: u32);
 }
 
-impl QtCompositorTarget {
-    fn surface_key(self) -> SurfaceKey {
-        SurfaceKey {
-            surface_kind: self.surface_kind,
-            primary_handle: self.primary_handle,
-            secondary_handle: self.secondary_handle,
+unsafe fn compositor_surface_target(
+    target: QtCompositorTarget,
+) -> Result<wgpu::SurfaceTargetUnsafe> {
+    match target.surface_kind {
+        QT_COMPOSITOR_SURFACE_APPKIT_NS_VIEW => {
+            let Some(ns_view) = NonNull::new(target.primary_handle as *mut c_void) else {
+                return Err(QtWgpuRendererError::new(
+                    "qt compositor target is missing NSView handle",
+                ));
+            };
+            Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: RawDisplayHandle::AppKit(AppKitDisplayHandle::new()),
+                raw_window_handle: RawWindowHandle::AppKit(AppKitWindowHandle::new(ns_view)),
+            })
         }
-    }
-
-    unsafe fn surface_target(self) -> Result<wgpu::SurfaceTargetUnsafe> {
-        match self.surface_kind {
-            QT_COMPOSITOR_SURFACE_APPKIT_NS_VIEW => {
-                let Some(ns_view) = NonNull::new(self.primary_handle as *mut c_void) else {
-                    return Err(QtWgpuRendererError::new(
-                        "qt compositor target is missing NSView handle",
-                    ));
-                };
-                Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: RawDisplayHandle::AppKit(AppKitDisplayHandle::new()),
-                    raw_window_handle: RawWindowHandle::AppKit(AppKitWindowHandle::new(ns_view)),
-                })
-            }
-            QT_COMPOSITOR_SURFACE_WIN32_HWND => {
-                let Some(hwnd) = NonZeroIsize::new(self.primary_handle as isize) else {
-                    return Err(QtWgpuRendererError::new(
-                        "qt compositor target is missing HWND handle",
-                    ));
-                };
-                Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: RawDisplayHandle::Windows(WindowsDisplayHandle::new()),
-                    raw_window_handle: RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)),
-                })
-            }
-            QT_COMPOSITOR_SURFACE_XCB_WINDOW => {
-                let Some(window) = NonZeroU32::new(self.primary_handle as u32) else {
-                    return Err(QtWgpuRendererError::new(
-                        "qt compositor target is missing XCB window handle",
-                    ));
-                };
-                let Some(connection) = NonNull::new(self.secondary_handle as *mut c_void) else {
-                    return Err(QtWgpuRendererError::new(
-                        "qt compositor target is missing XCB connection handle",
-                    ));
-                };
-                Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: RawDisplayHandle::Xcb(XcbDisplayHandle::new(
-                        Some(connection),
-                        0,
-                    )),
-                    // Qt bridge does not propagate screen yet. Use current/default screen.
-                    raw_window_handle: RawWindowHandle::Xcb(XcbWindowHandle::new(window)),
-                })
-            }
-            QT_COMPOSITOR_SURFACE_WAYLAND_SURFACE => {
-                let Some(surface) = NonNull::new(self.primary_handle as *mut c_void) else {
-                    return Err(QtWgpuRendererError::new(
-                        "qt compositor target is missing Wayland surface handle",
-                    ));
-                };
-                let Some(display) = NonNull::new(self.secondary_handle as *mut c_void) else {
-                    return Err(QtWgpuRendererError::new(
-                        "qt compositor target is missing Wayland display handle",
-                    ));
-                };
-                Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
-                        display,
-                    )),
-                    raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(surface)),
-                })
-            }
-            other => Err(QtWgpuRendererError::new(format!(
-                "unsupported qt compositor surface kind {other}",
-            ))),
+        QT_COMPOSITOR_SURFACE_WIN32_HWND => {
+            let Some(hwnd) = NonZeroIsize::new(target.primary_handle as isize) else {
+                return Err(QtWgpuRendererError::new(
+                    "qt compositor target is missing HWND handle",
+                ));
+            };
+            Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: RawDisplayHandle::Windows(WindowsDisplayHandle::new()),
+                raw_window_handle: RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)),
+            })
         }
+        QT_COMPOSITOR_SURFACE_XCB_WINDOW => {
+            let Some(window) = NonZeroU32::new(target.primary_handle as u32) else {
+                return Err(QtWgpuRendererError::new(
+                    "qt compositor target is missing XCB window handle",
+                ));
+            };
+            let Some(connection) = NonNull::new(target.secondary_handle as *mut c_void) else {
+                return Err(QtWgpuRendererError::new(
+                    "qt compositor target is missing XCB connection handle",
+                ));
+            };
+            Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: RawDisplayHandle::Xcb(XcbDisplayHandle::new(
+                    Some(connection),
+                    0,
+                )),
+                raw_window_handle: RawWindowHandle::Xcb(XcbWindowHandle::new(window)),
+            })
+        }
+        QT_COMPOSITOR_SURFACE_WAYLAND_SURFACE => {
+            let Some(surface) = NonNull::new(target.primary_handle as *mut c_void) else {
+                return Err(QtWgpuRendererError::new(
+                    "qt compositor target is missing Wayland surface handle",
+                ));
+            };
+            let Some(display) = NonNull::new(target.secondary_handle as *mut c_void) else {
+                return Err(QtWgpuRendererError::new(
+                    "qt compositor target is missing Wayland display handle",
+                ));
+            };
+            Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: RawDisplayHandle::Wayland(WaylandDisplayHandle::new(display)),
+                raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(surface)),
+            })
+        }
+        other => Err(QtWgpuRendererError::new(format!(
+            "unsupported qt compositor surface kind {other}",
+        ))),
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QtCompositorImageFormat {
-    Bgra8UnormPremultiplied,
-    Rgba8UnormPremultiplied,
-}
-
-impl QtCompositorImageFormat {
-    fn texture_format(self) -> wgpu::TextureFormat {
-        match self {
-            // Qt backingstore bytes are display-space premultiplied BGRA.
-            // Sample them as sRGB so compositor output does not get gamma-applied twice.
-            Self::Bgra8UnormPremultiplied => wgpu::TextureFormat::Bgra8UnormSrgb,
-            Self::Rgba8UnormPremultiplied => wgpu::TextureFormat::Rgba8Unorm,
-        }
-    }
-
-    fn bytes_per_pixel(self) -> usize {
-        match self {
-            Self::Bgra8UnormPremultiplied | Self::Rgba8UnormPremultiplied => 4,
-        }
+fn texture_format(format: QtCompositorImageFormat) -> wgpu::TextureFormat {
+    match format {
+        QtCompositorImageFormat::Bgra8UnormPremultiplied => wgpu::TextureFormat::Bgra8UnormSrgb,
+        QtCompositorImageFormat::Rgba8UnormPremultiplied => wgpu::TextureFormat::Rgba8Unorm,
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QtCompositorUploadKind {
-    None,
-    Full,
-    SubRects,
+fn bytes_per_pixel(format: QtCompositorImageFormat) -> usize {
+    match format {
+        QtCompositorImageFormat::Bgra8UnormPremultiplied
+        | QtCompositorImageFormat::Rgba8UnormPremultiplied => 4,
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QtCompositorLayerSourceKind {
-    CpuBytes,
-    CachedTexture,
+#[derive(Debug, Clone)]
+struct OwnedQtCompositorBaseUpload {
+    format: QtCompositorImageFormat,
+    width_px: u32,
+    height_px: u32,
+    stride: usize,
+    upload_kind: QtCompositorUploadKind,
+    dirty_rects: Vec<QtCompositorRect>,
+    bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QtCompositorRect {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
+impl OwnedQtCompositorBaseUpload {
+    fn from_borrowed(upload: &QtCompositorBaseUpload<'_>) -> Self {
+        Self {
+            format: upload.format,
+            width_px: upload.width_px,
+            height_px: upload.height_px,
+            stride: upload.stride,
+            upload_kind: upload.upload_kind,
+            dirty_rects: upload.dirty_rects.to_vec(),
+            bytes: upload.bytes.to_vec(),
+        }
+    }
+
+    fn borrowed(&self) -> QtCompositorBaseUpload<'_> {
+        QtCompositorBaseUpload {
+            format: self.format,
+            width_px: self.width_px,
+            height_px: self.height_px,
+            stride: self.stride,
+            upload_kind: self.upload_kind,
+            dirty_rects: self.dirty_rects.as_slice(),
+            bytes: self.bytes.as_slice(),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct QtCompositorBaseUpload<'a> {
-    pub format: QtCompositorImageFormat,
-    pub width_px: u32,
-    pub height_px: u32,
-    pub stride: usize,
-    pub upload_kind: QtCompositorUploadKind,
-    pub dirty_rects: &'a [QtCompositorRect],
-    pub bytes: &'a [u8],
+#[derive(Debug, Clone)]
+struct OwnedQtCompositorLayerUpload {
+    node_id: u32,
+    source_kind: QtCompositorLayerSourceKind,
+    format: QtCompositorImageFormat,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    width_px: u32,
+    height_px: u32,
+    stride: usize,
+    upload_kind: QtCompositorUploadKind,
+    dirty_rects: Vec<QtCompositorRect>,
+    visible_rects: Vec<QtCompositorRect>,
+    bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct QtCompositorLayerUpload<'a> {
-    pub node_id: u32,
-    pub source_kind: QtCompositorLayerSourceKind,
-    pub format: QtCompositorImageFormat,
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-    pub width_px: u32,
-    pub height_px: u32,
-    pub stride: usize,
-    pub upload_kind: QtCompositorUploadKind,
-    pub dirty_rects: &'a [QtCompositorRect],
-    pub visible_rects: &'a [QtCompositorRect],
-    pub bytes: &'a [u8],
+impl OwnedQtCompositorLayerUpload {
+    fn from_borrowed(upload: &QtCompositorLayerUpload<'_>) -> Self {
+        Self {
+            node_id: upload.node_id,
+            source_kind: upload.source_kind,
+            format: upload.format,
+            x: upload.x,
+            y: upload.y,
+            width: upload.width,
+            height: upload.height,
+            width_px: upload.width_px,
+            height_px: upload.height_px,
+            stride: upload.stride,
+            upload_kind: upload.upload_kind,
+            dirty_rects: upload.dirty_rects.to_vec(),
+            visible_rects: upload.visible_rects.to_vec(),
+            bytes: upload.bytes.to_vec(),
+        }
+    }
+
+    fn borrowed(&self) -> QtCompositorLayerUpload<'_> {
+        QtCompositorLayerUpload {
+            node_id: self.node_id,
+            source_kind: self.source_kind,
+            format: self.format,
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+            width_px: self.width_px,
+            height_px: self.height_px,
+            stride: self.stride,
+            upload_kind: self.upload_kind,
+            dirty_rects: self.dirty_rects.as_slice(),
+            visible_rects: self.visible_rects.as_slice(),
+            bytes: self.bytes.as_slice(),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct SurfaceKey {
-    surface_kind: u8,
-    primary_handle: u64,
-    secondary_handle: u64,
+#[derive(Clone)]
+struct AsyncPresentRequest {
+    window_id: u32,
+    context: WindowCompositorContextHandle,
+    target: QtCompositorTarget,
+    base: OwnedQtCompositorBaseUpload,
+    layers: Vec<OwnedQtCompositorLayerUpload>,
+}
+
+impl AsyncPresentRequest {
+    fn from_borrowed(
+        window_id: u32,
+        context: WindowCompositorContextHandle,
+        target: QtCompositorTarget,
+        base: &QtCompositorBaseUpload<'_>,
+        layers: &[QtCompositorLayerUpload<'_>],
+    ) -> Self {
+        Self {
+            window_id,
+            context,
+            target,
+            base: OwnedQtCompositorBaseUpload::from_borrowed(base),
+            layers: layers
+                .iter()
+                .map(OwnedQtCompositorLayerUpload::from_borrowed)
+                .collect(),
+        }
+    }
 }
 
 #[repr(C)]
@@ -242,6 +289,26 @@ impl CachedImageTexture {
     }
 }
 
+struct CachedPresentTexture {
+    format: wgpu::TextureFormat,
+    width_px: u32,
+    height_px: u32,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+}
+
+impl CachedPresentTexture {
+    fn ensure_descriptor_matches(
+        &self,
+        format: wgpu::TextureFormat,
+        width_px: u32,
+        height_px: u32,
+    ) -> bool {
+        self.format == format && self.width_px == width_px && self.height_px == height_px
+    }
+}
+
 fn base_texture_usage() -> wgpu::TextureUsages {
     wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING
 }
@@ -249,7 +316,13 @@ fn base_texture_usage() -> wgpu::TextureUsages {
 fn layer_texture_usage() -> wgpu::TextureUsages {
     wgpu::TextureUsages::COPY_DST
         | wgpu::TextureUsages::TEXTURE_BINDING
-        | wgpu::TextureUsages::STORAGE_BINDING
+        | wgpu::TextureUsages::RENDER_ATTACHMENT
+}
+
+fn present_texture_usage() -> wgpu::TextureUsages {
+    wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_SRC
 }
 
 struct CompositorPipelineState {
@@ -267,26 +340,262 @@ struct TextureUploadRect {
     height: u32,
 }
 
-struct WindowCompositorContext {
+#[derive(Debug, Clone)]
+struct PreparedCompositorLayer {
+    bind_group: wgpu::BindGroup,
+    source_kind: QtCompositorLayerSourceKind,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    visible_rects: Vec<QtCompositorRect>,
+}
+
+struct WindowCompositorSurfaceState {
     target: QtCompositorTarget,
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    pipeline: CompositorPipelineState,
-    base_texture: Option<CachedImageTexture>,
-    layer_textures: HashMap<u32, CachedImageTexture>,
 }
 
-type WindowCompositorContextHandle = Arc<Mutex<WindowCompositorContext>>;
+#[derive(Default)]
+struct WindowCompositorTextureState {
+    base_texture: Option<CachedImageTexture>,
+    layer_textures: HashMap<u32, CachedImageTexture>,
+    present_texture: Option<CachedPresentTexture>,
+}
 
-static WINDOW_COMPOSITORS: Lazy<Mutex<HashMap<SurfaceKey, WindowCompositorContextHandle>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-static TIMING_ENABLED: Lazy<bool> =
-    Lazy::new(|| std::env::var_os("QT_SOLID_WGPU_TIMING").is_some());
-static COMPOSITOR_TIMINGS: Lazy<Mutex<HashMap<SurfaceKey, CompositorTimingStats>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+struct WindowCompositorContext {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    pipeline: CompositorPipelineState,
+    surface_state: Mutex<WindowCompositorSurfaceState>,
+    texture_state: Mutex<WindowCompositorTextureState>,
+}
+
+type WindowCompositorContextHandle = Arc<WindowCompositorContext>;
+
+static WINDOW_COMPOSITORS: Lazy<
+    Mutex<HashMap<QtCompositorSurfaceKey, WindowCompositorContextHandle>>,
+> = Lazy::new(|| Mutex::new(HashMap::new()));
+static WINDOW_COMPOSITOR_HANDLES: Lazy<
+    Mutex<HashMap<QtCompositorSurfaceKey, Arc<dyn Compositor>>>,
+> = Lazy::new(|| Mutex::new(HashMap::new()));
+static ASYNC_PRESENT_QUEUE: Lazy<Arc<AsyncPresentQueue>> =
+    Lazy::new(|| Arc::new(AsyncPresentQueue::new()));
+
+struct SurfaceCompositorHandle {
+    surface_key: QtCompositorSurfaceKey,
+}
+
+struct AsyncPresentQueue {
+    state: Mutex<AsyncPresentQueueState>,
+    ready: Condvar,
+}
+
+pub struct PreparedCompositorFrame {
+    context: WindowCompositorContextHandle,
+    target: QtCompositorTarget,
+    queue: wgpu::Queue,
+    encoder: Option<wgpu::CommandEncoder>,
+    present_texture: wgpu::Texture,
+    present_bind_group: wgpu::BindGroup,
+    encode_draw_started: Instant,
+}
+
+impl PreparedCompositorFrame {
+    pub fn target(&self) -> QtCompositorTarget {
+        self.target
+    }
+
+    pub fn present_texture(&self) -> &wgpu::Texture {
+        &self.present_texture
+    }
+
+    pub fn encoder_mut(&mut self) -> &mut wgpu::CommandEncoder {
+        self.encoder
+            .as_mut()
+            .expect("prepared compositor frame encoder consumed once")
+    }
+
+    pub fn finish_encode_draw_timing(&self) {
+        record_compositor_timing(
+            self.target,
+            CompositorTimingStage::EncodeDraw,
+            self.encode_draw_started.elapsed(),
+        );
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.context.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    pub fn into_submission(mut self) -> (wgpu::Queue, wgpu::CommandBuffer) {
+        let encoder = self
+            .encoder
+            .take()
+            .expect("prepared compositor frame encoder consumed once");
+        (self.queue, encoder.finish())
+    }
+}
+
+#[derive(Default)]
+struct AsyncPresentQueueState {
+    worker_started: bool,
+    pending: HashMap<QtCompositorSurfaceKey, AsyncPresentRequest>,
+    in_flight: HashSet<QtCompositorSurfaceKey>,
+}
+
+impl AsyncPresentQueue {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(AsyncPresentQueueState::default()),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn enqueue(self: &Arc<Self>, request: AsyncPresentRequest) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("qt wgpu async present queue mutex poisoned");
+        if !state.worker_started {
+            let queue = Arc::clone(self);
+            thread::Builder::new()
+                .name("qt-solid-wgpu-present".to_owned())
+                .spawn(move || queue.run())
+                .map_err(|error| QtWgpuRendererError::new(error.to_string()))?;
+            state.worker_started = true;
+        }
+        state.pending.insert(request.target.surface_key(), request);
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    fn is_busy(&self, key: QtCompositorSurfaceKey) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("qt wgpu async present queue mutex poisoned");
+        state.pending.contains_key(&key) || state.in_flight.contains(&key)
+    }
+
+    fn run(self: Arc<Self>) {
+        loop {
+            let requests = {
+                let mut state = self
+                    .state
+                    .lock()
+                    .expect("qt wgpu async present queue mutex poisoned");
+                while state.pending.is_empty() {
+                    state = self
+                        .ready
+                        .wait(state)
+                        .expect("qt wgpu async present queue mutex poisoned");
+                }
+                let requests = state.pending.drain().collect::<Vec<_>>();
+                for (key, _) in &requests {
+                    state.in_flight.insert(*key);
+                }
+                requests
+            };
+
+            for (key, request) in requests {
+                if let Err(error) = present_async_request(&request) {
+                    eprintln!("qt-wgpu async present failed: {error}");
+                }
+                {
+                    let mut state = self
+                        .state
+                        .lock()
+                        .expect("qt wgpu async present queue mutex poisoned");
+                    state.in_flight.remove(&key);
+                    if !state.pending.is_empty() {
+                        self.ready.notify_one();
+                    }
+                }
+                unsafe { qt_solid_notify_window_compositor_present_complete(request.window_id) };
+            }
+        }
+    }
+}
+
+impl Compositor for SurfaceCompositorHandle {
+    fn present_frame(
+        &self,
+        target: QtCompositorTarget,
+        base: &QtCompositorBaseUpload<'_>,
+        layers: &[QtCompositorLayerUpload<'_>],
+        _window_id: Option<u32>,
+    ) -> Result<()> {
+        crate::present_compositor_frame(target, base, layers)
+    }
+
+    fn ingest_frame(
+        &self,
+        _window_id: u32,
+        target: QtCompositorTarget,
+        base: &QtCompositorBaseUpload<'_>,
+        layers: &[QtCompositorLayerUpload<'_>],
+    ) -> Result<bool> {
+        crate::present_compositor_frame(target, base, layers).map(|()| true)
+    }
+
+    fn request_frame(&self, _target: QtCompositorTarget, _reason: qt_compositor_core::FrameReason) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn begin_drive(&self, _target: QtCompositorTarget) -> Result<()> {
+        Ok(())
+    }
+
+    fn try_present_ingested_snapshot(&self, _target: QtCompositorTarget) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn try_present_deferred(&self, _target: QtCompositorTarget) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn should_run_frame_source(&self) -> bool {
+        false
+    }
+
+    fn is_busy(&self) -> bool {
+        ASYNC_PRESENT_QUEUE.is_busy(self.surface_key)
+    }
+
+    fn is_initialized(&self, target: QtCompositorTarget) -> bool {
+        crate::compositor_frame_is_initialized(target)
+    }
+
+    fn layer_handle(&self, _target: QtCompositorTarget) -> Result<u64> {
+        Ok(0)
+    }
+
+    fn note_drawable(&self, _target: QtCompositorTarget, _drawable_handle: u64) -> Result<()> {
+        Ok(())
+    }
+
+    fn release_drawable(&self, _drawable_handle: u64) {}
+}
+
+pub fn load_or_create_compositor(target: QtCompositorTarget) -> Result<Arc<dyn Compositor>> {
+    let key = target.surface_key();
+    let mut handles = WINDOW_COMPOSITOR_HANDLES
+        .lock()
+        .expect("qt wgpu compositor handle registry mutex poisoned");
+    if let Some(existing) = handles.get(&key) {
+        return Ok(Arc::clone(existing));
+    }
+    let compositor: Arc<dyn Compositor> = Arc::new(SurfaceCompositorHandle { surface_key: key });
+    handles.insert(key, Arc::clone(&compositor));
+    Ok(compositor)
+}
 
 const COMPOSITOR_SHADER: &str = r#"
 struct VertexInput {
@@ -363,121 +672,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CompositorTimingStage {
-    UploadBase,
-    UploadLayers,
-    AcquireSurface,
-    EncodeDraw,
-    SubmitPresent,
-    RenderOverlayLayer,
-}
-
-#[derive(Default)]
-struct TimingAggregate {
-    count: u64,
-    total: Duration,
-}
-
-impl TimingAggregate {
-    fn add_sample(&mut self, duration: Duration) {
-        self.count += 1;
-        self.total += duration;
-    }
-
-    fn average_ms(&self) -> f64 {
-        if self.count == 0 {
-            return 0.0;
-        }
-        self.total.as_secs_f64() * 1000.0 / self.count as f64
-    }
-}
-
-#[derive(Default)]
-struct CompositorTimingStats {
-    decisions: u64,
-    presented: u64,
-    upload_base: TimingAggregate,
-    upload_layers: TimingAggregate,
-    acquire_surface: TimingAggregate,
-    encode_draw: TimingAggregate,
-    submit_present: TimingAggregate,
-    render_overlay_layer: TimingAggregate,
-}
-
-impl CompositorTimingStats {
-    fn stage_mut(&mut self, stage: CompositorTimingStage) -> &mut TimingAggregate {
-        match stage {
-            CompositorTimingStage::UploadBase => &mut self.upload_base,
-            CompositorTimingStage::UploadLayers => &mut self.upload_layers,
-            CompositorTimingStage::AcquireSurface => &mut self.acquire_surface,
-            CompositorTimingStage::EncodeDraw => &mut self.encode_draw,
-            CompositorTimingStage::SubmitPresent => &mut self.submit_present,
-            CompositorTimingStage::RenderOverlayLayer => &mut self.render_overlay_layer,
-        }
-    }
-}
-
-fn timing_enabled() -> bool {
-    *TIMING_ENABLED
-}
-
-fn maybe_log_timing(key: SurfaceKey, stats: &CompositorTimingStats) {
-    if stats.decisions == 0 || stats.decisions % 120 != 0 {
-        return;
-    }
-
-    eprintln!(
-        "qt-wgpu timing kind={} primary=0x{:x} secondary=0x{:x} decisions={} presented={} upload_base_ms={:.3} upload_layers_ms={:.3} acquire_surface_ms={:.3} encode_draw_ms={:.3} submit_present_ms={:.3} render_overlay_layer_ms={:.3}",
-        key.surface_kind,
-        key.primary_handle,
-        key.secondary_handle,
-        stats.decisions,
-        stats.presented,
-        stats.upload_base.average_ms(),
-        stats.upload_layers.average_ms(),
-        stats.acquire_surface.average_ms(),
-        stats.encode_draw.average_ms(),
-        stats.submit_present.average_ms(),
-        stats.render_overlay_layer.average_ms(),
-    );
-}
-
-pub fn record_compositor_present_decision(target: QtCompositorTarget, presented: bool) {
-    if !timing_enabled() {
-        return;
-    }
-
-    let key = target.surface_key();
-    let mut timings = COMPOSITOR_TIMINGS
-        .lock()
-        .expect("qt wgpu compositor timing mutex poisoned");
-    let stats = timings.entry(key).or_default();
-    stats.decisions += 1;
-    if presented {
-        stats.presented += 1;
-    }
-    maybe_log_timing(key, stats);
-}
-
-pub fn record_compositor_timing(
-    target: QtCompositorTarget,
-    stage: CompositorTimingStage,
-    duration: Duration,
-) {
-    if !timing_enabled() {
-        return;
-    }
-
-    let key = target.surface_key();
-    let mut timings = COMPOSITOR_TIMINGS
-        .lock()
-        .expect("qt wgpu compositor timing mutex poisoned");
-    let stats = timings.entry(key).or_default();
-    stats.stage_mut(stage).add_sample(duration);
-    maybe_log_timing(key, stats);
-}
-
 pub fn present_compositor_frame(
     target: QtCompositorTarget,
     base: &QtCompositorBaseUpload<'_>,
@@ -487,11 +681,68 @@ pub fn present_compositor_frame(
         return Ok(());
     }
 
+    let frame = prepare_compositor_frame(target, base, layers)?;
+    finish_prepared_compositor_frame_to_surface(frame)
+}
+
+fn present_async_request(request: &AsyncPresentRequest) -> Result<()> {
+    let base = request.base.borrowed();
+    let layers = request
+        .layers
+        .iter()
+        .map(OwnedQtCompositorLayerUpload::borrowed)
+        .collect::<Vec<_>>();
+    let frame = prepare_compositor_frame_inner(&request.context, &base, &layers)?;
+    finish_prepared_compositor_frame_to_surface(frame)
+}
+
+pub fn prepare_compositor_frame(
+    target: QtCompositorTarget,
+    base: &QtCompositorBaseUpload<'_>,
+    layers: &[QtCompositorLayerUpload<'_>],
+) -> Result<PreparedCompositorFrame> {
+    if target.width_px == 0 || target.height_px == 0 {
+        return Err(QtWgpuRendererError::new(
+            "qt compositor cannot prepare zero-sized frame",
+        ));
+    }
+
     let context_handle = load_or_create_window_compositor(target)?;
-    let mut context = context_handle
+    prepare_compositor_frame_inner(&context_handle, base, layers)
+}
+
+pub fn present_compositor_frame_async(
+    window_id: u32,
+    target: QtCompositorTarget,
+    base: &QtCompositorBaseUpload<'_>,
+    layers: &[QtCompositorLayerUpload<'_>],
+) -> Result<()> {
+    if target.width_px == 0 || target.height_px == 0 {
+        return Ok(());
+    }
+
+    let context_handle = load_or_create_window_compositor(target)?;
+    let request =
+        AsyncPresentRequest::from_borrowed(window_id, context_handle, target, base, layers);
+    ASYNC_PRESENT_QUEUE.enqueue(request)
+}
+
+pub fn compositor_frame_is_busy(target: QtCompositorTarget) -> bool {
+    ASYNC_PRESENT_QUEUE.is_busy(target.surface_key())
+}
+
+pub fn compositor_frame_is_initialized(target: QtCompositorTarget) -> bool {
+    let compositors = WINDOW_COMPOSITORS
         .lock()
-        .expect("qt wgpu compositor mutex poisoned");
-    context.present(base, layers)
+        .expect("qt wgpu compositor registry mutex poisoned");
+    let Some(context) = compositors.get(&target.surface_key()) else {
+        return false;
+    };
+    let texture_state = context
+        .texture_state
+        .lock()
+        .expect("qt wgpu compositor texture mutex poisoned");
+    texture_state.base_texture.is_some()
 }
 
 pub fn with_window_compositor_device_queue<T, F>(target: QtCompositorTarget, run: F) -> Result<T>
@@ -499,10 +750,7 @@ where
     F: FnOnce(&wgpu::Device, &wgpu::Queue) -> Result<T>,
 {
     let context_handle = load_or_create_window_compositor(target)?;
-    let context = context_handle
-        .lock()
-        .expect("qt wgpu compositor mutex poisoned");
-    run(&context.device, &context.queue)
+    run(&context_handle.device, &context_handle.queue)
 }
 
 pub fn with_window_compositor_layer_texture<T, F>(
@@ -517,33 +765,81 @@ where
     F: FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView) -> Result<T>,
 {
     let context_handle = load_or_create_window_compositor(target)?;
-    let mut context = context_handle
+    let mut texture_state = context_handle
+        .texture_state
         .lock()
-        .expect("qt wgpu compositor mutex poisoned");
-    let needs_recreate = context
+        .expect("qt wgpu compositor texture mutex poisoned");
+    let needs_recreate = texture_state
         .layer_textures
         .get(&node_id)
         .map(|entry| !entry.ensure_descriptor_matches(format, width_px, height_px))
         .unwrap_or(true);
     if needs_recreate {
         let next_entry = create_cached_texture(
-            &context.device,
-            &context.pipeline,
+            &context_handle.device,
+            &context_handle.pipeline,
             format,
             width_px,
             height_px,
             layer_texture_usage(),
             &format!("qt-solid-wgpu-layer-{node_id}"),
         );
-        context.layer_textures.insert(node_id, next_entry);
+        texture_state.layer_textures.insert(node_id, next_entry);
     }
-    let entry = context.layer_textures.get(&node_id).ok_or_else(|| {
+    let entry = texture_state.layer_textures.get(&node_id).ok_or_else(|| {
         QtWgpuRendererError::new(format!(
             "qt compositor cached layer {} could not be allocated",
             node_id
         ))
     })?;
-    run(&context.device, &context.queue, &entry.view)
+    run(&context_handle.device, &context_handle.queue, &entry.view)
+}
+
+pub fn with_window_compositor_layer_texture_handle<T, F>(
+    target: QtCompositorTarget,
+    node_id: u32,
+    format: QtCompositorImageFormat,
+    width_px: u32,
+    height_px: u32,
+    run: F,
+) -> Result<T>
+where
+    F: FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::Texture, &wgpu::TextureView) -> Result<T>,
+{
+    let context_handle = load_or_create_window_compositor(target)?;
+    let mut texture_state = context_handle
+        .texture_state
+        .lock()
+        .expect("qt wgpu compositor texture mutex poisoned");
+    let needs_recreate = texture_state
+        .layer_textures
+        .get(&node_id)
+        .map(|entry| !entry.ensure_descriptor_matches(format, width_px, height_px))
+        .unwrap_or(true);
+    if needs_recreate {
+        let next_entry = create_cached_texture(
+            &context_handle.device,
+            &context_handle.pipeline,
+            format,
+            width_px,
+            height_px,
+            layer_texture_usage(),
+            &format!("qt-solid-wgpu-layer-{node_id}"),
+        );
+        texture_state.layer_textures.insert(node_id, next_entry);
+    }
+    let entry = texture_state.layer_textures.get(&node_id).ok_or_else(|| {
+        QtWgpuRendererError::new(format!(
+            "qt compositor cached layer {} could not be allocated",
+            node_id
+        ))
+    })?;
+    run(
+        &context_handle.device,
+        &context_handle.queue,
+        &entry.texture,
+        &entry.view,
+    )
 }
 
 fn load_or_create_window_compositor(
@@ -557,7 +853,7 @@ fn load_or_create_window_compositor(
         return Ok(Arc::clone(existing));
     }
 
-    let compositor = Arc::new(Mutex::new(WindowCompositorContext::new(target)?));
+    let compositor = Arc::new(WindowCompositorContext::new(target)?);
     compositors.insert(key, Arc::clone(&compositor));
     Ok(compositor)
 }
@@ -615,7 +911,7 @@ impl WindowCompositorContext {
         let instance = wgpu::Instance::default();
         let surface = unsafe {
             instance
-                .create_surface_unsafe(target.surface_target()?)
+                .create_surface_unsafe(compositor_surface_target(target)?)
                 .map_err(|error| QtWgpuRendererError::new(error.to_string()))?
         };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -645,73 +941,124 @@ impl WindowCompositorContext {
         let pipeline = create_pipeline_state(&device, config.format);
 
         Ok(Self {
-            target,
-            instance,
-            surface,
             device,
             queue,
-            config,
             pipeline,
-            base_texture: None,
-            layer_textures: HashMap::new(),
+            surface_state: Mutex::new(WindowCompositorSurfaceState {
+                target,
+                instance,
+                surface,
+                config,
+            }),
+            texture_state: Mutex::new(WindowCompositorTextureState::default()),
         })
     }
 
-    fn present(
-        &mut self,
+    fn prepare_frame(
+        &self,
+        context_handle: &WindowCompositorContextHandle,
         base: &QtCompositorBaseUpload<'_>,
         layers: &[QtCompositorLayerUpload<'_>],
-    ) -> Result<()> {
-        self.reconfigure_if_needed(base.width_px, base.height_px)?;
+    ) -> Result<PreparedCompositorFrame> {
         let upload_base_started = Instant::now();
-        if base.upload_kind != QtCompositorUploadKind::None {
-            upload_image(
-                &self.device,
-                &self.queue,
-                &self.pipeline,
-                &mut self.base_texture,
-                base.format,
-                base.width_px,
-                base.height_px,
-                base.stride,
-                base.upload_kind,
-                base.dirty_rects,
-                base.bytes,
-                "qt-solid-wgpu-base-texture",
-            )?;
-        } else if self.base_texture.is_none() {
-            return Err(QtWgpuRendererError::new(
-                "qt compositor cannot reuse base texture before first upload",
-            ));
-        }
+        let base_bind_group = {
+            let mut texture_state = self
+                .texture_state
+                .lock()
+                .expect("qt wgpu compositor texture mutex poisoned");
+            if base.upload_kind != QtCompositorUploadKind::None {
+                upload_image(
+                    &self.device,
+                    &self.queue,
+                    &self.pipeline,
+                    &mut texture_state.base_texture,
+                    base.format,
+                    base.width_px,
+                    base.height_px,
+                    base.stride,
+                    base.upload_kind,
+                    base.dirty_rects,
+                    base.bytes,
+                    "qt-solid-wgpu-base-texture",
+                )?;
+            } else if texture_state.base_texture.is_none() {
+                return Err(QtWgpuRendererError::new(
+                    "qt compositor cannot reuse base texture before first upload",
+                ));
+            }
+            texture_state
+                .base_texture
+                .as_ref()
+                .map(|texture| texture.bind_group.clone())
+        };
         record_compositor_timing(
-            self.target,
+            self.target(),
             CompositorTimingStage::UploadBase,
             upload_base_started.elapsed(),
         );
 
         let upload_layers_started = Instant::now();
-        let mut prepared_layers = Vec::with_capacity(layers.len());
-        for layer in layers {
-            let cached = upload_layer_texture(self, layer)?;
-            prepared_layers.push((layer, cached.bind_group.clone()));
-        }
+        let prepared_layers = self.prepare_layer_draws(layers)?;
         record_compositor_timing(
-            self.target,
+            self.target(),
             CompositorTimingStage::UploadLayers,
             upload_layers_started.elapsed(),
         );
 
-        let acquire_surface_started = Instant::now();
-        let surface_texture = self.acquire_surface_texture()?;
-        record_compositor_timing(
-            self.target,
-            CompositorTimingStage::AcquireSurface,
-            acquire_surface_started.elapsed(),
-        );
-        let surface_view = surface_texture
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let (target, surface_format) = {
+            let mut surface_state = self
+                .surface_state
+                .lock()
+                .expect("qt wgpu compositor surface mutex poisoned");
+            if base.width_px != 0
+                && base.height_px != 0
+                && (surface_state.config.width != base.width_px
+                    || surface_state.config.height != base.height_px)
+            {
+                surface_state.config.width = base.width_px;
+                surface_state.config.height = base.height_px;
+                surface_state.surface.configure(&self.device, &surface_state.config);
+                surface_state.target.width_px = base.width_px;
+                surface_state.target.height_px = base.height_px;
+            }
+            (surface_state.target, surface_state.config.format)
+        };
+        let (present_texture, present_bind_group, present_view) = {
+            let mut texture_state = self
+                .texture_state
+                .lock()
+                .expect("qt wgpu compositor texture mutex poisoned");
+            let needs_recreate = texture_state
+                .present_texture
+                .as_ref()
+                .map(|texture| {
+                    !texture.ensure_descriptor_matches(
+                        surface_format,
+                        target.width_px.max(1),
+                        target.height_px.max(1),
+                    )
+                })
+                .unwrap_or(true);
+            if needs_recreate {
+                texture_state.present_texture = Some(create_present_texture(
+                    &self.device,
+                    &self.pipeline,
+                    surface_format,
+                    target.width_px.max(1),
+                    target.height_px.max(1),
+                    "qt-solid-wgpu-present-texture",
+                ));
+            }
+            let present_texture = texture_state
+                .present_texture
+                .as_ref()
+                .expect("present texture inserted before use");
+            (
+                present_texture.texture.clone(),
+                present_texture.bind_group.clone(),
+                present_texture.view.clone(),
+            )
+        };
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -723,7 +1070,7 @@ impl WindowCompositorContext {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("qt-solid-wgpu-compositor-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &surface_view,
+                    view: &present_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -738,17 +1085,17 @@ impl WindowCompositorContext {
             });
             pass.set_pipeline(&self.pipeline.sampled_pipeline);
 
-            if let Some(base_texture) = &self.base_texture {
+            if let Some(base_bind_group) = base_bind_group.as_ref() {
                 draw_quad(
                     &self.device,
                     &mut pass,
-                    &base_texture.bind_group,
-                    self.target.width_px,
-                    self.target.height_px,
+                    base_bind_group,
+                    target.width_px,
+                    target.height_px,
                     0,
                     0,
-                    self.target.width_px as i32,
-                    self.target.height_px as i32,
+                    target.width_px as i32,
+                    target.height_px as i32,
                     0.0,
                     0.0,
                     1.0,
@@ -756,13 +1103,13 @@ impl WindowCompositorContext {
                 );
             }
 
-            for (layer, bind_group) in prepared_layers {
+            for layer in &prepared_layers {
                 if layer.source_kind == QtCompositorLayerSourceKind::CachedTexture {
                     pass.set_pipeline(&self.pipeline.cached_texture_pipeline);
                 } else {
                     pass.set_pipeline(&self.pipeline.sampled_pipeline);
                 }
-                for visible_rect in layer.visible_rects {
+                for visible_rect in &layer.visible_rects {
                     if visible_rect.width <= 0 || visible_rect.height <= 0 {
                         continue;
                     }
@@ -777,9 +1124,9 @@ impl WindowCompositorContext {
                     draw_quad(
                         &self.device,
                         &mut pass,
-                        &bind_group,
-                        self.target.width_px,
-                        self.target.height_px,
+                        &layer.bind_group,
+                        target.width_px,
+                        target.height_px,
                         layer.x + visible_rect.x,
                         layer.y + visible_rect.y,
                         visible_rect.width,
@@ -792,59 +1139,98 @@ impl WindowCompositorContext {
                 }
             }
         }
-        record_compositor_timing(
-            self.target,
-            CompositorTimingStage::EncodeDraw,
-            encode_draw_started.elapsed(),
-        );
 
-        let submit_present_started = Instant::now();
-        self.queue.submit([encoder.finish()]);
-        surface_texture.present();
-        record_compositor_timing(
-            self.target,
-            CompositorTimingStage::SubmitPresent,
-            submit_present_started.elapsed(),
-        );
-        record_compositor_present_decision(self.target, true);
-        Ok(())
+        Ok(PreparedCompositorFrame {
+            context: Arc::clone(context_handle),
+            target,
+            queue: self.queue.clone(),
+            encoder: Some(encoder),
+            present_texture,
+            present_bind_group,
+            encode_draw_started,
+        })
     }
 
-    fn reconfigure_if_needed(&mut self, width_px: u32, height_px: u32) -> Result<()> {
-        if width_px == 0 || height_px == 0 {
-            return Ok(());
+    fn prepare_layer_draws(
+        &self,
+        layers: &[QtCompositorLayerUpload<'_>],
+    ) -> Result<Vec<PreparedCompositorLayer>> {
+        let mut texture_state = self
+            .texture_state
+            .lock()
+            .expect("qt wgpu compositor texture mutex poisoned");
+        let mut prepared_layers = Vec::with_capacity(layers.len());
+        for layer in layers {
+            let cached = upload_layer_texture(self, &mut texture_state, layer)?;
+            prepared_layers.push(PreparedCompositorLayer {
+                bind_group: cached.bind_group.clone(),
+                source_kind: layer.source_kind,
+                x: layer.x,
+                y: layer.y,
+                width: layer.width,
+                height: layer.height,
+                visible_rects: layer.visible_rects.to_vec(),
+            });
         }
-
-        if self.config.width != width_px || self.config.height != height_px {
-            self.config.width = width_px;
-            self.config.height = height_px;
-            self.surface.configure(&self.device, &self.config);
-            self.target.width_px = width_px;
-            self.target.height_px = height_px;
-        }
-
-        Ok(())
+        Ok(prepared_layers)
     }
 
-    fn acquire_surface_texture(&mut self) -> Result<wgpu::SurfaceTexture> {
+    fn target(&self) -> QtCompositorTarget {
+        self.surface_state
+            .lock()
+            .expect("qt wgpu compositor surface mutex poisoned")
+            .target
+    }
+}
+
+fn prepare_compositor_frame_inner(
+    context_handle: &WindowCompositorContextHandle,
+    base: &QtCompositorBaseUpload<'_>,
+    layers: &[QtCompositorLayerUpload<'_>],
+) -> Result<PreparedCompositorFrame> {
+    context_handle.prepare_frame(context_handle, base, layers)
+}
+
+fn finish_prepared_compositor_frame_to_surface(frame: PreparedCompositorFrame) -> Result<()> {
+    let target = frame.target;
+    let context = Arc::clone(&frame.context);
+    let mut encoder = frame
+        .encoder
+        .expect("prepared compositor frame encoder consumed once");
+
+    let acquire_surface_started = Instant::now();
+    let mut surface_state = context
+        .surface_state
+        .lock()
+        .expect("qt wgpu compositor surface mutex poisoned");
+    let surface_texture = {
+        let mut acquired = None;
         for attempt in 0..2 {
-            match self.surface.get_current_texture() {
-                Ok(texture) => return Ok(texture),
+            match surface_state.surface.get_current_texture() {
+                Ok(texture) => {
+                    acquired = Some(texture);
+                    break;
+                }
                 Err(wgpu::SurfaceError::Timeout) | Err(wgpu::SurfaceError::Other) => {
                     return Err(QtWgpuRendererError::new(
                         "qt wgpu compositor surface is currently unavailable",
                     ));
                 }
                 Err(wgpu::SurfaceError::Outdated) => {
-                    self.surface.configure(&self.device, &self.config);
+                    surface_state
+                        .surface
+                        .configure(&context.device, &surface_state.config);
                 }
                 Err(wgpu::SurfaceError::Lost) => {
-                    self.surface = unsafe {
-                        self.instance
-                            .create_surface_unsafe(self.target.surface_target()?)
+                    surface_state.surface = unsafe {
+                        surface_state
+                            .instance
+                            .create_surface_unsafe(compositor_surface_target(surface_state.target)?)
                             .map_err(|error| QtWgpuRendererError::new(error.to_string()))?
                     };
-                    self.surface.configure(&self.device, &self.config);
+                    surface_state
+                        .surface
+                        .configure(&context.device, &surface_state.config);
                 }
                 Err(wgpu::SurfaceError::OutOfMemory) => {
                     return Err(QtWgpuRendererError::new(
@@ -857,24 +1243,87 @@ impl WindowCompositorContext {
                 break;
             }
         }
-
-        Err(QtWgpuRendererError::new(
-            "failed to acquire current surface texture for qt wgpu compositor",
-        ))
+        acquired.ok_or_else(|| {
+            QtWgpuRendererError::new(
+                "failed to acquire current surface texture for qt wgpu compositor",
+            )
+        })?
+    };
+    record_compositor_timing(
+        target,
+        CompositorTimingStage::AcquireSurface,
+        acquire_surface_started.elapsed(),
+    );
+    let surface_view = surface_texture
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("qt-solid-wgpu-present-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &surface_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&context.pipeline.sampled_pipeline);
+        draw_quad(
+            &context.device,
+            &mut pass,
+            &frame.present_bind_group,
+            target.width_px,
+            target.height_px,
+            0,
+            0,
+            target.width_px as i32,
+            target.height_px as i32,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+        );
     }
+    record_compositor_timing(
+        target,
+        CompositorTimingStage::EncodeDraw,
+        frame.encode_draw_started.elapsed(),
+    );
+
+    let submit_present_started = Instant::now();
+    frame.queue.submit([encoder.finish()]);
+    surface_texture.present();
+    record_compositor_timing(
+        target,
+        CompositorTimingStage::SubmitPresent,
+        submit_present_started.elapsed(),
+    );
+    record_compositor_present_decision(target, true);
+    Ok(())
 }
 
 fn upload_layer_texture<'a>(
-    context: &'a mut WindowCompositorContext,
+    context: &'a WindowCompositorContext,
+    texture_state: &'a mut WindowCompositorTextureState,
     layer: &QtCompositorLayerUpload<'_>,
 ) -> Result<&'a CachedImageTexture> {
     if layer.source_kind == QtCompositorLayerSourceKind::CachedTexture {
-        let entry = context.layer_textures.get(&layer.node_id).ok_or_else(|| {
-            QtWgpuRendererError::new(format!(
-                "qt compositor cached layer {} is missing",
-                layer.node_id
-            ))
-        })?;
+        let entry = texture_state
+            .layer_textures
+            .get(&layer.node_id)
+            .ok_or_else(|| {
+                QtWgpuRendererError::new(format!(
+                    "qt compositor cached layer {} is missing",
+                    layer.node_id
+                ))
+            })?;
         if !entry.ensure_descriptor_matches(layer.format, layer.width_px, layer.height_px) {
             return Err(QtWgpuRendererError::new(format!(
                 "qt compositor cached layer {} descriptor does not match frame metadata",
@@ -885,7 +1334,7 @@ fn upload_layer_texture<'a>(
     }
 
     let mut upload_kind = layer.upload_kind;
-    let entry = context
+    let entry = texture_state
         .layer_textures
         .entry(layer.node_id)
         .or_insert_with(|| {
@@ -994,7 +1443,7 @@ fn create_cached_texture(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: format.texture_format(),
+        format: texture_format(format),
         usage,
         view_formats: &[],
     });
@@ -1024,6 +1473,54 @@ fn create_cached_texture(
     }
 }
 
+fn create_present_texture(
+    device: &wgpu::Device,
+    pipeline: &CompositorPipelineState,
+    format: wgpu::TextureFormat,
+    width_px: u32,
+    height_px: u32,
+    label: &str,
+) -> CachedPresentTexture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: width_px.max(1),
+            height: height_px.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: present_texture_usage(),
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout: &pipeline.bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+        ],
+    });
+
+    CachedPresentTexture {
+        format,
+        width_px,
+        height_px,
+        texture,
+        view,
+        bind_group,
+    }
+}
+
 fn write_full_texture(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
@@ -1033,7 +1530,7 @@ fn write_full_texture(
     stride: usize,
     bytes: &[u8],
 ) -> Result<()> {
-    let bytes_per_pixel = format.bytes_per_pixel();
+    let bytes_per_pixel = bytes_per_pixel(format);
     if stride > u32::MAX as usize {
         return Err(QtWgpuRendererError::new(
             "qt compositor upload stride exceeds wgpu limits",
@@ -1162,7 +1659,7 @@ fn write_subrect_texture(
     bytes: &[u8],
     rect: TextureUploadRect,
 ) -> Result<()> {
-    let bytes_per_pixel = format.bytes_per_pixel();
+    let bytes_per_pixel = bytes_per_pixel(format);
     if stride > u32::MAX as usize {
         return Err(QtWgpuRendererError::new(
             "qt compositor subrect upload stride exceeds wgpu limits",
@@ -1399,7 +1896,7 @@ mod tests {
             scale_factor: 1.0,
         };
 
-        let error = match unsafe { target.surface_target() } {
+        let error = match unsafe { compositor_surface_target(target) } {
             Ok(_) => panic!("missing NSView must fail"),
             Err(error) => error,
         };
@@ -1417,7 +1914,7 @@ mod tests {
             scale_factor: 1.0,
         };
 
-        let surface = unsafe { target.surface_target() }.expect("HWND target");
+        let surface = unsafe { compositor_surface_target(target) }.expect("HWND target");
         let wgpu::SurfaceTargetUnsafe::RawHandle {
             raw_display_handle,
             raw_window_handle,
@@ -1443,7 +1940,7 @@ mod tests {
             scale_factor: 1.0,
         };
 
-        let surface = unsafe { target.surface_target() }.expect("XCB target");
+        let surface = unsafe { compositor_surface_target(target) }.expect("XCB target");
         let wgpu::SurfaceTargetUnsafe::RawHandle {
             raw_display_handle,
             raw_window_handle,
@@ -1473,7 +1970,7 @@ mod tests {
             scale_factor: 1.0,
         };
 
-        let surface = unsafe { target.surface_target() }.expect("Wayland target");
+        let surface = unsafe { compositor_surface_target(target) }.expect("Wayland target");
         let wgpu::SurfaceTargetUnsafe::RawHandle {
             raw_display_handle,
             raw_window_handle,
@@ -1492,19 +1989,29 @@ mod tests {
     }
 
     #[test]
-    fn layer_texture_usage_includes_storage_binding() {
-        assert!(layer_texture_usage().contains(wgpu::TextureUsages::STORAGE_BINDING));
+    fn layer_texture_usage_excludes_storage_binding() {
+        assert!(!layer_texture_usage().contains(wgpu::TextureUsages::STORAGE_BINDING));
         assert!(!base_texture_usage().contains(wgpu::TextureUsages::STORAGE_BINDING));
+    }
+
+    #[test]
+    fn layer_texture_usage_includes_render_attachment() {
+        assert!(layer_texture_usage().contains(wgpu::TextureUsages::RENDER_ATTACHMENT));
+    }
+
+    #[test]
+    fn present_texture_usage_includes_copy_src() {
+        assert!(present_texture_usage().contains(wgpu::TextureUsages::COPY_SRC));
     }
 
     #[test]
     fn bgra_backingstore_sampling_uses_srgb() {
         assert_eq!(
-            QtCompositorImageFormat::Bgra8UnormPremultiplied.texture_format(),
+            texture_format(QtCompositorImageFormat::Bgra8UnormPremultiplied),
             wgpu::TextureFormat::Bgra8UnormSrgb
         );
         assert_eq!(
-            QtCompositorImageFormat::Rgba8UnormPremultiplied.texture_format(),
+            texture_format(QtCompositorImageFormat::Rgba8UnormPremultiplied),
             wgpu::TextureFormat::Rgba8Unorm
         );
     }

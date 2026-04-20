@@ -408,12 +408,12 @@ fn parse_paint_impl(trait_path: &Path) -> syn::Result<PaintImplConfig> {
         )
     })?;
     let kind = match target_segment.ident.to_string().as_str() {
-        "VelloFrame" => PaintImplKind::Vello,
+        "VelloFrame" | "PaintSceneFrame" => PaintImplKind::Vello,
         "QtPainter" => PaintImplKind::QPainter,
         _ => {
             return Err(syn::Error::new_spanned(
                 &target_ty,
-                "#[qt(host)] paint impl only supports Paint<VelloFrame<'_>> or Paint<QtPainter<'_>>",
+                "#[qt(host)] paint impl only supports Paint<PaintSceneFrame<'_>> or Paint<QtPainter<'_>>",
             ));
         }
     };
@@ -439,7 +439,7 @@ fn build_paint_runtime_meta(
             ) -> #runtime::WidgetResult<()> {
                 let widget = unsafe { &mut *(raw.cast::<#self_ty>()) };
                 match device {
-                    #runtime::PaintDevice::Vello(frame) => {
+                    #runtime::PaintDevice::Scene(frame) => {
                         #runtime::Paint::paint(widget, frame);
                         Ok(())
                     }
@@ -466,7 +466,7 @@ fn build_paint_runtime_meta(
                         #runtime::Paint::paint(widget, &mut painter);
                         Ok(())
                     }
-                    #runtime::PaintDevice::Vello(_) => Err(
+                    #runtime::PaintDevice::Scene(_) => Err(
                         #runtime::WidgetError::unsupported_paint_device(device.kind_name())
                     ),
                 }

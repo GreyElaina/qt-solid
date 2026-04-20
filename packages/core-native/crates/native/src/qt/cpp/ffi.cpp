@@ -1,6 +1,7 @@
 #include "qt/ffi.h"
 #if defined(__APPLE__)
 #include "qt/macos_event_buffer_bridge.h"
+#include "qt/macos_display_link_bridge.h"
 #include "qt_cocoa_dispatcher_private_shim.h"
 #endif
 #include "qt_wgpu_platform.h"
@@ -75,7 +76,9 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <array>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -756,6 +759,138 @@ EventLowerKind event_lower_kind_from_tag(std::uint8_t lower_kind_tag) {
   }
 }
 
+bool qt_wgpu_timing_enabled() {
+  static const bool enabled = qEnvironmentVariableIsSet("QT_SOLID_WGPU_TIMING");
+  return enabled;
+}
+
+struct QtWgpuWakeStats {
+  std::atomic<std::uint64_t> request_qt_pump_calls{0};
+  std::atomic<std::uint64_t> libuv_request_pump_calls{0};
+  std::atomic<std::uint64_t> libuv_pump_events{0};
+  std::atomic<std::uint64_t> libuv_zero_timeout_pumps{0};
+  std::atomic<std::uint64_t> compositor_present_completions{0};
+  std::atomic<std::uint64_t> compositor_frame_requests{0};
+  std::atomic<std::uint64_t> compositor_frame_posts{0};
+  std::atomic<std::uint64_t> compositor_frame_runs{0};
+  std::atomic<std::uint64_t> compositor_frame_presented{0};
+  std::atomic<std::uint64_t> compositor_frame_busy{0};
+  std::atomic<std::uint64_t> compositor_frame_idle{0};
+  std::atomic<std::uint64_t> compositor_frame_needs_qt_repaint{0};
+  std::atomic<std::uint64_t> last_logged_frame_runs{0};
+};
+
+QtWgpuWakeStats &qt_wgpu_wake_stats() {
+  static QtWgpuWakeStats stats;
+  return stats;
+}
+
+void maybe_log_qt_wgpu_wake_stats() {
+  if (!qt_wgpu_timing_enabled()) {
+    return;
+  }
+
+  auto &stats = qt_wgpu_wake_stats();
+  const std::uint64_t frame_runs =
+      stats.compositor_frame_runs.load(std::memory_order_relaxed);
+  if (frame_runs == 0 || frame_runs % 240 != 0) {
+    return;
+  }
+
+  std::uint64_t last_logged =
+      stats.last_logged_frame_runs.load(std::memory_order_relaxed);
+  while (last_logged < frame_runs) {
+    if (stats.last_logged_frame_runs.compare_exchange_weak(
+            last_logged, frame_runs, std::memory_order_relaxed,
+            std::memory_order_relaxed)) {
+      std::fprintf(
+          stderr,
+          "qt-wgpu wake request_qt_pump=%llu libuv_request_pump=%llu libuv_pump_events=%llu libuv_zero_timeout=%llu present_completions=%llu frame_requests=%llu frame_posts=%llu frame_runs=%llu presented=%llu busy=%llu idle=%llu repaint=%llu\n",
+          static_cast<unsigned long long>(
+              stats.request_qt_pump_calls.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(
+              stats.libuv_request_pump_calls.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(
+              stats.libuv_pump_events.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(
+              stats.libuv_zero_timeout_pumps.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(stats.compositor_present_completions.load(
+              std::memory_order_relaxed)),
+          static_cast<unsigned long long>(
+              stats.compositor_frame_requests.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(
+              stats.compositor_frame_posts.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(frame_runs),
+          static_cast<unsigned long long>(stats.compositor_frame_presented.load(
+              std::memory_order_relaxed)),
+          static_cast<unsigned long long>(
+              stats.compositor_frame_busy.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(
+              stats.compositor_frame_idle.load(std::memory_order_relaxed)),
+          static_cast<unsigned long long>(stats.compositor_frame_needs_qt_repaint.load(
+              std::memory_order_relaxed)));
+      return;
+    }
+  }
+}
+
+void record_request_qt_pump() {
+  qt_wgpu_wake_stats().request_qt_pump_calls.fetch_add(1, std::memory_order_relaxed);
+  maybe_log_qt_wgpu_wake_stats();
+}
+
+void record_libuv_request_pump() {
+  qt_wgpu_wake_stats().libuv_request_pump_calls.fetch_add(1, std::memory_order_relaxed);
+  maybe_log_qt_wgpu_wake_stats();
+}
+
+void record_libuv_pump_events(bool zero_timeout_pumped) {
+  auto &stats = qt_wgpu_wake_stats();
+  stats.libuv_pump_events.fetch_add(1, std::memory_order_relaxed);
+  if (zero_timeout_pumped) {
+    stats.libuv_zero_timeout_pumps.fetch_add(1, std::memory_order_relaxed);
+  }
+  maybe_log_qt_wgpu_wake_stats();
+}
+
+void record_compositor_present_complete() {
+  qt_wgpu_wake_stats().compositor_present_completions.fetch_add(
+      1, std::memory_order_relaxed);
+  maybe_log_qt_wgpu_wake_stats();
+}
+
+void record_compositor_frame_request() {
+  qt_wgpu_wake_stats().compositor_frame_requests.fetch_add(
+      1, std::memory_order_relaxed);
+  maybe_log_qt_wgpu_wake_stats();
+}
+
+void record_compositor_frame_post() {
+  qt_wgpu_wake_stats().compositor_frame_posts.fetch_add(1, std::memory_order_relaxed);
+  maybe_log_qt_wgpu_wake_stats();
+}
+
+void record_compositor_frame_status(
+    qt_wgpu_renderer::UnifiedCompositorDriveStatus status) {
+  auto &stats = qt_wgpu_wake_stats();
+  stats.compositor_frame_runs.fetch_add(1, std::memory_order_relaxed);
+  switch (status) {
+  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Presented:
+    stats.compositor_frame_presented.fetch_add(1, std::memory_order_relaxed);
+    break;
+  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Busy:
+    stats.compositor_frame_busy.fetch_add(1, std::memory_order_relaxed);
+    break;
+  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Idle:
+    stats.compositor_frame_idle.fetch_add(1, std::memory_order_relaxed);
+    break;
+  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::NeedsQtRepaint:
+    stats.compositor_frame_needs_qt_repaint.fetch_add(1, std::memory_order_relaxed);
+    break;
+  }
+  maybe_log_qt_wgpu_wake_stats();
+}
+
 #include "qt_widget_kind_values.inc"
 
 #include "debug.cpp"
@@ -866,6 +1001,43 @@ void qt_request_repaint(std::uint32_t id) {
 
   g_host->registry().request_repaint(id);
   request_qt_pump();
+}
+
+bool qt_request_window_compositor_frame(std::uint32_t id) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before requesting a compositor frame");
+  }
+
+  const bool requested = g_host->registry().request_window_compositor_frame(id);
+#if !defined(Q_OS_MACOS)
+  request_qt_pump();
+#endif
+  return requested;
+}
+
+void notify_window_compositor_present_complete(std::uint32_t id) {
+  if (!g_host || !g_host->started()) {
+    return;
+  }
+
+  record_compositor_present_complete();
+  auto *context = QCoreApplication::instance();
+  if (context == nullptr) {
+    return;
+  }
+
+  QTimer::singleShot(0, context, [id]() {
+    if (!g_host || !g_host->started()) {
+      return;
+    }
+
+    g_host->registry().notify_window_compositor_frame_complete(id);
+  });
+#if defined(Q_OS_MACOS)
+  request_qt_native_wait_once();
+#else
+  request_qt_pump();
+#endif
 }
 
 QtWidgetCaptureLayout qt_capture_widget_layout(std::uint32_t id) {
@@ -1088,3 +1260,8 @@ void schedule_debug_event(std::uint32_t delay_ms, rust::Str name) {
 std::uint64_t trace_now_ns() { return uv_hrtime(); }
 
 } // namespace qt_solid_spike::qt
+
+extern "C" void qt_solid_notify_window_compositor_present_complete(
+    std::uint32_t id) {
+  qt_solid_spike::qt::notify_window_compositor_present_complete(id);
+}

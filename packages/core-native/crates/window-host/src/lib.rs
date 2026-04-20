@@ -86,6 +86,14 @@ impl WindowHost {
     pub fn request_wake(&self) {
         self.inner.request_wake();
     }
+
+    pub fn request_native_wait_once(&self) {
+        self.inner.request_native_wait_once();
+    }
+
+    pub fn notify_native_frame_source(&self) {
+        self.inner.notify_native_frame_source();
+    }
 }
 
 #[cfg(target_os = "macos")]

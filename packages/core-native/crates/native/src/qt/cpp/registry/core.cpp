@@ -81,11 +81,16 @@ public:
 
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override {
+#if !defined(Q_OS_MACOS)
     if (watched == target_ && event != nullptr && event->type() == QEvent::Paint) {
       if (auto *host = dynamic_cast<HostWindowWidget *>(target_->window())) {
         host->tick_frame();
       }
     }
+#else
+    Q_UNUSED(watched);
+    Q_UNUSED(event);
+#endif
 
     return QObject::eventFilter(watched, event);
   }
@@ -370,7 +375,9 @@ public:
       callback_host->bind_rust_widget(id, kind_tag);
     }
 
+#if !defined(Q_OS_MACOS)
     new WindowFrameTracker(entry.widget);
+#endif
     wire_widget_events(id, entry.widget, contract);
     apply_widget_style(entry);
     entries_.emplace(id, entry);
@@ -505,6 +512,27 @@ public:
       return;
     }
     widget.widget->update();
+  }
+
+  bool request_window_compositor_frame(std::uint32_t id) {
+    auto &widget = entry(id);
+    auto *host = dynamic_cast<HostWindowWidget *>(widget.widget);
+    if (host == nullptr) {
+      return false;
+    }
+    return host->request_compositor_frame();
+  }
+
+  void notify_window_compositor_frame_complete(std::uint32_t id) {
+    auto it = entries_.find(id);
+    if (it == entries_.end()) {
+      return;
+    }
+    auto *host = dynamic_cast<HostWindowWidget *>(it->second.widget);
+    if (host == nullptr) {
+      return;
+    }
+    host->notify_compositor_frame_complete();
   }
 
   QtWidgetCaptureLayout capture_widget_layout(std::uint32_t id) {
@@ -1664,6 +1692,14 @@ public:
     pump_->request_pump();
   }
 
+  void request_native_wait_once() {
+    if (!started_ || !pump_) {
+      return;
+    }
+
+    pump_->request_native_wait_once();
+  }
+
   void shutdown() {
     if (!started_) {
       return;
@@ -1759,7 +1795,16 @@ void request_qt_pump() {
     return;
   }
 
+  record_request_qt_pump();
   g_host->request_pump();
+}
+
+void request_qt_native_wait_once() {
+  if (!g_host || !g_host->started()) {
+    return;
+  }
+
+  g_host->request_native_wait_once();
 }
 
 int current_runtime_wait_bridge_unix_fd() noexcept {

@@ -234,6 +234,7 @@ fn main() {
     println!("cargo:rerun-if-changed=include/rust_widget_binding_host.h");
     println!("cargo:rerun-if-changed=include/qt/ffi.h");
     println!("cargo:rerun-if-changed=include/qt/macos_event_buffer_bridge.h");
+    println!("cargo:rerun-if-changed=include/qt/macos_display_link_bridge.h");
     println!("cargo:rerun-if-changed=include/qt_cocoa_dispatcher_private_shim.h");
     println!("cargo:rerun-if-changed=shaders/window_compositor.vert");
     println!("cargo:rerun-if-changed=shaders/window_compositor.frag");
@@ -244,6 +245,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/qt/cpp/registry/host.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/registry/core.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/macos_event_buffer_bridge.mm");
+    println!("cargo:rerun-if-changed=src/qt/cpp/macos_display_link_bridge.mm");
     println!("cargo:rerun-if-changed=src/qt/ffi.rs");
     println!("cargo:rerun-if-changed=src/qt/ffi_host.rs");
     println!("cargo:rerun-if-changed=src/qt/runtime.rs");

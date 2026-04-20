@@ -2,7 +2,10 @@ use napi::Result;
 
 use crate::qt::{
     QtRect, QtWindowCompositorPartMeta,
-    ffi::{QtCompositorTarget, bridge::QtWindowCompositorPresentPlan},
+    ffi::{
+        QtCompositorTarget,
+        bridge::{QtWindowCompositorDriveStatus, QtWindowCompositorPresentPlan},
+    },
 };
 
 use super::{
@@ -76,6 +79,23 @@ pub(crate) fn qt_plan_present_window_with_wgpu(
     base_dirty_rects: Vec<QtRect>,
 ) -> Result<QtWindowCompositorPresentPlan> {
     pipeline::plan_present_window_with_wgpu(node_id, base_dirty_rects)
+}
+
+pub(crate) fn qt_drive_window_compositor_frame(
+    node_id: u32,
+    target: QtCompositorTarget,
+) -> Result<QtWindowCompositorDriveStatus> {
+    pipeline::drive_window_compositor_frame(node_id, target)
+}
+
+pub(crate) fn qt_window_compositor_frame_is_initialized(
+    target: QtCompositorTarget,
+) -> Result<bool> {
+    let render_target = super::compositor_target_to_renderer(target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    Ok(qt_wgpu_renderer::compositor_frame_is_initialized(
+        render_target,
+    ))
 }
 
 pub(crate) fn qt_window_compositor_frame_part_count(

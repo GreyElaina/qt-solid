@@ -135,8 +135,10 @@ public:
 
     pumping_ = true;
     drain_runtime_wait_bridge_notifications();
+    bool zero_timeout_pumped = false;
     if (supports_zero_timeout_pump_) {
       qt_solid_spike::qt::window_host_pump_zero_timeout();
+      zero_timeout_pumped = true;
     }
 
     for (int index = 0; index < 8; ++index) {
@@ -144,16 +146,23 @@ public:
       QCoreApplication::processEvents(QEventLoop::AllEvents);
     }
     pumping_ = false;
+    record_libuv_pump_events(zero_timeout_pumped);
 
     reschedule_timer();
   }
 
-  void request_pump() {
+  void request_pump(bool issue_external_wake = true) {
     if (!started_ || !async_initialized_) {
       return;
     }
 
-    if (supports_external_wake_) {
+    if (qEnvironmentVariableIsSet("QT_SOLID_WGPU_TRACE")) {
+      std::fprintf(stdout, "[qt-uv-pump] request-pump external_wake=%d\n",
+                   issue_external_wake ? 1 : 0);
+      std::fflush(stdout);
+    }
+    record_libuv_request_pump();
+    if (issue_external_wake && supports_external_wake_) {
       qt_solid_spike::qt::window_host_request_wake();
     }
 
@@ -161,6 +170,21 @@ public:
     if (status != 0) {
       throw_uv_error("uv_async_send", status);
     }
+  }
+
+  void request_native_wait_once() {
+    if (!started_ || !async_initialized_) {
+      return;
+    }
+
+    if (qEnvironmentVariableIsSet("QT_SOLID_WGPU_TRACE")) {
+      std::fprintf(stdout, "[qt-uv-pump] request-native-wait-once\n");
+      std::fflush(stdout);
+    }
+    if (supports_zero_timeout_pump_) {
+      qt_solid_spike::qt::window_host_request_native_wait_once();
+    }
+    request_pump(false);
   }
 
 private:

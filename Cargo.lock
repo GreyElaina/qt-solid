@@ -195,6 +195,9 @@ name = "color"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a18ef4657441fb193b65f34dc39b3781f0dfec23d3bd94d0eeb4e88cde421edb"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "convert_case"
@@ -418,6 +421,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fearless_simd"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76258897e51fd156ee03b6246ea53f3e0eb395d0b327e9961c4fc4c8b2fa151a"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -604,6 +613,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "glifo"
+version = "0.0.0"
+dependencies = [
+ "bytemuck",
+ "foldhash 0.2.0",
+ "hashbrown 0.17.0",
+ "log",
+ "peniko",
+ "png",
+ "skrifa",
+ "smallvec",
+ "vello_common",
+]
+
+[[package]]
 name = "glow"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -705,6 +729,9 @@ name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+dependencies = [
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hexf-parse"
@@ -1037,6 +1064,8 @@ dependencies = [
  "qt-wgpu-renderer",
  "tokio",
  "vello",
+ "vello_cpu",
+ "vello_hybrid",
  "widget-build",
  "window-host",
 ]
@@ -1105,7 +1134,34 @@ dependencies = [
  "bitflags",
  "block2",
  "dispatch2",
+ "libc",
  "objc2",
+]
+
+[[package]]
+name = "objc2-core-graphics"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
+dependencies = [
+ "bitflags",
+ "dispatch2",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-io-surface",
+]
+
+[[package]]
+name = "objc2-core-video"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d425caf1df73233f29fd8a5c3e5edbc30d2d4307870f802d18f00d83dc5141a6"
+dependencies = [
+ "bitflags",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-io-surface",
 ]
 
 [[package]]
@@ -1121,8 +1177,52 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags",
+ "block2",
+ "libc",
  "objc2",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-io-surface"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
+dependencies = [
+ "bitflags",
+ "objc2",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-metal"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
+dependencies = [
+ "bitflags",
+ "block2",
+ "dispatch2",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-quartz-core"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96c1358452b371bf9f104e21ec536d37a650eb10f7ee379fff67d2e08d537f1f"
+dependencies = [
+ "bitflags",
+ "block2",
+ "libc",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-video",
+ "objc2-foundation",
+ "objc2-metal",
 ]
 
 [[package]]
@@ -1175,6 +1275,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a2b6aadb221872732e87d465213e9be5af2849b0e8cc5300a8ba98fffa2e00a"
 dependencies = [
+ "bytemuck",
  "color",
  "kurbo",
  "linebender_resource_handle",
@@ -1280,6 +1381,88 @@ dependencies = [
 ]
 
 [[package]]
+name = "qt-compositor-core"
+version = "0.1.0"
+dependencies = [
+ "qt-compositor-types",
+]
+
+[[package]]
+name = "qt-compositor-gpu"
+version = "0.1.0"
+dependencies = [
+ "qt-compositor-types",
+]
+
+[[package]]
+name = "qt-compositor-macos"
+version = "0.1.0"
+dependencies = [
+ "core-graphics-types",
+ "foreign-types",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-metal",
+ "objc2-quartz-core",
+ "qt-compositor-core",
+ "qt-compositor-gpu",
+ "qt-compositor-surface",
+ "qt-compositor-types",
+ "raw-window-metal",
+ "wgpu",
+ "wgpu-hal",
+]
+
+[[package]]
+name = "qt-compositor-surface"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "once_cell",
+ "pollster",
+ "qt-compositor-core",
+ "qt-compositor-gpu",
+ "qt-compositor-types",
+ "raw-window-handle",
+ "wgpu",
+]
+
+[[package]]
+name = "qt-compositor-types"
+version = "0.1.0"
+
+[[package]]
+name = "qt-compositor-wayland"
+version = "0.1.0"
+dependencies = [
+ "qt-compositor-core",
+ "qt-compositor-gpu",
+ "qt-compositor-surface",
+ "qt-compositor-types",
+]
+
+[[package]]
+name = "qt-compositor-windows"
+version = "0.1.0"
+dependencies = [
+ "qt-compositor-core",
+ "qt-compositor-gpu",
+ "qt-compositor-surface",
+ "qt-compositor-types",
+]
+
+[[package]]
+name = "qt-compositor-x11"
+version = "0.1.0"
+dependencies = [
+ "qt-compositor-core",
+ "qt-compositor-gpu",
+ "qt-compositor-surface",
+ "qt-compositor-types",
+]
+
+[[package]]
 name = "qt-solid-core-widgets"
 version = "0.1.0"
 dependencies = [
@@ -1336,6 +1519,7 @@ dependencies = [
  "linkme",
  "napi",
  "vello",
+ "vello_api",
 ]
 
 [[package]]
@@ -1351,11 +1535,13 @@ dependencies = [
 name = "qt-wgpu-renderer"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "once_cell",
- "pollster",
- "raw-window-handle",
- "wgpu",
+ "qt-compositor-core",
+ "qt-compositor-gpu",
+ "qt-compositor-macos",
+ "qt-compositor-types",
+ "qt-compositor-wayland",
+ "qt-compositor-windows",
+ "qt-compositor-x11",
 ]
 
 [[package]]
@@ -1395,6 +1581,18 @@ name = "raw-window-handle"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
+
+[[package]]
+name = "raw-window-metal"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40d213455a5f1dc59214213c7330e074ddf8114c9a42411eb890c767357ce135"
+dependencies = [
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-quartz-core",
+]
 
 [[package]]
 name = "read-fonts"
@@ -1694,6 +1892,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "vello_api"
+version = "0.0.7"
+dependencies = [
+ "bytemuck",
+ "peniko",
+ "png",
+]
+
+[[package]]
+name = "vello_common"
+version = "0.0.7"
+dependencies = [
+ "bytemuck",
+ "fearless_simd",
+ "guillotiere",
+ "hashbrown 0.17.0",
+ "log",
+ "peniko",
+ "png",
+ "smallvec",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "vello_cpu"
+version = "0.0.7"
+dependencies = [
+ "bytemuck",
+ "glifo",
+ "hashbrown 0.17.0",
+ "png",
+ "vello_api",
+ "vello_common",
+]
+
+[[package]]
 name = "vello_encoding"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1704,6 +1938,21 @@ dependencies = [
  "peniko",
  "skrifa",
  "smallvec",
+]
+
+[[package]]
+name = "vello_hybrid"
+version = "0.0.7"
+dependencies = [
+ "bytemuck",
+ "glifo",
+ "hashbrown 0.17.0",
+ "log",
+ "thiserror 2.0.18",
+ "vello_api",
+ "vello_common",
+ "vello_sparse_shaders",
+ "wgpu",
 ]
 
 [[package]]
@@ -1718,6 +1967,10 @@ dependencies = [
  "thiserror 2.0.18",
  "vello_encoding",
 ]
+
+[[package]]
+name = "vello_sparse_shaders"
+version = "0.0.7"
 
 [[package]]
 name = "version_check"

@@ -11,7 +11,7 @@ pub(crate) use ffi::{
     qt_capture_widget_region_into, qt_capture_widget_visible_rects, qt_create_widget,
     qt_debug_node_state, qt_destroy_widget, qt_host_started, qt_insert_child, qt_qpainter_call,
     qt_read_bool_prop, qt_read_f64_prop, qt_read_i32_prop, qt_read_string_prop, qt_remove_child,
-    qt_request_repaint, qt_runtime_wait_bridge_kind_tag, qt_runtime_wait_bridge_unix_fd,
-    qt_runtime_wait_bridge_windows_handle, schedule_debug_event, shutdown_qt_host, start_qt_host,
-    trace_now_ns,
+    qt_request_repaint, qt_request_window_compositor_frame, qt_runtime_wait_bridge_kind_tag,
+    qt_runtime_wait_bridge_unix_fd, qt_runtime_wait_bridge_windows_handle, schedule_debug_event,
+    shutdown_qt_host, start_qt_host, trace_now_ns,
 };

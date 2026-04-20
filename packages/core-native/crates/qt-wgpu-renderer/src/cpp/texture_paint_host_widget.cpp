@@ -33,6 +33,23 @@ std::optional<std::uint32_t> host_window_node_id(const QWidget *widget) {
   return node_id.toUInt();
 }
 
+void request_unified_compositor_frame(const QWidget *widget) {
+  if (!qt_wgpu_renderer::unified_compositor_active() || widget == nullptr) {
+    return;
+  }
+
+  const auto window_id = host_window_node_id(widget);
+  if (!window_id.has_value()) {
+    return;
+  }
+
+  try {
+    qt_solid_spike::qt::qt_request_window_compositor_frame(*window_id);
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor frame request failed:" << error.what();
+  }
+}
+
 void mark_unified_compositor_widget_dirty(const QWidget *widget,
                                           std::uint32_t node_id,
                                           const QRect &local_rect) {
@@ -55,6 +72,7 @@ void mark_unified_compositor_widget_dirty(const QWidget *widget,
   qt_solid_spike::qt::qt_mark_window_compositor_pixels_dirty_region(
       *window_id, node_id, top_left_in_window.x(), top_left_in_window.y(),
       local_rect.width(), local_rect.height());
+  request_unified_compositor_frame(widget);
 }
 
 QPlatformBackingStoreRhiConfig::Api preferred_backing_store_api() {

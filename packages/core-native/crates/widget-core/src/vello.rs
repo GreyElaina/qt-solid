@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-pub use ::vello::{Scene, peniko};
+pub use vello_api::{PaintScene, Scene, peniko};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameTime {
@@ -16,7 +16,7 @@ pub struct VelloDirtyRect {
     pub height: f64,
 }
 
-pub struct VelloFrame<'a> {
+pub struct PaintSceneFrame<'a> {
     width: f64,
     height: f64,
     scale_factor: f64,
@@ -26,9 +26,9 @@ pub struct VelloFrame<'a> {
     dirty_rects: &'a mut Vec<VelloDirtyRect>,
 }
 
-impl std::fmt::Debug for VelloFrame<'_> {
+impl std::fmt::Debug for PaintSceneFrame<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VelloFrame")
+        f.debug_struct("PaintSceneFrame")
             .field("width", &self.width)
             .field("height", &self.height)
             .field("scale_factor", &self.scale_factor)
@@ -39,7 +39,7 @@ impl std::fmt::Debug for VelloFrame<'_> {
     }
 }
 
-impl<'a> VelloFrame<'a> {
+impl<'a> PaintSceneFrame<'a> {
     pub fn new(
         width: f64,
         height: f64,
@@ -120,18 +120,20 @@ impl<'a> VelloFrame<'a> {
     }
 }
 
+pub type VelloFrame<'a> = PaintSceneFrame<'a>;
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::{FrameTime, Scene, VelloFrame};
+    use super::{FrameTime, PaintSceneFrame, Scene};
 
     #[test]
     fn vello_frame_requests_next_frame() {
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(false);
         let mut next_frame_requested = false;
         let mut dirty_rects = Vec::new();
-        let mut frame = VelloFrame::new(
+        let mut frame = PaintSceneFrame::new(
             320.0,
             180.0,
             2.0,

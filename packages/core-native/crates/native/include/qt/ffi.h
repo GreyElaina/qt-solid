@@ -28,6 +28,7 @@ void qt_insert_child(std::uint32_t parent_id, std::uint32_t child_id,
 void qt_remove_child(std::uint32_t parent_id, std::uint32_t child_id);
 void qt_destroy_widget(std::uint32_t id);
 void qt_request_repaint(std::uint32_t id);
+bool qt_request_window_compositor_frame(std::uint32_t id);
 QtWidgetCaptureLayout qt_capture_widget_layout(std::uint32_t id);
 void qt_capture_widget_into(std::uint32_t id, std::uint32_t width_px,
                             std::uint32_t height_px, std::size_t stride,

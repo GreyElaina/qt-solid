@@ -97,6 +97,28 @@ pub(crate) fn request_wake() {
     });
 }
 
+pub(crate) fn request_native_wait_once() {
+    WINDOW_HOST.with(|slot| {
+        let Ok(slot) = slot.try_borrow() else {
+            return;
+        };
+        if let Some(host) = slot.as_ref() {
+            host.request_native_wait_once();
+        }
+    });
+}
+
+pub(crate) fn notify_native_frame_source() {
+    WINDOW_HOST.with(|slot| {
+        let Ok(slot) = slot.try_borrow() else {
+            return;
+        };
+        if let Some(host) = slot.as_ref() {
+            host.notify_native_frame_source();
+        }
+    });
+}
+
 pub(crate) fn backend_name() -> Option<String> {
     WINDOW_HOST.with(|slot| {
         let Ok(slot) = slot.try_borrow() else {
@@ -182,6 +204,15 @@ pub(crate) fn ffi_pump_zero_timeout() -> bool {
 
 pub(crate) fn ffi_request_wake() {
     request_wake();
+}
+
+pub(crate) fn ffi_request_native_wait_once() {
+    request_native_wait_once();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn qt_solid_notify_native_frame_source() {
+    notify_native_frame_source();
 }
 
 pub(crate) fn ffi_supports_zero_timeout_pump() -> bool {

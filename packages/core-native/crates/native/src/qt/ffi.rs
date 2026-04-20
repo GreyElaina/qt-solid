@@ -119,6 +119,14 @@ pub(crate) mod bridge {
         cached_stride: usize,
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum QtWindowCompositorDriveStatus {
+        Idle = 0,
+        Presented = 1,
+        Busy = 2,
+        NeedsQtRepaint = 3,
+    }
+
     extern "Rust" {
         type QtPreparedWindowCompositorFrame;
 
@@ -169,6 +177,26 @@ pub(crate) mod bridge {
             node_id: u32,
             base_dirty_rects: Vec<QtRect>,
         ) -> Result<QtWindowCompositorPresentPlan>;
+        fn qt_drive_window_compositor_frame(
+            node_id: u32,
+            target: QtCompositorTarget,
+        ) -> Result<QtWindowCompositorDriveStatus>;
+        fn qt_drive_window_compositor_frame_from_display_link(
+            node_id: u32,
+            target: QtCompositorTarget,
+            drawable_handle: u64,
+        ) -> Result<QtWindowCompositorDriveStatus>;
+        fn qt_window_compositor_frame_is_initialized(target: QtCompositorTarget) -> Result<bool>;
+        fn qt_window_compositor_request_frame(target: QtCompositorTarget) -> Result<bool>;
+        fn qt_window_compositor_display_link_should_run(
+            target: QtCompositorTarget,
+        ) -> Result<bool>;
+        fn qt_window_compositor_metal_layer_handle(target: QtCompositorTarget) -> Result<u64>;
+        fn qt_window_compositor_note_metal_display_link_drawable(
+            target: QtCompositorTarget,
+            drawable_handle: u64,
+        ) -> Result<()>;
+        fn qt_window_compositor_release_metal_drawable(drawable_handle: u64) -> Result<()>;
         fn qt_window_compositor_frame_part_count(frame: &QtPreparedWindowCompositorFrame) -> usize;
         fn qt_window_compositor_frame_part_meta(
             frame: &QtPreparedWindowCompositorFrame,
@@ -237,6 +265,7 @@ pub(crate) mod bridge {
         fn window_host_wait_bridge_windows_handle() -> u64;
         fn window_host_pump_zero_timeout() -> bool;
         fn window_host_request_wake();
+        fn window_host_request_native_wait_once();
     }
 
     unsafe extern "C++" {
@@ -255,6 +284,7 @@ pub(crate) mod bridge {
         fn qt_remove_child(parent_id: u32, child_id: u32) -> Result<()>;
         fn qt_destroy_widget(id: u32) -> Result<()>;
         fn qt_request_repaint(id: u32) -> Result<()>;
+        fn qt_request_window_compositor_frame(id: u32) -> Result<bool>;
         fn qt_capture_widget_layout(id: u32) -> Result<QtWidgetCaptureLayout>;
         fn qt_capture_widget_into(
             id: u32,
@@ -308,17 +338,17 @@ pub(crate) mod bridge {
 
 pub(crate) use bridge::{
     QPainter, QtCompositorSurfaceKind, QtCompositorTarget, QtListenerValue, QtMethodValue,
-    QtRealizedNodeState, QtRect, QtWidgetCaptureLayout, QtWindowCompositorPartMeta,
-    debug_clear_highlight, debug_click_node, debug_close_node, debug_highlight_node,
-    debug_input_insert_text, debug_node_at_point, debug_node_bounds, debug_set_inspect_mode,
-    qt_apply_bool_prop, qt_apply_f64_prop, qt_apply_i32_prop, qt_apply_string_prop,
-    qt_call_host_slot, qt_capture_widget_into, qt_capture_widget_layout,
+    QtRealizedNodeState, QtRect, QtWidgetCaptureLayout, QtWindowCompositorDriveStatus,
+    QtWindowCompositorPartMeta, debug_clear_highlight, debug_click_node, debug_close_node,
+    debug_highlight_node, debug_input_insert_text, debug_node_at_point, debug_node_bounds,
+    debug_set_inspect_mode, qt_apply_bool_prop, qt_apply_f64_prop, qt_apply_i32_prop,
+    qt_apply_string_prop, qt_call_host_slot, qt_capture_widget_into, qt_capture_widget_layout,
     qt_capture_widget_region_into, qt_capture_widget_visible_rects, qt_create_widget,
     qt_debug_node_state, qt_destroy_widget, qt_host_started, qt_insert_child, qt_qpainter_call,
     qt_read_bool_prop, qt_read_f64_prop, qt_read_i32_prop, qt_read_string_prop, qt_remove_child,
-    qt_request_repaint, qt_runtime_wait_bridge_kind_tag, qt_runtime_wait_bridge_unix_fd,
-    qt_runtime_wait_bridge_windows_handle, schedule_debug_event, shutdown_qt_host, start_qt_host,
-    trace_now_ns,
+    qt_request_repaint, qt_request_window_compositor_frame, qt_runtime_wait_bridge_kind_tag,
+    qt_runtime_wait_bridge_unix_fd, qt_runtime_wait_bridge_windows_handle, schedule_debug_event,
+    shutdown_qt_host, start_qt_host, trace_now_ns,
 };
 
 pub(crate) fn emit_app_event(name: &str) {
@@ -432,6 +462,127 @@ pub(crate) fn qt_plan_present_window_with_wgpu(
     base_dirty_rects: Vec<QtRect>,
 ) -> napi::Result<QtWindowCompositorPresentPlan> {
     crate::window_compositor::qt_plan_present_window_with_wgpu(node_id, base_dirty_rects)
+}
+
+pub(crate) fn qt_drive_window_compositor_frame(
+    node_id: u32,
+    target: QtCompositorTarget,
+) -> napi::Result<QtWindowCompositorDriveStatus> {
+    let render_target = crate::window_compositor::compositor_target_to_renderer(target)?;
+    qt_wgpu_renderer::load_or_create_compositor(render_target)
+        .and_then(|compositor| compositor.begin_drive(render_target))
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    crate::window_compositor::qt_window_frame_tick(node_id)?;
+    crate::window_compositor::qt_drive_window_compositor_frame(node_id, target)
+}
+
+pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
+    node_id: u32,
+    target: QtCompositorTarget,
+    drawable_handle: u64,
+) -> napi::Result<QtWindowCompositorDriveStatus> {
+    let trace_enabled = std::env::var_os("QT_SOLID_WGPU_TRACE").is_some();
+    let render_target = crate::window_compositor::compositor_target_to_renderer(target)?;
+    let compositor = qt_wgpu_renderer::load_or_create_compositor(render_target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    compositor
+        .begin_drive(render_target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    compositor
+        .note_drawable(render_target, drawable_handle)
+    .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    crate::window_compositor::qt_window_frame_tick(node_id)?;
+    let status = crate::window_compositor::qt_drive_window_compositor_frame(node_id, target)?;
+    let snapshot_presented = if matches!(status, QtWindowCompositorDriveStatus::Presented) {
+        false
+    } else {
+        compositor
+            .try_present_ingested_snapshot(render_target)
+            .map_err(|error| crate::runtime::qt_error(error.to_string()))?
+    };
+    let snapshot_rearmed = snapshot_presented
+        && !matches!(status, QtWindowCompositorDriveStatus::Presented)
+        && compositor
+            .request_frame(render_target, qt_wgpu_renderer::FrameReason::OverlayInvalidated)
+            .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    if trace_enabled {
+        println!(
+            "[qt-ffi] display-link node={} snapshot_presented={} snapshot_rearmed={} status={:?}",
+            node_id, snapshot_presented, snapshot_rearmed, status
+        );
+    }
+    if matches!(status, QtWindowCompositorDriveStatus::Busy) {
+        let _ = compositor.request_frame(
+            render_target,
+            qt_wgpu_renderer::FrameReason::OverlayInvalidated,
+        );
+    }
+    if snapshot_presented && !matches!(status, QtWindowCompositorDriveStatus::Presented) {
+        return Ok(QtWindowCompositorDriveStatus::Busy);
+    }
+    Ok(status)
+}
+
+pub(crate) fn qt_window_compositor_frame_is_initialized(
+    target: QtCompositorTarget,
+) -> napi::Result<bool> {
+    crate::window_compositor::qt_window_compositor_frame_is_initialized(target)
+}
+
+pub(crate) fn qt_window_compositor_request_frame(
+    target: QtCompositorTarget,
+) -> napi::Result<bool> {
+    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    qt_wgpu_renderer::load_or_create_compositor(render_target)
+        .and_then(|compositor| {
+            compositor.request_frame(
+                render_target,
+                qt_wgpu_renderer::FrameReason::OverlayInvalidated,
+            )
+        })
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))
+}
+
+pub(crate) fn qt_window_compositor_display_link_should_run(
+    target: QtCompositorTarget,
+) -> napi::Result<bool> {
+    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    Ok(
+        qt_wgpu_renderer::load_or_create_compositor(render_target)
+            .map(|compositor| compositor.should_run_frame_source())
+            .map_err(|error| crate::runtime::qt_error(error.to_string()))?,
+    )
+}
+
+pub(crate) fn qt_window_compositor_metal_layer_handle(
+    target: QtCompositorTarget,
+) -> napi::Result<u64> {
+    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    qt_wgpu_renderer::load_or_create_compositor(render_target)
+        .and_then(|compositor| compositor.layer_handle(render_target))
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))
+}
+
+pub(crate) fn qt_window_compositor_note_metal_display_link_drawable(
+    target: QtCompositorTarget,
+    drawable_handle: u64,
+) -> napi::Result<()> {
+    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    qt_wgpu_renderer::load_or_create_compositor(render_target)
+        .and_then(|compositor| compositor.note_drawable(render_target, drawable_handle))
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))
+}
+
+pub(crate) fn qt_window_compositor_release_metal_drawable(
+    drawable_handle: u64,
+) -> napi::Result<()> {
+    #[cfg(target_os = "macos")]
+    qt_wgpu_renderer::release_metal_drawable(drawable_handle);
+    Ok(())
 }
 
 pub(crate) fn qt_window_compositor_frame_part_count(
@@ -616,4 +767,8 @@ pub(crate) fn window_host_wait_bridge_windows_handle() -> u64 {
 
 pub(crate) fn window_host_request_wake() {
     super::ffi_host::window_host_request_wake();
+}
+
+pub(crate) fn window_host_request_native_wait_once() {
+    super::ffi_host::window_host_request_native_wait_once();
 }

@@ -1,7 +1,9 @@
+use std::time::Instant;
+
 use napi::Result;
 use qt_solid_widget_core::{
     runtime::{self as widget_runtime, WidgetCapture},
-    vello::{FrameTime as VelloFrameTime, VelloDirtyRect, VelloFrame},
+    vello::{FrameTime as VelloFrameTime, PaintSceneFrame, Scene, VelloDirtyRect},
 };
 
 use crate::{
@@ -10,7 +12,7 @@ use crate::{
         NodeHandle, debug_node_bounds, ensure_live_node, node_by_id, qt_error,
         request_overlay_next_frame_exact, widget_instance_for_node_id,
     },
-    vello_wgpu,
+    scene_renderer,
 };
 
 use super::frame_clock::{node_frame_time, window_ancestor_id_for_node};
@@ -20,8 +22,19 @@ use super::{
     load_window_compositor_target, mark_window_compositor_dirty_region,
 };
 
+fn compositor_trace_enabled() -> bool {
+    std::env::var_os("QT_SOLID_WGPU_TRACE").is_some()
+}
+
+fn compositor_trace(args: std::fmt::Arguments<'_>) {
+    if !compositor_trace_enabled() {
+        return;
+    }
+    println!("[qt-texture-widget] {args}");
+}
+
 pub(crate) struct PreparedVelloWidgetScene {
-    pub(crate) scene: vello::Scene,
+    pub(crate) scene: Scene,
     pub(crate) next_frame_requested: bool,
     pub(crate) dirty_rects: Vec<VelloDirtyRect>,
 }
@@ -34,15 +47,17 @@ pub(crate) struct TextureWidgetLayerRenderResult {
 }
 
 pub(crate) fn prepare_vello_widget_scene(
+    target: qt_wgpu_renderer::QtCompositorTarget,
     node: &impl NodeHandle,
     layout: &qt::QtWidgetCaptureLayout,
     time: VelloFrameTime,
 ) -> Result<PreparedVelloWidgetScene> {
+    let prepare_started = Instant::now();
     let instance = widget_instance_for_node_id(node.inner().id)?;
-    let mut scene = vello::Scene::new();
+    let mut scene = Scene::new(false);
     let mut next_frame_requested = false;
     let mut logical_dirty_rects = Vec::new();
-    let mut frame = VelloFrame::new(
+    let mut frame = PaintSceneFrame::new(
         f64::from(layout.width_px) / layout.scale_factor.max(f64::EPSILON),
         f64::from(layout.height_px) / layout.scale_factor.max(f64::EPSILON),
         layout.scale_factor,
@@ -51,7 +66,13 @@ pub(crate) fn prepare_vello_widget_scene(
         &mut next_frame_requested,
         &mut logical_dirty_rects,
     );
-    match instance.paint(widget_runtime::PaintDevice::Vello(&mut frame)) {
+    qt_wgpu_renderer::record_compositor_timing(
+        target,
+        qt_wgpu_renderer::CompositorTimingStage::PrepareOverlayScene,
+        prepare_started.elapsed(),
+    );
+    let paint_started = Instant::now();
+    match instance.paint(widget_runtime::PaintDevice::Scene(&mut frame)) {
         Ok(()) => {}
         Err(error) if error.is_unsupported_paint_device() => {
             return Err(qt_error(format!(
@@ -61,6 +82,11 @@ pub(crate) fn prepare_vello_widget_scene(
         }
         Err(error) => return Err(qt_error(error.to_string())),
     }
+    qt_wgpu_renderer::record_compositor_timing(
+        target,
+        qt_wgpu_renderer::CompositorTimingStage::PaintOverlayScene,
+        paint_started.elapsed(),
+    );
 
     Ok(PreparedVelloWidgetScene {
         scene,
@@ -148,12 +174,29 @@ pub(crate) fn render_texture_widget_part_into_compositor_layer(
     let layout =
         qt::qt_capture_widget_layout(node_id).map_err(|error| qt_error(error.what().to_owned()))?;
     let time = node_frame_time(&window)?;
-    let prepared_scene = prepare_vello_widget_scene(&node, &layout, time)?;
+    let prepared_scene = prepare_vello_widget_scene(target, &node, &layout, time)?;
+    compositor_trace(format_args!(
+        "render-layer node={} target={}x{} layout={}x{} scale={:.3} next_frame_requested={} dirty_rects={}",
+        node_id,
+        target.width_px,
+        target.height_px,
+        layout.width_px,
+        layout.height_px,
+        layout.scale_factor,
+        prepared_scene.next_frame_requested,
+        prepared_scene.dirty_rects.len()
+    ));
+    let convert_dirty_rects_started = Instant::now();
     let local_dirty_rects_px =
         vello_dirty_rects_to_local_pixel_rects(&layout, &prepared_scene.dirty_rects)?
             .into_iter()
             .map(pixel_rect_to_qt_rect)
             .collect::<Vec<_>>();
+    qt_wgpu_renderer::record_compositor_timing(
+        target,
+        qt_wgpu_renderer::CompositorTimingStage::ConvertOverlayDirtyRects,
+        convert_dirty_rects_started.elapsed(),
+    );
     let offset_x = bounds.screen_x - window_bounds.screen_x;
     let offset_y = bounds.screen_y - window_bounds.screen_y;
     let window_dirty_rects = window_dirty_rects_from_local_pixel_rects(
@@ -176,7 +219,7 @@ pub(crate) fn render_texture_widget_part_into_compositor_layer(
     if prepared_scene.next_frame_requested {
         request_overlay_next_frame_exact(&window, node_id)?;
     }
-    vello_wgpu::render_vello_scene_into_compositor_layer(
+    scene_renderer::render_scene_into_compositor_layer(
         target,
         node_id,
         layout.width_px,
@@ -184,6 +227,11 @@ pub(crate) fn render_texture_widget_part_into_compositor_layer(
         layout.scale_factor,
         &prepared_scene.scene,
     )?;
+    compositor_trace(format_args!(
+        "render-layer-done node={} local_dirty_rects_px={}",
+        node_id,
+        local_dirty_rects_px.len()
+    ));
     Ok(TextureWidgetLayerRenderResult {
         rendered: true,
         next_frame_requested: prepared_scene.next_frame_requested,
@@ -207,12 +255,25 @@ pub(crate) fn capture_vello_widget_exact(node: &impl NodeHandle) -> Result<Optio
     let time = node_frame_time(&window)?;
     let layout = qt::qt_capture_widget_layout(node.inner().id)
         .map_err(|error| qt_error(error.what().to_owned()))?;
-    let prepared_scene = prepare_vello_widget_scene(node, &layout, time)?;
+    let render_target = compositor_target_to_renderer(target)?;
+    let prepared_scene = prepare_vello_widget_scene(render_target, node, &layout, time)?;
+    compositor_trace(format_args!(
+        "capture-vello node={} target={}x{} layout={}x{} scale={:.3} elapsed_ms={:.3} delta_ms={:.3} next_frame_requested={} dirty_rects={}",
+        node.inner().id,
+        render_target.width_px,
+        render_target.height_px,
+        layout.width_px,
+        layout.height_px,
+        layout.scale_factor,
+        time.elapsed.as_secs_f64() * 1000.0,
+        time.delta.as_secs_f64() * 1000.0,
+        prepared_scene.next_frame_requested,
+        prepared_scene.dirty_rects.len()
+    ));
     if prepared_scene.next_frame_requested {
         request_overlay_next_frame_exact(&window, node.inner().id)?;
     }
-    let render_target = compositor_target_to_renderer(target)?;
-    vello_wgpu::render_vello_scene_to_capture(
+    let capture = scene_renderer::render_scene_to_capture(
         render_target,
         node.inner().id,
         layout.width_px,
@@ -220,7 +281,17 @@ pub(crate) fn capture_vello_widget_exact(node: &impl NodeHandle) -> Result<Optio
         layout.scale_factor,
         &prepared_scene.scene,
     )
-    .map(Some)
+    .map_err(|error| qt_error(error.to_string()))?;
+    compositor_trace(format_args!(
+        "capture-vello-done node={} bytes={} format={:?} size={}x{} stride={}",
+        node.inner().id,
+        capture.bytes().len(),
+        capture.format(),
+        capture.width_px(),
+        capture.height_px(),
+        capture.stride()
+    ));
+    Ok(Some(capture))
 }
 
 pub(crate) fn capture_painted_widget_exact_with_children(

@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{decl::SpecWidgetKey, vello::VelloFrame, vello::peniko::color::PremulRgba8};
+use crate::{decl::SpecWidgetKey, vello::PaintSceneFrame, vello::peniko::color::PremulRgba8};
 
 pub use linkme;
 
@@ -706,7 +706,7 @@ mod tests {
         WidgetCaptureFormat, WidgetHandle, WidgetHandleOwner, WidgetPaintRuntimeMeta,
         WidgetRuntimeHandle, new_widget_instance,
     };
-    use crate::vello::{FrameTime, Scene, VelloFrame};
+    use crate::vello::{FrameTime, PaintSceneFrame, Scene};
 
     #[test]
     fn opaque_host_match_ignores_rust_path() {
@@ -836,8 +836,8 @@ mod tests {
         }
     }
 
-    impl Paint<VelloFrame<'_>> for DummyWidget {
-        fn paint(&mut self, frame: &mut VelloFrame<'_>) {
+    impl Paint<PaintSceneFrame<'_>> for DummyWidget {
+        fn paint(&mut self, frame: &mut PaintSceneFrame<'_>) {
             let _ = frame.scene();
             self.call_count += 1;
             self.observed_count.store(self.call_count, Ordering::SeqCst);
@@ -851,7 +851,7 @@ mod tests {
             PaintDevice::OpaqueHost(_) => Err(super::WidgetError::new(
                 "dummy widget does not support opaque host paint",
             )),
-            PaintDevice::Vello(frame) => {
+            PaintDevice::Scene(frame) => {
                 Paint::paint(widget, frame);
                 Ok(())
             }
@@ -932,10 +932,10 @@ mod tests {
             &super::NO_WIDGET_PROP_RUNTIME_DECL,
         );
 
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(false);
         let mut next_frame_requested = false;
         let mut dirty_rects = Vec::new();
-        let mut frame = VelloFrame::new(
+        let mut frame = PaintSceneFrame::new(
             100.0,
             40.0,
             1.0,
@@ -949,7 +949,7 @@ mod tests {
         );
 
         instance
-            .paint(PaintDevice::Vello(&mut frame))
+            .paint(PaintDevice::Scene(&mut frame))
             .expect("paint dispatch should succeed");
 
         assert_eq!(observed_count.load(Ordering::SeqCst), 1);
@@ -970,10 +970,10 @@ mod tests {
             &super::NO_WIDGET_PROP_RUNTIME_DECL,
         );
 
-        let mut scene = Scene::new();
+        let mut scene = Scene::new(false);
         let mut next_frame_requested = false;
         let mut dirty_rects = Vec::new();
-        let mut frame = VelloFrame::new(
+        let mut frame = PaintSceneFrame::new(
             100.0,
             40.0,
             1.0,
@@ -987,9 +987,9 @@ mod tests {
         );
 
         let error = instance
-            .paint(PaintDevice::Vello(&mut frame))
+            .paint(PaintDevice::Scene(&mut frame))
             .expect_err("paint without host decl should fail");
-        assert_eq!(error.message(), "unsupported paint device: vello");
+        assert_eq!(error.message(), "unsupported paint device: scene");
     }
 
     #[test]
@@ -1194,14 +1194,14 @@ pub trait Paint<Target> {
 
 pub enum PaintDevice<'a> {
     OpaqueHost(&'a mut dyn QtOpaqueHostMutDyn),
-    Vello(&'a mut VelloFrame<'a>),
+    Scene(&'a mut PaintSceneFrame<'a>),
 }
 
 impl PaintDevice<'_> {
     pub const fn kind_name(&self) -> &'static str {
         match self {
             Self::OpaqueHost(_) => "opaque-host",
-            Self::Vello(_) => "vello",
+            Self::Scene(_) => "scene",
         }
     }
 }

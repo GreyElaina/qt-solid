@@ -1776,7 +1776,13 @@ pub(crate) fn request_overlay_next_frame_exact(
 ) -> Result<()> {
     ensure_live_node(window)?;
     window_compositor::mark_window_compositor_frame_tick_node(window.inner().id, overlay_node_id);
-    request_window_repaint_exact(window)
+    if qt::qt_request_window_compositor_frame(window.inner().id)
+        .map_err(|error| qt_error(error.what().to_owned()))?
+    {
+        Ok(())
+    } else {
+        request_window_repaint_exact(window)
+    }
 }
 pub(crate) fn capture_widget_exact(node: &impl NodeHandle) -> Result<WidgetCapture> {
     let class = ensure_live_node(node)?;

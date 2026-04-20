@@ -2,8 +2,8 @@ mod api;
 mod bootstrap;
 mod qt;
 mod runtime;
+mod scene_renderer;
 mod trace;
-mod vello_wgpu;
 mod window_compositor;
 mod window_host;
 

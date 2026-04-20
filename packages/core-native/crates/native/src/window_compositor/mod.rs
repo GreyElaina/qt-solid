@@ -20,11 +20,12 @@ use crate::{
 };
 
 pub(crate) use bridge::{
-    qt_mark_window_compositor_geometry_dirty, qt_mark_window_compositor_pixels_dirty,
-    qt_mark_window_compositor_pixels_dirty_region, qt_mark_window_compositor_scene_dirty,
-    qt_paint_window_compositor, qt_plan_present_window_with_wgpu,
-    qt_prepare_window_compositor_frame, qt_present_window_with_wgpu,
-    qt_window_compositor_frame_base_upload_kind, qt_window_compositor_frame_part_bytes,
+    qt_drive_window_compositor_frame, qt_mark_window_compositor_geometry_dirty,
+    qt_mark_window_compositor_pixels_dirty, qt_mark_window_compositor_pixels_dirty_region,
+    qt_mark_window_compositor_scene_dirty, qt_paint_window_compositor,
+    qt_plan_present_window_with_wgpu, qt_prepare_window_compositor_frame,
+    qt_present_window_with_wgpu, qt_window_compositor_frame_base_upload_kind,
+    qt_window_compositor_frame_is_initialized, qt_window_compositor_frame_part_bytes,
     qt_window_compositor_frame_part_count, qt_window_compositor_frame_part_dirty_rects,
     qt_window_compositor_frame_part_meta, qt_window_compositor_frame_part_upload_kind,
     qt_window_compositor_frame_part_visible_rects, qt_window_frame_tick,
@@ -157,19 +158,19 @@ fn upload_kind_tag(kind: WindowCompositorPartUploadKind) -> u8 {
 }
 
 fn compositor_surface_kind_to_renderer(
-    kind: crate::qt::ffi::QtCompositorSurfaceKind,
+    kind: qt::ffi::QtCompositorSurfaceKind,
 ) -> Result<u8> {
     let surface_kind = match kind {
-        crate::qt::ffi::QtCompositorSurfaceKind::AppKitNsView => {
+        qt::ffi::QtCompositorSurfaceKind::AppKitNsView => {
             qt_wgpu_renderer::QT_COMPOSITOR_SURFACE_APPKIT_NS_VIEW
         }
-        crate::qt::ffi::QtCompositorSurfaceKind::Win32Hwnd => {
+        qt::ffi::QtCompositorSurfaceKind::Win32Hwnd => {
             qt_wgpu_renderer::QT_COMPOSITOR_SURFACE_WIN32_HWND
         }
-        crate::qt::ffi::QtCompositorSurfaceKind::XcbWindow => {
+        qt::ffi::QtCompositorSurfaceKind::XcbWindow => {
             qt_wgpu_renderer::QT_COMPOSITOR_SURFACE_XCB_WINDOW
         }
-        crate::qt::ffi::QtCompositorSurfaceKind::WaylandSurface => {
+        qt::ffi::QtCompositorSurfaceKind::WaylandSurface => {
             qt_wgpu_renderer::QT_COMPOSITOR_SURFACE_WAYLAND_SURFACE
         }
         _ => return Err(qt_error("unsupported qt compositor surface kind tag")),
@@ -177,7 +178,7 @@ fn compositor_surface_kind_to_renderer(
     Ok(surface_kind)
 }
 
-fn compositor_target_to_renderer(
+pub(crate) fn compositor_target_to_renderer(
     target: QtCompositorTarget,
 ) -> Result<qt_wgpu_renderer::QtCompositorTarget> {
     Ok(qt_wgpu_renderer::QtCompositorTarget {

@@ -30,6 +30,7 @@
 #endif
 
 #include <memory>
+#include <cstdio>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -65,6 +66,22 @@ struct BackingStorePixels {
       rust::Slice<const std::uint8_t>(nullptr, 0);
   QImage image;
 };
+
+bool qt_solid_wgpu_trace_enabled() {
+  static const bool enabled = qEnvironmentVariableIsSet("QT_SOLID_WGPU_TRACE");
+  return enabled;
+}
+
+template <typename... Args>
+void qt_solid_wgpu_trace(const char *fmt, Args... args) {
+  if (!qt_solid_wgpu_trace_enabled()) {
+    return;
+  }
+  std::fprintf(stdout, "[qt-platform] ");
+  std::fprintf(stdout, fmt, args...);
+  std::fprintf(stdout, "\n");
+  std::fflush(stdout);
+}
 
 bool is_supported_texture_source(QWidget *widget) {
   return widget == nullptr || dynamic_cast<TexturePaintHostWidget *>(widget) != nullptr;
@@ -418,6 +435,17 @@ resolve_compositor_target(QWindow *window, std::uint32_t width_px,
 #endif
 }
 
+QSize window_pixel_size(QWindow *window, qreal scale_factor) {
+  if (window == nullptr) {
+    return QSize();
+  }
+
+  const QSize logical_size = window->size();
+  return QSize(
+      std::max(0, qRound(static_cast<qreal>(logical_size.width()) * scale_factor)),
+      std::max(0, qRound(static_cast<qreal>(logical_size.height()) * scale_factor)));
+}
+
 class QtWgpuBackingStore final : public QPlatformBackingStore {
 public:
   QtWgpuBackingStore(QWindow *window,
@@ -475,7 +503,28 @@ public:
       std::size_t base_stride = present_plan.cached_stride;
       std::uint32_t target_width_px = present_plan.cached_width_px;
       std::uint32_t target_height_px = present_plan.cached_height_px;
-      if (present_plan.needs_base_upload) {
+      bool force_base_upload = present_plan.needs_base_upload;
+#if defined(Q_OS_MACOS)
+      const QSize actual_pixel_size =
+          window_pixel_size(window, source_device_pixel_ratio);
+      if (!actual_pixel_size.isEmpty()) {
+        const auto actual_target = resolve_compositor_target(
+            window, static_cast<std::uint32_t>(actual_pixel_size.width()),
+            static_cast<std::uint32_t>(actual_pixel_size.height()),
+            source_device_pixel_ratio);
+        if (actual_target.has_value()) {
+          if (!qt_solid_spike::qt::qt_window_compositor_frame_is_initialized(
+                  *actual_target) ||
+              static_cast<std::uint32_t>(actual_pixel_size.width()) !=
+                  present_plan.cached_width_px ||
+              static_cast<std::uint32_t>(actual_pixel_size.height()) !=
+                  present_plan.cached_height_px) {
+            force_base_upload = true;
+          }
+        }
+      }
+#endif
+      if (force_base_upload) {
         const auto pixels = read_backingstore_pixels(delegate_.get());
         if (!pixels.has_value()) {
           qWarning("qt wgpu compositor received null backingstore pixels");
@@ -498,9 +547,18 @@ public:
       }
       if (qt_solid_spike::qt::qt_present_window_with_wgpu(
               node_id_value.toUInt(), *target, base_stride,
-              source_device_pixel_ratio, present_plan.needs_base_upload,
+              source_device_pixel_ratio, force_base_upload,
               std::move(base_dirty_rects),
               base_bytes)) {
+#if defined(Q_OS_MACOS)
+        const bool requested =
+            qt_solid_spike::qt::qt_request_window_compositor_frame(
+                node_id_value.toUInt());
+        qt_solid_wgpu_trace(
+            "flush-ingested node=%u target=%ux%u base_upload=%d request=%d",
+            node_id_value.toUInt(), target_width_px, target_height_px,
+            force_base_upload ? 1 : 0, requested ? 1 : 0);
+#endif
         return FlushSuccess;
       }
     } catch (const rust::Error &error) {
@@ -722,6 +780,227 @@ QPluginMetaData qt_wgpu_plugin_metadata() {
 }
 
 } // namespace
+
+UnifiedCompositorDriveStatus drive_unified_compositor_window_frame(
+    QWindow *window, std::uint32_t node_id, double source_device_pixel_ratio) {
+  if (!unified_compositor_active() || window == nullptr) {
+    return UnifiedCompositorDriveStatus::NeedsQtRepaint;
+  }
+
+  const qreal scale_factor = source_device_pixel_ratio;
+  const QSize pixel_size = window_pixel_size(window, scale_factor);
+  if (pixel_size.isEmpty()) {
+    return UnifiedCompositorDriveStatus::Idle;
+  }
+
+  const auto target = resolve_compositor_target(
+      window, static_cast<std::uint32_t>(pixel_size.width()),
+      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
+  if (!target.has_value()) {
+    qWarning("qt wgpu compositor failed to resolve raw handles for direct frame");
+    return UnifiedCompositorDriveStatus::NeedsQtRepaint;
+  }
+
+  try {
+    switch (qt_solid_spike::qt::qt_drive_window_compositor_frame(node_id,
+                                                                 *target)) {
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Idle:
+      return UnifiedCompositorDriveStatus::Idle;
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Presented:
+      return UnifiedCompositorDriveStatus::Presented;
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Busy:
+      return UnifiedCompositorDriveStatus::Busy;
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::NeedsQtRepaint:
+      return UnifiedCompositorDriveStatus::NeedsQtRepaint;
+    }
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor direct frame failed:" << error.what();
+  }
+
+  return UnifiedCompositorDriveStatus::NeedsQtRepaint;
+}
+
+bool unified_compositor_window_frame_ready(QWindow *window,
+                                           double source_device_pixel_ratio) {
+  if (!unified_compositor_active() || window == nullptr) {
+    return false;
+  }
+
+  const qreal scale_factor = source_device_pixel_ratio;
+  const QSize pixel_size = window_pixel_size(window, scale_factor);
+  if (pixel_size.isEmpty()) {
+    return false;
+  }
+
+  const auto target = resolve_compositor_target(
+      window, static_cast<std::uint32_t>(pixel_size.width()),
+      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
+  if (!target.has_value()) {
+    return false;
+  }
+
+  try {
+    return qt_solid_spike::qt::qt_window_compositor_frame_is_initialized(
+        *target);
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor init probe failed:" << error.what();
+    return false;
+  }
+}
+
+#if defined(Q_OS_MACOS)
+void *unified_compositor_window_metal_layer(QWindow *window,
+                                            double source_device_pixel_ratio) {
+  if (window == nullptr) {
+    return nullptr;
+  }
+  const qreal scale_factor = source_device_pixel_ratio;
+  const QSize pixel_size = window_pixel_size(window, scale_factor);
+  if (pixel_size.isEmpty()) {
+    return nullptr;
+  }
+  const auto target = resolve_compositor_target(
+      window, static_cast<std::uint32_t>(pixel_size.width()),
+      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
+  if (!target.has_value()) {
+    return nullptr;
+  }
+  try {
+    const auto handle =
+        qt_solid_spike::qt::qt_window_compositor_metal_layer_handle(*target);
+    return reinterpret_cast<void *>(static_cast<quintptr>(handle));
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor metal layer probe failed:" << error.what();
+    return nullptr;
+  }
+}
+
+bool unified_compositor_window_request_frame(QWindow *window,
+                                             double source_device_pixel_ratio) {
+  if (window == nullptr) {
+    return false;
+  }
+  const qreal scale_factor = source_device_pixel_ratio;
+  const QSize pixel_size = window_pixel_size(window, scale_factor);
+  if (pixel_size.isEmpty()) {
+    return false;
+  }
+  const auto target = resolve_compositor_target(
+      window, static_cast<std::uint32_t>(pixel_size.width()),
+      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
+  if (!target.has_value()) {
+    return false;
+  }
+  try {
+    return qt_solid_spike::qt::qt_window_compositor_request_frame(*target);
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor request-frame failed:" << error.what();
+    return false;
+  }
+}
+
+bool unified_compositor_window_display_link_should_run(
+    QWindow *window, double source_device_pixel_ratio) {
+  if (window == nullptr) {
+    return false;
+  }
+  const qreal scale_factor = source_device_pixel_ratio;
+  const QSize pixel_size = window_pixel_size(window, scale_factor);
+  if (pixel_size.isEmpty()) {
+    return false;
+  }
+  const auto target = resolve_compositor_target(
+      window, static_cast<std::uint32_t>(pixel_size.width()),
+      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
+  if (!target.has_value()) {
+    return false;
+  }
+  try {
+    return qt_solid_spike::qt::qt_window_compositor_display_link_should_run(
+        *target);
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor display-link-state probe failed:"
+               << error.what();
+    return false;
+  }
+}
+
+bool unified_compositor_window_note_metal_display_link_drawable(
+    QWindow *window, double source_device_pixel_ratio,
+    std::uint64_t drawable_handle) {
+  if (window == nullptr || drawable_handle == 0) {
+    return false;
+  }
+  const qreal scale_factor = source_device_pixel_ratio;
+  const QSize pixel_size = window_pixel_size(window, scale_factor);
+  if (pixel_size.isEmpty()) {
+    return false;
+  }
+  const auto target = resolve_compositor_target(
+      window, static_cast<std::uint32_t>(pixel_size.width()),
+      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
+  if (!target.has_value()) {
+    return false;
+  }
+  try {
+    qt_solid_spike::qt::qt_window_compositor_note_metal_display_link_drawable(
+        *target, drawable_handle);
+    return true;
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor drawable note failed:" << error.what();
+    return false;
+  }
+}
+
+UnifiedCompositorDriveStatus
+drive_unified_compositor_window_frame_from_display_link(
+    QWindow *window, std::uint32_t node_id, double source_device_pixel_ratio,
+    std::uint64_t drawable_handle) {
+  if (!unified_compositor_active() || window == nullptr || drawable_handle == 0) {
+    return UnifiedCompositorDriveStatus::Idle;
+  }
+
+  const qreal scale_factor = source_device_pixel_ratio;
+  const QSize pixel_size = window_pixel_size(window, scale_factor);
+  if (pixel_size.isEmpty()) {
+    return UnifiedCompositorDriveStatus::Idle;
+  }
+
+  const auto target = resolve_compositor_target(
+      window, static_cast<std::uint32_t>(pixel_size.width()),
+      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
+  if (!target.has_value()) {
+    return UnifiedCompositorDriveStatus::NeedsQtRepaint;
+  }
+
+  try {
+    switch (qt_solid_spike::qt::qt_drive_window_compositor_frame_from_display_link(
+        node_id, *target, drawable_handle)) {
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Idle:
+      return UnifiedCompositorDriveStatus::Idle;
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Presented:
+      return UnifiedCompositorDriveStatus::Presented;
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Busy:
+      return UnifiedCompositorDriveStatus::Busy;
+    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::NeedsQtRepaint:
+      return UnifiedCompositorDriveStatus::NeedsQtRepaint;
+    }
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor display-link drive failed:" << error.what();
+  }
+
+  return UnifiedCompositorDriveStatus::NeedsQtRepaint;
+}
+
+void release_unified_compositor_metal_drawable(std::uint64_t drawable_handle) {
+  try {
+    qt_solid_spike::qt::qt_window_compositor_release_metal_drawable(
+        drawable_handle);
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor drawable release failed:" << error.what();
+  }
+}
+#endif
 
 void register_static_platform_plugins() {
   static std::once_flag once;

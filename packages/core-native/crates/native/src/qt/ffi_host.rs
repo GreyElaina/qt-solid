@@ -208,3 +208,7 @@ pub(crate) fn window_host_wait_bridge_windows_handle() -> u64 {
 pub(crate) fn window_host_request_wake() {
     crate::window_host::ffi_request_wake();
 }
+
+pub(crate) fn window_host_request_native_wait_once() {
+    crate::window_host::ffi_request_native_wait_once();
+}

@@ -8,7 +8,7 @@ pub mod schema;
 pub mod vello;
 
 pub use runtime::{IntoQt, Paint, PaintDevice, TryFromQt};
-pub use vello::VelloFrame;
+pub use vello::{PaintSceneFrame, VelloFrame};
 
 #[macro_export]
 macro_rules! cpp {

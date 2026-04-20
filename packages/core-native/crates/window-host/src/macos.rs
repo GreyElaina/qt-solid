@@ -14,6 +14,19 @@ use crate::{
     host::{BackendKind, HostIntegration, PumpResult, WaitBridgeKind},
 };
 
+fn trace_enabled() -> bool {
+    static ENABLED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("QT_SOLID_WGPU_TRACE").is_some());
+    *ENABLED
+}
+
+fn trace(args: std::fmt::Arguments<'_>) {
+    if !trace_enabled() {
+        return;
+    }
+    println!("[qt-window-host] {args}");
+}
+
 #[derive(Debug)]
 pub(crate) struct MacosWindowHost {
     app: objc2::rc::Retained<NSApplication>,
@@ -75,18 +88,37 @@ impl MacosWindowHost {
             ));
         }
 
-        self.state.begin_zero_timeout_pump();
+        if self.state.take_native_wait_request() {
+            trace(format_args!("pump-native-wait begin"));
+            self.state.begin_native_wait_pump();
+        } else {
+            trace(format_args!("pump-zero-timeout begin"));
+            self.state.begin_zero_timeout_pump();
+        }
         autoreleasepool(|_| {
             self.app.run();
         });
+        let pump_label = self.state.pump_label();
         self.state.end_pump();
+        trace(format_args!("{pump_label} end"));
         Ok(PumpResult {
             pumped_native: true,
         })
     }
 
     pub(crate) fn request_wake(&self) {
+        trace(format_args!("request-wake"));
         self.main_run_loop.wake_up();
+    }
+
+    pub(crate) fn request_native_wait_once(&self) {
+        trace(format_args!("request-native-wait-once"));
+        self.state.request_native_wait_once();
+        self.main_run_loop.wake_up();
+    }
+
+    pub(crate) fn notify_native_frame_source(&self) {
+        self.state.notify_native_frame_source();
     }
 }
 
@@ -102,11 +134,20 @@ impl Drop for MacosWindowHost {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PumpMode {
+    Idle,
+    ZeroTimeout,
+    NativeWaitOnce,
+}
+
 #[derive(Debug)]
 struct HostState {
     mtm: MainThreadMarker,
     pumping: Cell<bool>,
-    stop_before_wait: Cell<bool>,
+    pump_mode: Cell<PumpMode>,
+    native_wait_requested: Cell<bool>,
+    native_frame_source_delivered: Cell<bool>,
 }
 
 impl HostState {
@@ -114,26 +155,75 @@ impl HostState {
         Self {
             mtm,
             pumping: Cell::new(false),
-            stop_before_wait: Cell::new(false),
+            pump_mode: Cell::new(PumpMode::Idle),
+            native_wait_requested: Cell::new(false),
+            native_frame_source_delivered: Cell::new(false),
         }
     }
 
     fn begin_zero_timeout_pump(&self) {
         self.pumping.set(true);
-        self.stop_before_wait.set(true);
+        self.pump_mode.set(PumpMode::ZeroTimeout);
+        self.native_frame_source_delivered.set(false);
+    }
+
+    fn begin_native_wait_pump(&self) {
+        self.pumping.set(true);
+        self.pump_mode.set(PumpMode::NativeWaitOnce);
+        self.native_frame_source_delivered.set(false);
     }
 
     fn end_pump(&self) {
-        self.stop_before_wait.set(false);
+        self.pump_mode.set(PumpMode::Idle);
+        self.native_frame_source_delivered.set(false);
         self.pumping.set(false);
     }
 
+    fn request_native_wait_once(&self) {
+        self.native_wait_requested.set(true);
+    }
+
+    fn take_native_wait_request(&self) -> bool {
+        let requested = self.native_wait_requested.get();
+        self.native_wait_requested.set(false);
+        requested
+    }
+
+    fn pump_label(&self) -> &'static str {
+        match self.pump_mode.get() {
+            PumpMode::Idle => "pump-idle",
+            PumpMode::ZeroTimeout => "pump-zero-timeout",
+            PumpMode::NativeWaitOnce => "pump-native-wait",
+        }
+    }
+
+    fn should_stop_before_waiting(&self) -> bool {
+        if !self.pumping.get() {
+            return false;
+        }
+
+        match self.pump_mode.get() {
+            PumpMode::Idle => false,
+            PumpMode::ZeroTimeout => true,
+            PumpMode::NativeWaitOnce => self.native_frame_source_delivered.get(),
+        }
+    }
+
     fn before_waiting(&self) {
-        if !self.pumping.get() || !self.stop_before_wait.get() {
+        if !self.should_stop_before_waiting() {
             return;
         }
 
         stop_app_immediately(&NSApplication::sharedApplication(self.mtm));
+    }
+
+    fn notify_native_frame_source(&self) {
+        if !self.pumping.get() {
+            return;
+        }
+        if self.pump_mode.get() == PumpMode::NativeWaitOnce {
+            self.native_frame_source_delivered.set(true);
+        }
     }
 }
 
@@ -202,4 +292,40 @@ fn dummy_event() -> Option<objc2::rc::Retained<NSEvent>> {
         0,
         0,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HostState, PumpMode};
+    use objc2::MainThreadMarker;
+
+    #[test]
+    fn native_wait_request_is_one_shot() {
+        let mtm = MainThreadMarker::new().expect("tests run on main thread");
+        let state = HostState::new(mtm);
+        assert!(!state.take_native_wait_request());
+        state.request_native_wait_once();
+        assert!(state.take_native_wait_request());
+        assert!(!state.take_native_wait_request());
+    }
+
+    #[test]
+    fn zero_timeout_stops_before_waiting_immediately() {
+        let mtm = MainThreadMarker::new().expect("tests run on main thread");
+        let state = HostState::new(mtm);
+        state.begin_zero_timeout_pump();
+        assert_eq!(state.pump_mode.get(), PumpMode::ZeroTimeout);
+        assert!(state.should_stop_before_waiting());
+    }
+
+    #[test]
+    fn native_wait_stops_only_after_after_waiting() {
+        let mtm = MainThreadMarker::new().expect("tests run on main thread");
+        let state = HostState::new(mtm);
+        state.begin_native_wait_pump();
+        assert_eq!(state.pump_mode.get(), PumpMode::NativeWaitOnce);
+        assert!(!state.should_stop_before_waiting());
+        state.notify_native_frame_source();
+        assert!(state.should_stop_before_waiting());
+    }
 }

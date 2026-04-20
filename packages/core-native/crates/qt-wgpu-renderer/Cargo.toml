@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bytemuck = { version = "1.25.0", features = ["derive"] }
-once_cell = "1.21.4"
-pollster = "0.4.0"
-raw-window-handle = "0.6.2"
-wgpu = { version = "28.0.0", features = ["vulkan-portability"] }
+qt-compositor-core = { version = "0.1.0", path = "../qt-compositor-core" }
+qt-compositor-gpu = { version = "0.1.0", path = "../qt-compositor-gpu" }
+qt-compositor-macos = { version = "0.1.0", path = "../qt-compositor-macos" }
+qt-compositor-types = { version = "0.1.0", path = "../qt-compositor-types" }
+qt-compositor-wayland = { version = "0.1.0", path = "../qt-compositor-wayland" }
+qt-compositor-windows = { version = "0.1.0", path = "../qt-compositor-windows" }
+qt-compositor-x11 = { version = "0.1.0", path = "../qt-compositor-x11" }

@@ -1,0 +1,20 @@
+[package]
+name = "qt-compositor-macos"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core-graphics-types = "0.2.0"
+foreign-types = "0.5.0"
+objc2 = "0.6.4"
+objc2-core-foundation = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2-metal = "0.3.2"
+objc2-quartz-core = "0.3.2"
+qt-compositor-core = { version = "0.1.0", path = "../qt-compositor-core" }
+qt-compositor-gpu = { version = "0.1.0", path = "../qt-compositor-gpu" }
+qt-compositor-surface = { version = "0.1.0", path = "../qt-compositor-surface" }
+qt-compositor-types = { version = "0.1.0", path = "../qt-compositor-types" }
+raw-window-metal = "1.1.0"
+wgpu = "28.0.0"
+wgpu-hal = "28.0.0"

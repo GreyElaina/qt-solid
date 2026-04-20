@@ -8,7 +8,7 @@ use napi::Result;
 use qt_solid_runtime::tree::NodeTree;
 use qt_solid_widget_core::runtime::{WidgetCapture, WidgetCaptureFormat};
 
-use crate::qt::ffi::bridge::QtWindowCompositorPresentPlan;
+use crate::qt::ffi::bridge::{QtWindowCompositorDriveStatus, QtWindowCompositorPresentPlan};
 use crate::{
     api::{
         QtCapturedWidgetComposingPart, QtDebugNodeBounds, QtWindowCaptureFrame,
@@ -49,6 +49,30 @@ use super::{
     take_window_compositor_scene_nodes, take_window_compositor_scene_subtrees,
     upload_kind_to_compositor, widget_capture_format_to_compositor,
 };
+
+fn compositor_trace_enabled() -> bool {
+    std::env::var_os("QT_SOLID_WGPU_TRACE").is_some()
+}
+
+fn compositor_trace(args: std::fmt::Arguments<'_>) {
+    if !compositor_trace_enabled() {
+        return;
+    }
+    println!("[qt-pipeline] {args}");
+}
+
+fn capture_format_to_compositor(
+    format: WidgetCaptureFormat,
+) -> qt_wgpu_renderer::QtCompositorImageFormat {
+    match format {
+        WidgetCaptureFormat::Argb32Premultiplied => {
+            qt_wgpu_renderer::QtCompositorImageFormat::Bgra8UnormPremultiplied
+        }
+        WidgetCaptureFormat::Rgba8Premultiplied => {
+            qt_wgpu_renderer::QtCompositorImageFormat::Rgba8UnormPremultiplied
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowCaptureGrouping {
@@ -202,12 +226,14 @@ fn scale_logical_rect_to_compositor(
 
 fn part_geometry_to_compositor(
     meta: &crate::qt::QtWindowCompositorPartMeta,
-) -> (i32, i32, i32, i32) {
+) -> Result<(i32, i32, i32, i32)> {
     let x = (f64::from(meta.x) * meta.scale_factor).round() as i32;
     let y = (f64::from(meta.y) * meta.scale_factor).round() as i32;
-    let width = i32::try_from(meta.width_px).expect("part width_px fits i32");
-    let height = i32::try_from(meta.height_px).expect("part height_px fits i32");
-    (x, y, width, height)
+    let width = i32::try_from(meta.width_px)
+        .map_err(|_| qt_error(format!("window compositor part {} width overflow", meta.node_id)))?;
+    let height = i32::try_from(meta.height_px)
+        .map_err(|_| qt_error(format!("window compositor part {} height overflow", meta.node_id)))?;
+    Ok((x, y, width, height))
 }
 
 fn visible_rects_to_compositor(
@@ -503,8 +529,10 @@ fn plan_window_compositor_present_for_state(
             .iter()
             .any(|node_id| overlay_node_ids.contains(node_id) || *node_id == window_id);
     let needs_base_upload = has_base_pixel_dirty || has_base_layout_dirty;
-    let must_present =
-        has_base_dirty_rects || needs_base_upload || has_overlay_pixel_dirty || has_overlay_layout_dirty;
+    let must_present = has_base_dirty_rects
+        || needs_base_upload
+        || has_overlay_pixel_dirty
+        || has_overlay_layout_dirty;
 
     QtWindowCompositorPresentPlan {
         must_present,
@@ -1421,7 +1449,7 @@ pub(crate) fn paint_window_compositor(
     Ok(true)
 }
 
-pub(crate) fn present_window_with_wgpu(
+fn present_window_with_wgpu_impl(
     node_id: u32,
     target: QtCompositorTarget,
     stride: usize,
@@ -1429,6 +1457,7 @@ pub(crate) fn present_window_with_wgpu(
     needs_base_upload: bool,
     base_dirty_rects: Vec<QtRect>,
     bytes: &[u8],
+    async_present: bool,
 ) -> Result<bool> {
     let generation = current_app_generation()?;
     store_window_compositor_target(node_id, target);
@@ -1466,8 +1495,19 @@ pub(crate) fn present_window_with_wgpu(
     let render_target =
         compositor_target_to_renderer(target).map_err(|error| qt_error(error.to_string()))?;
     let base_dirty_rects = qt_rects_to_compositor(&base_dirty_rects);
-    let effective_base_upload = needs_base_upload
-        || frame.base_upload_kind() != WindowCompositorPartUploadKind::None;
+    let mac_can_reuse_presented_base = matches!(
+        qt_wgpu_renderer::current_backend_kind(),
+        qt_wgpu_renderer::CompositorBackendKind::Macos
+    ) && qt_wgpu_renderer::compositor_frame_is_initialized(render_target)
+        && bytes.is_empty()
+        && !has_base_dirty_rects;
+    let frame_base_upload_kind = if mac_can_reuse_presented_base {
+        WindowCompositorPartUploadKind::None
+    } else {
+        frame.base_upload_kind()
+    };
+    let effective_base_upload =
+        needs_base_upload || frame_base_upload_kind != WindowCompositorPartUploadKind::None;
     if effective_base_upload && bytes.is_empty() {
         return Err(qt_error(
             "window compositor requires backingstore bytes for base upload",
@@ -1479,7 +1519,7 @@ pub(crate) fn present_window_with_wgpu(
         height_px: target.height_px,
         stride,
         upload_kind: base_upload_kind_to_compositor(
-            frame.base_upload_kind(),
+            frame_base_upload_kind,
             effective_base_upload && has_base_dirty_rects,
         ),
         dirty_rects: base_dirty_rects.as_slice(),
@@ -1517,12 +1557,11 @@ pub(crate) fn present_window_with_wgpu(
         } else {
             None
         };
-        let use_cached_texture =
-            if part.source_kind == WindowCompositorLayerSourceKind::CachedTexture {
-                !part.needs_layer_redraw || direct_render_result.is_some()
-            } else {
-                false
-            };
+        let use_cached_texture = if part.source_kind == WindowCompositorLayerSourceKind::CachedTexture {
+            !part.needs_layer_redraw || direct_render_result.is_some()
+        } else {
+            false
+        };
         if !use_cached_texture
             && part.capture.is_none()
             && cached_parts
@@ -1554,38 +1593,76 @@ pub(crate) fn present_window_with_wgpu(
         } else {
             qt_wgpu_renderer::QtCompositorLayerSourceKind::CpuBytes
         };
-        let bytes = if use_cached_texture {
-            &[][..]
+        let selected_capture = if use_cached_texture {
+            None
         } else if let Some(capture) = part.capture.as_deref() {
-            capture.bytes()
+            Some(capture)
         } else if let Some(capture) = cached_parts
             .get(&part.meta.node_id)
             .and_then(|entry| entry.capture())
+            .map(Arc::as_ref)
         {
-            capture.bytes()
+            Some(capture)
         } else if part.source_kind == WindowCompositorLayerSourceKind::CachedTexture {
-            fallback_captures
-                .get(&part.meta.node_id)
-                .expect("fallback capture was planned")
-                .bytes()
+            Some(
+                fallback_captures
+                    .get(&part.meta.node_id)
+                    .ok_or_else(|| {
+                        qt_error(format!(
+                            "window compositor part {} planned cached-texture fallback but capture is missing",
+                            part.meta.node_id
+                        ))
+                    })?,
+            )
         } else {
             return Err(qt_error(format!(
                 "window compositor part {} is missing CPU fallback bytes",
                 part.meta.node_id
             )));
         };
-        let (x, y, width, height) = part_geometry_to_compositor(&part.meta);
+        let bytes = selected_capture.map_or(&[][..], WidgetCapture::bytes);
+        let format = if let Some(capture) = selected_capture {
+            capture_format_to_compositor(capture.format())
+        } else {
+            widget_capture_format_to_compositor(part.meta.format_tag)?
+        };
+        let width_px = selected_capture
+            .map(WidgetCapture::width_px)
+            .unwrap_or(part.meta.width_px);
+        let height_px = selected_capture
+            .map(WidgetCapture::height_px)
+            .unwrap_or(part.meta.height_px);
+        let stride = selected_capture
+            .map(WidgetCapture::stride)
+            .unwrap_or(part.meta.stride);
+        compositor_trace(format_args!(
+            "drive-layer node={} source={:?} upload={:?} capture={} bytes={} format={:?} size={}x{} visible_rects={}",
+            part.meta.node_id,
+            source_kind,
+            if use_cached_texture {
+                qt_wgpu_renderer::QtCompositorUploadKind::None
+            } else {
+                upload_kind_to_compositor(part.upload_kind)
+            },
+            selected_capture.is_some(),
+            bytes.len(),
+            format,
+            width_px,
+            height_px,
+            visible_rects.len()
+        ));
+        let (x, y, width, height) = part_geometry_to_compositor(&part.meta)?;
         layer_uploads.push(qt_wgpu_renderer::QtCompositorLayerUpload {
             node_id: part.meta.node_id,
             source_kind,
-            format: widget_capture_format_to_compositor(part.meta.format_tag)?,
+            format,
             x,
             y,
             width,
             height,
-            width_px: part.meta.width_px,
-            height_px: part.meta.height_px,
-            stride: part.meta.stride,
+            width_px,
+            height_px,
+            stride,
             upload_kind: if use_cached_texture {
                 qt_wgpu_renderer::QtCompositorUploadKind::None
             } else {
@@ -1601,9 +1678,73 @@ pub(crate) fn present_window_with_wgpu(
         });
     }
 
-    qt_wgpu_renderer::present_compositor_frame(render_target, &base_upload, &layer_uploads)
+    if async_present {
+        qt_wgpu_renderer::present_compositor_frame_async(
+            node_id,
+            render_target,
+            &base_upload,
+            &layer_uploads,
+        )
         .map_err(|error| qt_error(error.to_string()))?;
+    } else {
+        qt_wgpu_renderer::load_or_create_compositor(render_target)
+            .and_then(|compositor| {
+                compositor.present_frame(render_target, &base_upload, &layer_uploads, Some(node_id))
+            })
+            .map_err(|error| qt_error(error.to_string()))?;
+    }
     Ok(true)
+}
+
+pub(crate) fn present_window_with_wgpu(
+    node_id: u32,
+    target: QtCompositorTarget,
+    stride: usize,
+    scale_factor: f64,
+    needs_base_upload: bool,
+    base_dirty_rects: Vec<QtRect>,
+    bytes: &[u8],
+) -> Result<bool> {
+    if matches!(
+        qt_wgpu_renderer::current_backend_kind(),
+        qt_wgpu_renderer::CompositorBackendKind::Macos
+    ) {
+        store_window_compositor_target(node_id, target);
+        let render_target =
+            compositor_target_to_renderer(target).map_err(|error| qt_error(error.to_string()))?;
+        let base_dirty_rects = qt_rects_to_compositor(&base_dirty_rects);
+        let base_upload = qt_wgpu_renderer::QtCompositorBaseUpload {
+            format: qt_wgpu_renderer::QtCompositorImageFormat::Bgra8UnormPremultiplied,
+            width_px: target.width_px,
+            height_px: target.height_px,
+            stride,
+            upload_kind: if needs_base_upload {
+                base_upload_kind_to_compositor(WindowCompositorPartUploadKind::Full, true)
+            } else {
+                qt_wgpu_renderer::QtCompositorUploadKind::None
+            },
+            dirty_rects: base_dirty_rects.as_slice(),
+            bytes,
+        };
+        let layer_uploads = Vec::new();
+        qt_wgpu_renderer::load_or_create_compositor(render_target)
+            .and_then(|compositor| {
+                compositor.ingest_frame(node_id, render_target, &base_upload, &layer_uploads)
+            })
+            .map_err(|error| qt_error(error.to_string()))?;
+        return Ok(true);
+    }
+
+    present_window_with_wgpu_impl(
+        node_id,
+        target,
+        stride,
+        scale_factor,
+        needs_base_upload,
+        base_dirty_rects,
+        bytes,
+        false,
+    )
 }
 
 pub(crate) fn plan_present_window_with_wgpu(
@@ -1618,6 +1759,78 @@ pub(crate) fn plan_present_window_with_wgpu(
         &pending_state,
         !base_dirty_rects.is_empty(),
     ))
+}
+
+pub(crate) fn drive_window_compositor_frame(
+    node_id: u32,
+    target: QtCompositorTarget,
+) -> Result<QtWindowCompositorDriveStatus> {
+    let cache = load_window_compositor_cache(node_id);
+    let pending_state = snapshot_window_compositor_pending_state(node_id);
+    let plan =
+        plan_window_compositor_present_for_state(node_id, cache.as_ref(), &pending_state, false);
+    compositor_trace(format_args!(
+        "drive node={} target={}x{} must_present={} needs_base_upload={} cached={}x{} stride={}",
+        node_id,
+        target.width_px,
+        target.height_px,
+        plan.must_present,
+        plan.needs_base_upload,
+        plan.cached_width_px,
+        plan.cached_height_px,
+        plan.cached_stride
+    ));
+    if !plan.must_present {
+        return Ok(QtWindowCompositorDriveStatus::Idle);
+    }
+    let render_target =
+        compositor_target_to_renderer(target).map_err(|error| qt_error(error.to_string()))?;
+    let mac_can_reuse_presented_base = matches!(
+        qt_wgpu_renderer::current_backend_kind(),
+        qt_wgpu_renderer::CompositorBackendKind::Macos
+    ) && qt_wgpu_renderer::compositor_frame_is_initialized(render_target);
+    if plan.needs_base_upload && !mac_can_reuse_presented_base {
+        return Ok(QtWindowCompositorDriveStatus::NeedsQtRepaint);
+    }
+    if qt_wgpu_renderer::compositor_frame_is_busy(render_target) {
+        return Ok(QtWindowCompositorDriveStatus::Busy);
+    }
+    let async_present = !matches!(
+        qt_wgpu_renderer::current_backend_kind(),
+        qt_wgpu_renderer::CompositorBackendKind::Macos
+    );
+    let (stride, scale_factor, needs_base_upload, bytes) = if plan.needs_base_upload
+        && mac_can_reuse_presented_base
+    {
+        let layout =
+            qt::qt_capture_widget_layout(node_id).map_err(|error| qt_error(error.what().to_owned()))?;
+        (layout.stride, layout.scale_factor, false, &[][..])
+    } else {
+        (plan.cached_stride, target.scale_factor, false, &[][..])
+    };
+
+    let presented = present_window_with_wgpu_impl(
+        node_id,
+        target,
+        stride,
+        scale_factor,
+        needs_base_upload,
+        Vec::new(),
+        bytes,
+        async_present,
+    )?;
+    compositor_trace(format_args!(
+        "drive-present node={} target={}x{} presented={}",
+        node_id,
+        target.width_px,
+        target.height_px,
+        presented
+    ));
+    if presented {
+        Ok(QtWindowCompositorDriveStatus::Presented)
+    } else {
+        Ok(QtWindowCompositorDriveStatus::NeedsQtRepaint)
+    }
 }
 
 fn prepared_frame_requires_present(
@@ -1680,7 +1893,10 @@ mod tests {
     #[test]
     fn compositor_geometry_uses_device_pixels() {
         let meta = part_meta();
-        assert_eq!(part_geometry_to_compositor(&meta), (24, 36, 256, 256));
+        assert_eq!(
+            part_geometry_to_compositor(&meta).expect("geometry conversion should succeed"),
+            (24, 36, 256, 256)
+        );
     }
 
     #[test]
