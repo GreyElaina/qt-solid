@@ -34,7 +34,6 @@ const exampleConfigs = {
   counter: {
     entryPath: resolve(projectRoot, "examples/counter/app.tsx"),
     outDir: resolve(projectRoot, "examples/counter", targetSuffix),
-    widgetLibraries: ["@qt-solid/core-widgets/widget-library"],
   },
   "spin-triangle": {
     entryPath: resolve(projectRoot, "examples/spin-triangle/app.tsx"),

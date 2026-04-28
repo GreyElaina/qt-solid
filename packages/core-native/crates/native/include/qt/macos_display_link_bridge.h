@@ -10,10 +10,14 @@ extern "C" {
 #endif
 
 MacosDisplayLinkHandle *qt_macos_display_link_create(
-    void *metal_layer, void *context, MacosDisplayLinkCallback callback);
+    void *metal_layer, void *context, MacosDisplayLinkCallback callback,
+    const void *notifier);
 bool qt_macos_display_link_start(MacosDisplayLinkHandle *handle);
 void qt_macos_display_link_stop(MacosDisplayLinkHandle *handle);
 void qt_macos_display_link_destroy(MacosDisplayLinkHandle *handle);
+
+/// Returns an opaque pointer to the NativeFrameNotifier. Valid for process lifetime.
+const void *qt_solid_native_frame_notifier();
 
 #ifdef __cplusplus
 }

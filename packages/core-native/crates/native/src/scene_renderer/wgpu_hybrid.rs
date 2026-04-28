@@ -1,19 +1,17 @@
 use std::{collections::HashMap, sync::Mutex, time::Instant};
 
 use once_cell::sync::Lazy;
-use qt_solid_widget_core::{
-    vello::{PaintScene, Scene, peniko::kurbo::Affine},
-};
+use crate::canvas::vello::{Scene, peniko::kurbo::Affine};
+use crate::hybrid_image_cache::{HybridImageCache, sweep_stale_images};
+use anyrender::PaintScene;
 #[cfg(not(target_os = "macos"))]
-use qt_solid_widget_core::runtime::{WidgetCapture, WidgetCaptureFormat};
+use crate::runtime::capture::{WidgetCapture, WidgetCaptureFormat};
 use vello::wgpu;
 use vello_hybrid::{
     RenderSize,
     RenderTargetConfig,
     Renderer,
-    Resources,
     Scene as HybridScene,
-    api::HybridScenePainter,
 };
 
 use crate::runtime::qt_error;
@@ -89,25 +87,25 @@ struct RendererCacheKey {
     surface_kind: u8,
     primary_handle: u64,
     secondary_handle: u64,
-    width_px: u32,
-    height_px: u32,
+    node_id: u32,
 }
 
 struct HybridRendererCacheEntry {
+    width_px: u32,
+    height_px: u32,
     renderer: Renderer,
-    resources: Resources,
+    image_cache: HybridImageCache,
 }
 
 static HYBRID_RENDERERS: Lazy<Mutex<HashMap<RendererCacheKey, HybridRendererCacheEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn renderer_cache_key(target: qt_wgpu_renderer::QtCompositorTarget, width_px: u32, height_px: u32) -> RendererCacheKey {
+fn renderer_cache_key(target: qt_compositor::QtCompositorTarget, node_id: u32) -> RendererCacheKey {
     RendererCacheKey {
         surface_kind: target.surface_kind,
         primary_handle: target.primary_handle,
         secondary_handle: target.secondary_handle,
-        width_px,
-        height_px,
+        node_id,
     }
 }
 
@@ -116,34 +114,44 @@ fn hybrid_scene_from_logical_scene(
     height_px: u32,
     scale_factor: f64,
     scene: &Scene,
-) -> qt_wgpu_renderer::Result<HybridScene> {
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
+    image_cache: &mut HybridImageCache,
+) -> qt_compositor::Result<HybridScene> {
     let started = Instant::now();
     let width_u16 = u16::try_from(width_px)
-        .map_err(|_| qt_wgpu_renderer::QtWgpuRendererError::new("scene width exceeds vello_hybrid range"))?;
+        .map_err(|_| qt_compositor::QtCompositorError::new("scene width exceeds vello_hybrid range"))?;
     let height_u16 = u16::try_from(height_px)
-        .map_err(|_| qt_wgpu_renderer::QtWgpuRendererError::new("scene height exceeds vello_hybrid range"))?;
-    let mut painter = HybridScenePainter {
-        scene: HybridScene::new(width_u16, height_u16),
-    };
-    painter
-        .append(Affine::scale(scale_factor), scene)
-        .map_err(|_| qt_wgpu_renderer::QtWgpuRendererError::new("failed to append scene into vello_hybrid painter"))?;
+        .map_err(|_| qt_compositor::QtCompositorError::new("scene height exceeds vello_hybrid range"))?;
+    let mut hybrid_scene = HybridScene::new(width_u16, height_u16);
+    let image_manager = anyrender_vello_hybrid::ImageManager::new(
+        renderer, device, queue, encoder, image_cache,
+    );
+    let mut painter = anyrender_vello_hybrid::VelloHybridScenePainter::new(
+        &mut hybrid_scene, image_manager,
+    );
+    painter.append_scene(scene.clone(), Affine::scale(scale_factor));
     record_append_scene_metric(started.elapsed());
-    Ok(painter.scene)
+    Ok(hybrid_scene)
 }
 
 fn with_cached_renderer<T>(
-    target: qt_wgpu_renderer::QtCompositorTarget,
+    target: qt_compositor::QtCompositorTarget,
+    node_id: u32,
     width_px: u32,
     height_px: u32,
     device: &wgpu::Device,
-    run: impl FnOnce(&mut HybridRendererCacheEntry) -> qt_wgpu_renderer::Result<T>,
-) -> qt_wgpu_renderer::Result<T> {
-    let key = renderer_cache_key(target, width_px, height_px);
+    run: impl FnOnce(&mut HybridRendererCacheEntry) -> qt_compositor::Result<T>,
+) -> qt_compositor::Result<T> {
+    let key = renderer_cache_key(target, node_id);
     let mut renderers = HYBRID_RENDERERS
         .lock()
         .expect("vello_hybrid renderer cache mutex poisoned");
     let entry = renderers.entry(key).or_insert_with(|| HybridRendererCacheEntry {
+        width_px,
+        height_px,
         renderer: Renderer::new(
             device,
             &RenderTargetConfig {
@@ -152,8 +160,21 @@ fn with_cached_renderer<T>(
                 height: height_px,
             },
         ),
-        resources: Resources::default(),
+        image_cache: HybridImageCache::default(),
     });
+    if entry.width_px != width_px || entry.height_px != height_px {
+        entry.width_px = width_px;
+        entry.height_px = height_px;
+        entry.renderer = Renderer::new(
+            device,
+            &RenderTargetConfig {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width: width_px,
+                height: height_px,
+            },
+        );
+        entry.image_cache.clear();
+    }
     run(entry)
 }
 
@@ -170,12 +191,12 @@ fn read_rgba_texture(
     texture: &wgpu::Texture,
     width_px: u32,
     height_px: u32,
-) -> qt_wgpu_renderer::Result<Vec<u8>> {
+) -> qt_compositor::Result<Vec<u8>> {
     let bytes_per_row = width_px as usize * 4;
     let padded_bytes_per_row = align_copy_stride(bytes_per_row);
     let readback_size = padded_bytes_per_row
         .checked_mul(height_px as usize)
-        .ok_or_else(|| qt_wgpu_renderer::QtWgpuRendererError::new("qt hybrid readback size overflow"))?;
+        .ok_or_else(|| qt_compositor::QtCompositorError::new("qt hybrid readback size overflow"))?;
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("qt-solid-hybrid-readback-buffer"),
         size: readback_size as u64,
@@ -214,11 +235,11 @@ fn read_rgba_texture(
     });
     device
         .poll(wgpu::PollType::wait_indefinitely())
-        .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))?;
+        .map_err(|error| qt_compositor::QtCompositorError::new(error.to_string()))?;
     receiver
         .recv()
-        .map_err(|_| qt_wgpu_renderer::QtWgpuRendererError::new("qt hybrid readback map channel closed"))?
-        .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))?;
+        .map_err(|_| qt_compositor::QtCompositorError::new("qt hybrid readback map channel closed"))?
+        .map_err(|error| qt_compositor::QtCompositorError::new(error.to_string()))?;
     let mapped = slice.get_mapped_range();
     let mut bytes = vec![0; bytes_per_row * height_px as usize];
     for row in 0..height_px as usize {
@@ -234,15 +255,14 @@ fn read_rgba_texture(
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn render_scene_to_capture(
-    target: qt_wgpu_renderer::QtCompositorTarget,
-    _node_id: u32,
+    target: qt_compositor::QtCompositorTarget,
+    node_id: u32,
     width_px: u32,
     height_px: u32,
     scale_factor: f64,
     scene: &Scene,
 ) -> napi::Result<WidgetCapture> {
-    qt_wgpu_renderer::with_window_compositor_device_queue(target, |device, queue| {
-        let hybrid_scene = hybrid_scene_from_logical_scene(width_px, height_px, scale_factor, scene)?;
+    qt_compositor::with_window_compositor_device_queue(target, |device, queue| {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("qt-solid-hybrid-capture-texture"),
             size: wgpu::Extent3d {
@@ -261,12 +281,36 @@ pub(crate) fn render_scene_to_capture(
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("qt-solid-hybrid-capture-encoder"),
         });
-        with_cached_renderer(target, width_px, height_px, device, |entry| {
+        // Clear render target to transparent — vello uses LoadOp::Load so
+        // stale GPU memory would bleed through without an explicit clear.
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("qt-solid-hybrid-capture-clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+        }
+        with_cached_renderer(target, node_id, width_px, height_px, device, |entry| {
+            let hybrid_scene = hybrid_scene_from_logical_scene(
+                width_px, height_px, scale_factor, scene,
+                &mut entry.renderer, device, queue, &mut encoder,
+                &mut entry.image_cache,
+            )?;
+            sweep_stale_images(
+                scene, &mut entry.renderer, device, queue, &mut encoder,
+                &mut entry.image_cache,
+            );
             entry
                 .renderer
                 .render(
                     &hybrid_scene,
-                    &mut entry.resources,
                     device,
                     queue,
                     &mut encoder,
@@ -276,7 +320,7 @@ pub(crate) fn render_scene_to_capture(
                     },
                     &view,
                 )
-                .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))
+                .map_err(|error| qt_compositor::QtCompositorError::new(error.to_string()))
         })?;
         queue.submit([encoder.finish()]);
         let bytes = read_rgba_texture(device, queue, &texture, width_px, height_px)?;
@@ -288,59 +332,11 @@ pub(crate) fn render_scene_to_capture(
             stride,
             scale_factor,
         )
-        .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))?;
+        .map_err(|error| qt_compositor::QtCompositorError::new(error.to_string()))?;
         capture.bytes_mut().copy_from_slice(&bytes);
         Ok(capture)
     })
     .map_err(|error| qt_error(error.to_string()))
 }
 
-pub(crate) fn render_scene_into_compositor_layer(
-    target: qt_wgpu_renderer::QtCompositorTarget,
-    _node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    scale_factor: f64,
-    scene: &Scene,
-) -> napi::Result<()> {
-    qt_wgpu_renderer::with_window_compositor_layer_texture(
-        target,
-        _node_id,
-        qt_wgpu_renderer::QtCompositorImageFormat::Rgba8UnormPremultiplied,
-        width_px,
-        height_px,
-        |device, queue, texture_view| {
-            let hybrid_scene = hybrid_scene_from_logical_scene(width_px, height_px, scale_factor, scene)?;
-            let started = Instant::now();
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("qt-solid-hybrid-layer-encoder"),
-            });
-            with_cached_renderer(target, width_px, height_px, device, |entry| {
-                entry
-                    .renderer
-                    .render(
-                        &hybrid_scene,
-                        &mut entry.resources,
-                        device,
-                        queue,
-                        &mut encoder,
-                        &RenderSize {
-                            width: width_px,
-                            height: height_px,
-                        },
-                        texture_view,
-                    )
-                    .map_err(|error| qt_wgpu_renderer::QtWgpuRendererError::new(error.to_string()))
-            })?;
-            queue.submit([encoder.finish()]);
-            record_render_layer_metric(started.elapsed());
-            qt_wgpu_renderer::record_compositor_timing(
-                target,
-                qt_wgpu_renderer::CompositorTimingStage::RenderOverlayLayer,
-                started.elapsed(),
-            );
-            Ok(())
-        },
-    )
-    .map_err(|error| qt_error(error.to_string()))
-}
+

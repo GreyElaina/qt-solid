@@ -90,7 +90,7 @@ function createAppSource(): string {
 
 function createProbeSource(): string {
   return [
-    "import { __qtSolidDebugGetNodeBounds } from '@qt-solid/core'",
+    "import { getNodeBounds } from '@qt-solid/core/native'",
     "import { createInterface } from 'node:readline'",
     "",
     "interface QtBounds {",
@@ -138,7 +138,7 @@ function createProbeSource(): string {
     "    return undefined",
     "  }",
     "",
-    "  return __qtSolidDebugGetNodeBounds(nodeId)",
+    "  return getNodeBounds(nodeId)",
     "}",
     "",
     "function collectProbe(label: string): void {",

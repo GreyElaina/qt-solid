@@ -1,8 +1,0 @@
-[package]
-name = "qt-solid-runtime"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-once_cell = "1.21.4"
-qt-solid-widget-core = { version = "0.1.0", path = "../widget-core" }

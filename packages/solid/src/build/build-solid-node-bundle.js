@@ -19,7 +19,6 @@ export async function buildSolidNodeBundle(options) {
         moduleName: options.moduleName,
         nativeModuleName: options.nativeModuleName,
         runtimeEntry: options.runtimeEntry,
-        widgetLibraries: options.widgetLibraries,
       }),
     ],
     resolve: {

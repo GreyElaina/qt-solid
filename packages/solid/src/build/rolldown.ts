@@ -11,7 +11,6 @@ export interface CreateQtSolidRolldownPluginOptions {
   runtimeEntry?: string
   compilerRuntimeEntry?: string
   sourceMaps?: boolean
-  widgetLibraries?: readonly string[]
 }
 
 export const createQtSolidRolldownPlugin = (

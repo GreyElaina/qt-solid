@@ -94,10 +94,6 @@ pub(crate) fn exit_interaction() {
     CURRENT_INTERACTION_ID.with(|cell| cell.set(0));
 }
 
-pub(crate) fn current_interaction_id() -> u64 {
-    CURRENT_INTERACTION_ID.with(Cell::get)
-}
-
 pub(crate) fn record_static(
     trace_id: u64,
     lane: &str,
@@ -148,15 +144,4 @@ pub(crate) fn record_dynamic(
     });
 }
 
-pub(crate) fn record_current_static(
-    lane: &str,
-    stage: &str,
-    node_id: Option<u32>,
-    listener_id: Option<u16>,
-    prop_id: Option<u16>,
-    detail: Option<String>,
-) -> u64 {
-    let trace_id = current_interaction_id();
-    record_static(trace_id, lane, stage, node_id, listener_id, prop_id, detail);
-    trace_id
-}
+

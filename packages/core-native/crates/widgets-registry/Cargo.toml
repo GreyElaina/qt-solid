@@ -1,9 +1,0 @@
-[package]
-name = "qt-solid-widgets-registry"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-qt-solid-core-widgets = { version = "0.1.0", path = "../../../core-widgets" }
-qt-solid-example-widgets-schema = { version = "0.1.0", path = "../../../example-widgets/crates/schema" }
-qt-solid-widget-core = { version = "0.1.0", path = "../widget-core" }

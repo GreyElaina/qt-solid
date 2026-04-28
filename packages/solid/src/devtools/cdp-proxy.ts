@@ -6,9 +6,9 @@ import { Worker } from "node:worker_threads"
 import { qtSolidDebugPrimitives } from "./debug-primitives.ts"
 import {
   rendererInspectorStore,
-  type RendererInspectorMutation,
-  type RendererInspectorSnapshot,
+  type DevtoolsEvent,
 } from "./inspector-store.ts"
+
 
 export interface QtSolidDevtoolsServer {
   url: string
@@ -18,10 +18,15 @@ export interface QtSolidDevtoolsServer {
 
 let activeServer: QtSolidDevtoolsServer | null = null
 
-interface MirrorUpdateMessage {
-  type: "mirror-update"
-  snapshot: RendererInspectorSnapshot
-  mutation?: RendererInspectorMutation
+interface DevtoolsEventMessage {
+  type: "devtools-event"
+  event: DevtoolsEvent
+}
+
+interface MetadataSnapshotMessage {
+  type: "metadata-snapshot"
+  metadata: Array<{ canvasNodeId: number; fragmentId: number; source: unknown; owner: unknown }>
+  canvasNodeIds: number[]
 }
 
 interface InspectNodeMessage {
@@ -36,6 +41,12 @@ interface NativeRequestMessage {
   params?: Record<string, unknown>
 }
 
+interface TreeSnapshotMessage {
+  type: "tree-snapshot"
+  canvasNodeId: number
+  snapshot: unknown[]
+}
+
 interface NativeResponseMessage {
   type: "native-response"
   requestId: number
@@ -43,13 +54,31 @@ interface NativeResponseMessage {
   error?: string
 }
 
-function postSnapshot(worker: Worker, mutation?: RendererInspectorMutation): void {
-  const message: MirrorUpdateMessage = {
-    type: "mirror-update",
-    snapshot: rendererInspectorStore.snapshot(),
-    ...(mutation ? { mutation } : {}),
+function postEvent(worker: Worker, event: DevtoolsEvent): void {
+  const message: DevtoolsEventMessage = { type: "devtools-event", event }
+  worker.postMessage(message)
+}
+
+function postTreeSnapshot(worker: Worker, canvasNodeId: number): void {
+  const snapshot = qtSolidDebugPrimitives.fragmentTreeSnapshot(canvasNodeId)
+  const message: TreeSnapshotMessage = { type: "tree-snapshot", canvasNodeId, snapshot }
+  worker.postMessage(message)
+}
+
+function postAllTreeSnapshots(worker: Worker): void {
+  for (const canvasNodeId of rendererInspectorStore.getCanvasNodeIds()) {
+    postTreeSnapshot(worker, canvasNodeId)
+  }
+}
+
+function postFullSnapshot(worker: Worker): void {
+  const message: MetadataSnapshotMessage = {
+    type: "metadata-snapshot",
+    metadata: rendererInspectorStore.metadataSnapshot(),
+    canvasNodeIds: [...rendererInspectorStore.getCanvasNodeIds()],
   }
   worker.postMessage(message)
+  postAllTreeSnapshots(worker)
 }
 
 function resolveWorkerEntry(): string | URL {
@@ -103,6 +132,90 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         qtSolidDebugPrimitives.clearHighlight()
         return { type: "native-response", requestId: message.requestId, result: {} }
       }
+      case "highlightFragment": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        const fragmentId = typeof params.fragmentId === "number" ? params.fragmentId : null
+        qtSolidDebugPrimitives.highlightFragment(canvasNodeId, fragmentId)
+        return { type: "native-response", requestId: message.requestId, result: {} }
+      }
+      case "clearFragmentHighlight": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        qtSolidDebugPrimitives.highlightFragment(canvasNodeId, null)
+        return { type: "native-response", requestId: message.requestId, result: {} }
+      }
+      case "getFragmentBounds": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        const fragmentId = typeof params.fragmentId === "number" ? params.fragmentId : 0
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.getFragmentBounds(canvasNodeId, fragmentId),
+        }
+      }
+      case "fragmentHitTest": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        const x = typeof params.x === "number" ? params.x : 0
+        const y = typeof params.y === "number" ? params.y : 0
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.fragmentHitTest(canvasNodeId, x, y),
+        }
+      }
+      case "snapshotLayers": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.snapshotLayers(canvasNodeId),
+        }
+      }
+      case "snapshotAnimations": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.snapshotAnimations(canvasNodeId),
+        }
+      }
+      case "captureLayerSnapshot": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        const x = typeof params.x === "number" ? params.x : 0
+        const y = typeof params.y === "number" ? params.y : 0
+        const width = typeof params.width === "number" ? params.width : 0
+        const height = typeof params.height === "number" ? params.height : 0
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.captureFragmentRegion(canvasNodeId, x, y, width, height),
+        }
+      }
+      case "captureCanvasFullSnapshot": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.captureCanvasFullSnapshot(canvasNodeId),
+        }
+      }
+      case "captureFragmentIsolated": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        const fragmentId = typeof params.fragmentId === "number" ? params.fragmentId : 0
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.captureFragmentIsolated(canvasNodeId, fragmentId),
+        }
+      }
+      case "captureAllFragmentsIsolated": {
+        const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
+        const fragmentIds = Array.isArray(params.fragmentIds) ? params.fragmentIds.filter((v: unknown) => typeof v === "number") : []
+        return {
+          type: "native-response",
+          requestId: message.requestId,
+          result: qtSolidDebugPrimitives.captureAllFragmentsIsolated(canvasNodeId, fragmentIds),
+        }
+      }
       default:
         return {
           type: "native-response",
@@ -135,8 +248,33 @@ export async function startQtSolidDevtoolsServer(port = Number(process.env.QT_SO
     rejectReady = reject
   })
 
-  const unsubscribe = rendererInspectorStore.subscribe((mutation) => {
-    postSnapshot(worker, mutation)
+  const pendingTreePush = new Set<number>()
+  let treePushScheduled = false
+
+  function scheduleTreePush(canvasNodeId: number): void {
+    pendingTreePush.add(canvasNodeId)
+    if (!treePushScheduled) {
+      treePushScheduled = true
+      queueMicrotask(() => {
+        treePushScheduled = false
+        for (const id of pendingTreePush) {
+          postTreeSnapshot(worker, id)
+        }
+        pendingTreePush.clear()
+      })
+    }
+  }
+
+  const STRUCTURAL_EVENT_TYPES: ReadonlySet<string> = new Set([
+    "canvas-added", "canvas-removed",
+    "node-created", "node-inserted", "node-removed", "node-destroyed",
+  ])
+
+  const unsubscribe = rendererInspectorStore.subscribe((event) => {
+    postEvent(worker, event)
+    if (STRUCTURAL_EVENT_TYPES.has(event.type) && "canvasNodeId" in event) {
+      scheduleTreePush(event.canvasNodeId)
+    }
   })
 
   const cleanup = () => {
@@ -152,7 +290,7 @@ export async function startQtSolidDevtoolsServer(port = Number(process.env.QT_SO
     const message = raw as { type?: string; url?: string; requestId?: number; method?: string; params?: Record<string, unknown> }
 
     if (message.type === "ready") {
-      postSnapshot(worker, { type: "document-reset" })
+      postFullSnapshot(worker)
       resolvedUrl = String(message.url ?? "")
       resolveReady?.(resolvedUrl)
       resolveReady = null

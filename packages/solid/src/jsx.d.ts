@@ -1,10 +1,9 @@
-import type { JSX as SolidJsx } from "solid-js"
-
-import type { QtIntrinsicElements } from "@qt-solid/core-widgets/qt-intrinsics"
+import type { QtRendererNode } from "./runtime/renderer.ts"
+import type { QtIntrinsicElements } from "./qt-intrinsics.ts"
 
 declare global {
   namespace JSX {
-    type Element = SolidJsx.Element
+    type Element = QtRendererNode
 
     interface ElementChildrenAttribute {
       children: {}

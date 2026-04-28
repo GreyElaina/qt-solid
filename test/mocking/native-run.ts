@@ -10,7 +10,6 @@ import { buildNodeBundle } from "../build-node-bundle.ts"
 export const nodeBin = "/opt/homebrew/opt/node/bin/node"
 export const projectRoot = fileURLToPath(new URL("../..", import.meta.url))
 export const nativeModuleSpecifier = "@qt-solid/core"
-export const coreWidgetsNativeModuleSpecifier = "@qt-solid/core-widgets/native"
 const nativeTestTimeoutMs = 60_000
 
 const nativeSupported = process.platform === "darwin" && existsSync(nodeBin)
@@ -29,7 +28,6 @@ export interface NativeBundleRunOptions {
   entryExtension: ".ts" | ".tsx"
   entrySource: string
   tagPrefix: string
-  widgetLibraries?: readonly string[]
 }
 
 export function stripAnsi(value: string) {
@@ -71,7 +69,6 @@ export async function runBundledNodeScript(options: NativeBundleRunOptions) {
     tag,
     entryExtension: options.entryExtension,
     entrySource: options.entrySource,
-    widgetLibraries: options.widgetLibraries,
   })
 
   try {

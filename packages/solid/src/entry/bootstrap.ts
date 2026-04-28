@@ -1,5 +1,3 @@
-import "../runtime/register-default-widgets.ts"
-
 import { QtApp, type QtHostEvent } from "@qt-solid/core"
 import { startQtSolidDevtoolsServer, type QtSolidDevtoolsServer } from "../devtools/cdp-proxy.ts"
 import type { AppHandle, AppMount, AppMountOptions } from "../app/types.ts"

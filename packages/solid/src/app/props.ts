@@ -1,11 +1,10 @@
 import type { Accessor, JSX } from "solid-js"
 
-import { createElement as createQtElement, spread as spreadQtProps } from "../runtime/reconciler.ts"
+import { createElement as createQtElement, spread as spreadQtProps } from "../runtime/renderer.ts"
 import { QT_SOLID_SOURCE_META_PROP } from "../devtools/source-metadata.ts"
 
 import { readQtSourceMetadata } from "./source-meta.ts"
 import type {
-  TextProps,
   ViewProps,
   WidgetProps,
   WindowProps,
@@ -14,39 +13,7 @@ import type {
 export function createRuntimeElement(type: string, props: Record<string, unknown>): JSX.Element {
   const node = createQtElement(type)
   spreadQtProps(node, props)
-  return node as unknown as JSX.Element
-}
-
-export function textLike(children: JSX.Element | undefined) {
-  let value: unknown = children
-  while (typeof value === "function") {
-    value = value()
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length === 1) {
-      value = value[0]
-      while (typeof value === "function") {
-        value = value()
-      }
-    } else {
-      const parts = value
-        .map((part) => {
-          let current: unknown = part
-          while (typeof current === "function") {
-            current = current()
-          }
-          return typeof current === "string" || typeof current === "number"
-            ? String(current)
-            : ""
-        })
-        .filter((part) => part.length > 0)
-
-      return parts.length > 0 ? parts.join("") : undefined
-    }
-  }
-
-  return typeof value === "string" || typeof value === "number" ? String(value) : undefined
+  return node
 }
 
 export function toAccessor<T>(value: T | Accessor<T>): Accessor<T> {
@@ -62,19 +29,25 @@ export function getter(read: () => unknown): PropertyDescriptor {
 
 export function widgetPropsFrom(read: Accessor<WidgetProps>): Record<string, unknown> {
   return Object.defineProperties({}, {
+    ref: getter(() => read().ref),
     width: getter(() => read().width),
     height: getter(() => read().height),
     minWidth: getter(() => read().minWidth),
     minHeight: getter(() => read().minHeight),
+    maxWidth: getter(() => (read() as any).maxWidth),
+    maxHeight: getter(() => (read() as any).maxHeight),
+    aspectRatio: getter(() => (read() as any).aspectRatio),
     grow: getter(() => read().flexGrow),
     shrink: getter(() => read().flexShrink),
+    basis: getter(() => (read() as any).flexBasis),
+    alignSelf: getter(() => (read() as any).alignSelf),
+    margin: getter(() => (read() as any).margin),
     enabled: getter(() => read().enabled),
+    hidden: getter(() => (read() as any).hidden),
+    onHoverEnter: getter(() => read().onHoverEnter),
+    onHoverLeave: getter(() => read().onHoverLeave),
     [QT_SOLID_SOURCE_META_PROP]: getter(() => readQtSourceMetadata(read())),
   })
-}
-
-export function widgetProps(props: WidgetProps): Record<string, unknown> {
-  return widgetPropsFrom(() => props)
 }
 
 export function viewPropsFrom(
@@ -87,35 +60,34 @@ export function viewPropsFrom(
     alignItems: getter(() => read().alignItems),
     gap: getter(() => read().gap),
     padding: getter(() => read().padding),
+    wrap: getter(() => read().wrap),
+    backgroundColor: getter(() => read().backgroundColor),
     children: getter(() => children()),
   })
 }
 
-export function viewProps(props: ViewProps): Record<string, unknown> {
-  return viewPropsFrom(() => props)
-}
-
 export function windowPropsFrom(
   read: Accessor<WindowProps>,
-  children: Accessor<JSX.Element | undefined>,
 ): Record<string, unknown> {
-  return extendProps(viewPropsFrom(read, children), {
+  return Object.defineProperties({}, {
+    width: getter(() => read().width),
+    height: getter(() => read().height),
     title: getter(() => read().title),
     visible: getter(() => read().visible),
     frameless: getter(() => read().frameless),
     transparentBackground: getter(() => read().transparentBackground),
     alwaysOnTop: getter(() => read().alwaysOnTop),
     onCloseRequested: getter(() => read().onCloseRequested),
+    [QT_SOLID_SOURCE_META_PROP]: getter(() => readQtSourceMetadata(read())),
   })
 }
 
-export function textProps(props: TextProps): Record<string, unknown> {
-  return extendProps(widgetProps(props), {
-    text: getter(() => props.text ?? textLike(props.children)),
-    family: getter(() => props.fontFamily),
-    pointSize: getter(() => props.fontPointSize),
-    weight: getter(() => props.fontWeight),
-    italic: getter(() => props.fontItalic),
+export function tooltipPropsFrom(
+  children: Accessor<JSX.Element | undefined>,
+): Record<string, unknown> {
+  return extendProps(viewPropsFrom(() => ({}), children), {
+    windowKind: getter(() => 2),
+    transparentBackground: getter(() => true),
   })
 }
 

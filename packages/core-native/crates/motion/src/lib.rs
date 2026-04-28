@@ -1,0 +1,26 @@
+pub mod channel;
+mod clip;
+pub mod easing;
+mod frame;
+mod layer;
+mod layout;
+mod node;
+pub mod spring;
+pub mod timeline;
+pub mod transition;
+mod update;
+mod value;
+
+pub use channel::AnimationChannel;
+pub use clip::LayerClip;
+pub use easing::Easing;
+pub use frame::{LayerFrame, LayerWork, MotionClass, MotionFrame};
+pub use kurbo;
+pub use layer::{LayerId, MotionLayer};
+pub use layout::LayoutChange;
+pub use node::{MotionNode, NodeId};
+pub use spring::SpringParams;
+pub use timeline::{NodeTimeline, PropertyKey, SampledPose};
+pub use transition::TransitionSpec;
+pub use update::{layer_frame_for_node, next_layer_for_node};
+pub use value::MotionValue;

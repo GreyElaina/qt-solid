@@ -58,7 +58,7 @@ describe("rolldown app entry", () => {
       bootstrap: true,
       entryExtension: ".tsx",
       entrySource: [
-        "import { __qtSolidDebugEmitAppEvent } from '@qt-solid/core'",
+        "import { emitAppEvent } from '@qt-solid/core/native'",
         "import { Text, createApp, createWindow } from '@qt-solid/solid'",
         "",
         "let scheduled = false",
@@ -74,7 +74,7 @@ describe("rolldown app entry", () => {
         "    scheduled = true",
         "    setTimeout(() => {",
         "      mainWindow.dispose()",
-        "      setTimeout(() => __qtSolidDebugEmitAppEvent('activate'), 20)",
+        "      setTimeout(() => emitAppEvent('activate'), 20)",
         "    }, 20)",
         "  }",
         "",

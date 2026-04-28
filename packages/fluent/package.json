@@ -1,0 +1,17 @@
+{
+  "name": "@qt-solid/fluent",
+  "version": "0.0.0",
+  "type": "module",
+  "private": false,
+  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@qt-solid/solid": "workspace:*",
+    "solid-js": "^1.9.12"
+  }
+}

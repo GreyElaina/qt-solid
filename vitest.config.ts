@@ -3,9 +3,6 @@ import { fileURLToPath } from "node:url"
 
 import qtSolidVitePlugin from "@qt-solid/solid/vite"
 
-const fakeCoreWidgetsNativePath = fileURLToPath(
-  new URL("./test/mocking/fake-core-widgets-native.ts", import.meta.url),
-)
 const fakeExampleWidgetsNativePath = fileURLToPath(
   new URL("./test/mocking/fake-example-widgets-native.ts", import.meta.url),
 )
@@ -22,10 +19,6 @@ export default defineConfig({
       {
         find: /^solid-js\/store$/,
         replacement: "solid-js/store/dist/store.js",
-      },
-      {
-        find: /^@qt-solid\/core-widgets\/native$/,
-        replacement: fakeCoreWidgetsNativePath,
       },
       {
         find: /^@qt-solid\/example-widgets\/native$/,

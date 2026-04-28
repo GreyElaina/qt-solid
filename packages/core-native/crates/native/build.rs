@@ -6,16 +6,10 @@ use std::{
 
 #[path = "build/qt_wgpu_renderer.rs"]
 mod qt_wgpu_renderer;
+#[path = "build/qt_taffy_layout.rs"]
+mod qt_taffy_layout;
 
 use qt_build_utils::QtBuild;
-use qt_solid_native_build::{
-    render_opaque_dispatch_cpp, render_qt_node_methods_rs, render_qt_widget_entities_rs,
-    render_widget_create_cases_cpp, render_widget_event_mounts_cpp,
-    render_widget_host_includes_cpp, render_widget_host_method_dispatch_cpp,
-    render_widget_kind_enum_cpp, render_widget_kind_from_tag_cpp, render_widget_kind_values_cpp,
-    render_widget_override_classes_cpp, render_widget_probe_cases_cpp,
-    render_widget_prop_dispatch_cpp, render_widget_top_level_cases_cpp,
-};
 
 fn add_include_if_exists(build: &mut cc::Build, path: impl AsRef<Path>) {
     let path = path.as_ref();
@@ -82,6 +76,29 @@ fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
             let qtwidgets_dir = versioned_root.join("QtWidgets");
             if qtwidgets_dir.exists() {
                 include_dirs.push(qtwidgets_dir);
+            }
+        }
+    }
+
+    // Add mkspecs include dir for qplatformdefs.h (needed by QWidgetLineControl).
+    if let Ok(output) = std::process::Command::new(
+        env::var("QMAKE").unwrap_or_else(|_| "qmake".to_string()),
+    )
+    .args(["-query", "QT_HOST_DATA"])
+    .output()
+    {
+        if output.status.success() {
+            let host_data = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let mkspecs_dir = PathBuf::from(&host_data).join("mkspecs");
+            let spec = match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+                Ok("macos") => "macx-clang",
+                Ok("windows") => "win32-msvc",
+                Ok("linux") => "linux-g++",
+                _ => "macx-clang",
+            };
+            let spec_dir = mkspecs_dir.join(spec);
+            if spec_dir.exists() {
+                include_dirs.push(spec_dir);
             }
         }
     }
@@ -225,6 +242,7 @@ fn write_if_changed(path: &Path, content: &str) {
 
 fn main() {
     let qt_wgpu_renderer = qt_wgpu_renderer::spec();
+    let qt_taffy_layout = qt_taffy_layout::spec();
 
     println!("cargo:rerun-if-env-changed=npm_config_nodedir");
     println!("cargo:rerun-if-env-changed=NODE_INCLUDE_DIR");
@@ -234,7 +252,6 @@ fn main() {
     println!("cargo:rerun-if-changed=include/rust_widget_binding_host.h");
     println!("cargo:rerun-if-changed=include/qt/ffi.h");
     println!("cargo:rerun-if-changed=include/qt/macos_event_buffer_bridge.h");
-    println!("cargo:rerun-if-changed=include/qt/macos_display_link_bridge.h");
     println!("cargo:rerun-if-changed=include/qt_cocoa_dispatcher_private_shim.h");
     println!("cargo:rerun-if-changed=shaders/window_compositor.vert");
     println!("cargo:rerun-if-changed=shaders/window_compositor.frag");
@@ -245,74 +262,56 @@ fn main() {
     println!("cargo:rerun-if-changed=src/qt/cpp/registry/host.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/registry/core.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/macos_event_buffer_bridge.mm");
-    println!("cargo:rerun-if-changed=src/qt/cpp/macos_display_link_bridge.mm");
     println!("cargo:rerun-if-changed=src/qt/ffi.rs");
     println!("cargo:rerun-if-changed=src/qt/ffi_host.rs");
     println!("cargo:rerun-if-changed=src/qt/runtime.rs");
     println!("cargo:rerun-if-changed=src/qt/mod.rs");
+    println!("cargo:rerun-if-changed=src/layout/ffi.rs");
+    println!("cargo:rerun-if-changed=src/layout/registry_ffi.rs");
     println!("cargo:rerun-if-changed=src/window_host.rs");
-    println!("cargo:rerun-if-changed=../native-build/src/lib.rs");
-    println!("cargo:rerun-if-changed=../native-build/src/schema.rs");
-    println!("cargo:rerun-if-changed=../native-build/src/napi_codegen.rs");
-    println!("cargo:rerun-if-changed=../native-build/src/qt_codegen.rs");
+
     qt_wgpu_renderer.emit_rerun_if_changed();
+    qt_taffy_layout.emit_rerun_if_changed();
     napi_build::setup();
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    let qt_node_methods = out_dir.join("qt_node_methods.rs");
-    write_if_changed(
-        &out_dir.join("qt_widget_entities.rs"),
-        &render_qt_widget_entities_rs(),
-    );
-    write_if_changed(&qt_node_methods, &render_qt_node_methods_rs());
+    write_if_changed(&out_dir.join("qt_widget_entities.rs"), "");
+    write_if_changed(&out_dir.join("qt_node_methods.rs"), "");
     write_if_changed(
         &out_dir.join("qt_widget_host_includes.inc"),
-        &render_widget_host_includes_cpp(),
+        "#include \"custom_paint_host_widget.h\"\n",
     );
     write_if_changed(
         &out_dir.join("qt_widget_kind_enum.inc"),
-        &render_widget_kind_enum_cpp(),
+        "Widget_Window = 1,\n",
     );
     write_if_changed(
         &out_dir.join("qt_widget_kind_from_tag.inc"),
-        &render_widget_kind_from_tag_cpp(),
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_kind_values.inc"),
-        &render_widget_kind_values_cpp(),
+        "case 1:\n  return WidgetKind::Widget_Window;\n",
     );
     write_if_changed(
         &out_dir.join("qt_widget_top_level_cases.inc"),
-        &render_widget_top_level_cases_cpp(),
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_probe_cases.inc"),
-        &render_widget_probe_cases_cpp(),
+        "case WidgetKind::Widget_Window:\n  return true;\n",
     );
     write_if_changed(
         &out_dir.join("qt_widget_create_cases.inc"),
-        &render_widget_create_cases_cpp(),
+        r#"case WidgetKind::Widget_Window: {
+  auto *widget = new HostWindowWidget();
+  auto *layout = new QBoxLayout(QBoxLayout::TopToBottom);
+  layout->setSizeConstraint(QLayout::SetNoConstraint);
+  widget->setLayout(layout);
+  entry.widget = widget;
+  entry.layout = layout;
+  apply_widget_style(entry);
+  break;
+}
+"#,
     );
-    write_if_changed(
-        &out_dir.join("qt_widget_overrides.inc"),
-        &render_widget_override_classes_cpp(),
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_event_mounts.inc"),
-        &render_widget_event_mounts_cpp(),
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_prop_dispatch.inc"),
-        &render_widget_prop_dispatch_cpp(),
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_host_methods.inc"),
-        &render_widget_host_method_dispatch_cpp(),
-    );
-    write_if_changed(
-        &out_dir.join("qt_opaque_dispatch.inc"),
-        &render_opaque_dispatch_cpp(),
-    );
+    write_if_changed(&out_dir.join("qt_widget_overrides.inc"), "");
+    write_if_changed(&out_dir.join("qt_bind_callables.inc"), "");
+    write_if_changed(&out_dir.join("qt_bind_callables_decl.h"), "");
+    write_if_changed(&out_dir.join("bind_callables_bridge.rs"), "");
+    write_if_changed(&out_dir.join("bind_prop_dispatch.rs"), "");
     let qsb = resolve_qsb_tool();
     let window_compositor_vert_qsb = out_dir.join("window_compositor.vert.qsb");
     let window_compositor_frag_qsb = out_dir.join("window_compositor.frag.qsb");
@@ -356,7 +355,7 @@ fn main() {
         assert_supported_macos_qt_version(&qt_build);
     }
 
-    let mut build = cxx_build::bridges(["src/qt/ffi.rs"]);
+    let mut build = cxx_build::bridges(["src/qt/ffi.rs", "src/layout/ffi.rs", "src/layout/registry_ffi.rs"]);
     build.file("src/qt/cpp/ffi.cpp");
     qt_wgpu_renderer.add_cpp_sources(&mut build);
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
@@ -377,6 +376,7 @@ fn main() {
 
     add_include_if_exists(&mut build, "include");
     qt_wgpu_renderer.add_include_dirs(&mut build);
+    qt_taffy_layout.add_include_dirs(&mut build);
     add_include_if_exists(&mut build, &out_dir);
 
     if let Some(node_include_dir) = node_include_dir {

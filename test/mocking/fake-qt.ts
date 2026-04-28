@@ -291,6 +291,39 @@ export class FakeQtNode {
     this.selectionEnd = value
   }
 
+  wireEvent(_exportId: number) {}
+
+  applyStringPropByName(key: string, value: string) {
+    this.appliedProps.push({ method: `applyStringPropByName:${key}`, value })
+    if (key === "text") this.text = value
+    else if (key === "title") this.title = value
+  }
+
+  applyBoolPropByName(key: string, value: boolean) {
+    this.appliedProps.push({ method: `applyBoolPropByName:${key}`, value })
+    if (key === "visible") this.visible = value
+    else if (key === "enabled") this.enabled = value
+    else if (key === "frameless") this.frameless = value
+    else if (key === "transparentBackground") this.transparentBackground = value
+    else if (key === "alwaysOnTop") this.alwaysOnTop = value
+  }
+
+  applyI32PropByName(key: string, value: number) {
+    this.appliedProps.push({ method: `applyI32PropByName:${key}`, value })
+    if (key === "width") this.width = value
+    else if (key === "height") this.height = value
+    else if (key === "minWidth") this.minWidth = value
+    else if (key === "minHeight") this.minHeight = value
+  }
+
+  applyF64PropByName(key: string, value: number) {
+    this.appliedProps.push({ method: `applyF64PropByName:${key}`, value })
+  }
+
+  applyEnumPropByName(key: string, value: string) {
+    this.appliedProps.push({ method: `applyEnumPropByName:${key}`, value })
+  }
+
   private detach() {
     this.parent?.removeChild(this)
   }
@@ -387,6 +420,10 @@ export class FakeQtApp {
     const node = new Entity(this.nextId++, kind)
     this.nodes.set(node.id, node)
     return node
+  }
+
+  createWidget(_specKey: string) {
+    return this.createElement("window")
   }
 
   createTextNode(value: string) {

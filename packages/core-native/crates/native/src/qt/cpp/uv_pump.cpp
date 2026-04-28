@@ -24,9 +24,19 @@ public:
     prepare_.data = this;
     timer_.data = this;
     wait_bridge_poll_.data = this;
+
+#if defined(__APPLE__)
+    setup_cfrunloop_libuv_source();
+#elif defined(Q_OS_WIN)
+    setup_win32_wait_bridge();
+#endif
   }
 
-  ~LibuvQtPump() = default;
+  ~LibuvQtPump() {
+#if defined(Q_OS_WIN)
+    teardown_win32_wait_bridge();
+#endif
+  }
 
   void start() {
     if (started_) {
@@ -66,7 +76,19 @@ public:
       }
     }
 
+#if defined(__APPLE__)
+    // On macOS, always run prepare to give CFRunLoop a chance to process
+    // native sources (display-link, AppKit events) before libuv enters kevent.
+    if (driver_mode_ == PumpDriverMode::WaitBridge ||
+        driver_mode_ == PumpDriverMode::PollingFallback) {
+#elif defined(Q_OS_WIN)
+    // On Windows, run prepare in WaitBridge mode to PeekMessage before
+    // libuv enters IOCP, and in PollingFallback as backstop.
+    if (driver_mode_ == PumpDriverMode::WaitBridge ||
+        driver_mode_ == PumpDriverMode::PollingFallback) {
+#else
     if (driver_mode_ == PumpDriverMode::PollingFallback) {
+#endif
       status = uv_prepare_start(&prepare_, &LibuvQtPump::on_prepare);
       if (status != 0) {
         throw_uv_error("uv_prepare_start", status);
@@ -103,6 +125,11 @@ public:
     }
 
     started_ = false;
+#if defined(__APPLE__)
+    teardown_cfrunloop_libuv_source();
+#elif defined(Q_OS_WIN)
+    teardown_win32_wait_bridge();
+#endif
     close_pending_count_ = 0;
 
     close_handle(&timer_, timer_initialized_);
@@ -128,26 +155,54 @@ public:
     started_ = false;
   }
 
+  void request_shutdown(std::function<void()> on_shutdown) {
+    if (shutdown_requested_.exchange(true)) {
+      return;
+    }
+    on_shutdown_ = std::move(on_shutdown);
+    started_ = false;
+    if (async_initialized_) {
+      uv_async_send(&async_);
+    }
+  }
+
   void pump_events() {
-    if (pumping_ || !started_ || QCoreApplication::instance() == nullptr) {
+    if (pumping_ || !started_ || shutdown_requested_.load()
+        || QCoreApplication::instance() == nullptr) {
       return;
     }
 
     pumping_ = true;
     drain_runtime_wait_bridge_notifications();
     bool zero_timeout_pumped = false;
+#if !defined(__APPLE__)
+    // On macOS, native source dispatch (display-link, AppKit events) is
+    // handled by CFRunLoopRunInMode in the uv_prepare callback. Other
+    // platforms still need the Rust-side pump.
     if (supports_zero_timeout_pump_) {
       qt_solid_spike::qt::window_host_pump_zero_timeout();
       zero_timeout_pumped = true;
     }
+#endif
 
-    for (int index = 0; index < 8; ++index) {
+    // Process Qt events. On macOS, CFRunLoop already fired native sources
+    // during on_prepare; any resulting Qt events (paint, timer) are queued
+    // and picked up here. Two iterations handle one level of cascading
+    // posted events (e.g. paint triggers update triggers paint).
+    const int iterations = 2;
+    for (int index = 0; index < iterations; ++index) {
       QCoreApplication::sendPostedEvents(nullptr);
       QCoreApplication::processEvents(QEventLoop::AllEvents);
+      if (shutdown_requested_.load()) {
+        break;
+      }
     }
     pumping_ = false;
     record_libuv_pump_events(zero_timeout_pumped);
 
+#if defined(Q_OS_WIN)
+    rearm_win32_wait_bridge();
+#endif
     reschedule_timer();
   }
 
@@ -170,21 +225,6 @@ public:
     if (status != 0) {
       throw_uv_error("uv_async_send", status);
     }
-  }
-
-  void request_native_wait_once() {
-    if (!started_ || !async_initialized_) {
-      return;
-    }
-
-    if (qEnvironmentVariableIsSet("QT_SOLID_WGPU_TRACE")) {
-      std::fprintf(stdout, "[qt-uv-pump] request-native-wait-once\n");
-      std::fflush(stdout);
-    }
-    if (supports_zero_timeout_pump_) {
-      qt_solid_spike::qt::window_host_request_native_wait_once();
-    }
-    request_pump(false);
   }
 
 private:
@@ -224,6 +264,29 @@ private:
     }
   }
 
+  void execute_deferred_shutdown() {
+    if (timer_initialized_) {
+      uv_timer_stop(&timer_);
+      set_timer_referenced(false);
+    }
+    if (prepare_initialized_) {
+      uv_prepare_stop(&prepare_);
+    }
+    if (wait_bridge_poll_initialized_) {
+      uv_poll_stop(&wait_bridge_poll_);
+    }
+#if defined(__APPLE__)
+    teardown_cfrunloop_libuv_source();
+#elif defined(Q_OS_WIN)
+    teardown_win32_wait_bridge();
+#endif
+
+    if (on_shutdown_) {
+      on_shutdown_();
+      on_shutdown_ = nullptr;
+    }
+  }
+
   template <typename Handle>
   void close_handle(Handle *handle, bool initialized) {
     if (!initialized) {
@@ -240,22 +303,65 @@ private:
   }
 
   static void on_async(uv_async_t *handle) {
-    static_cast<LibuvQtPump *>(handle->data)->pump_events();
+    auto *self = static_cast<LibuvQtPump *>(handle->data);
+    if (self->shutdown_requested_.load()) {
+      self->execute_deferred_shutdown();
+      return;
+    }
+    self->pump_events();
   }
 
   static void on_prepare(uv_prepare_t *handle) {
-    static_cast<LibuvQtPump *>(handle->data)->pump_events();
+    auto *self = static_cast<LibuvQtPump *>(handle->data);
+    if (self->shutdown_requested_.load()) {
+      return;
+    }
+#if defined(__APPLE__)
+    if (self->driver_mode_ == PumpDriverMode::WaitBridge) {
+      // Run CFRunLoop before libuv's kevent poll. This lets native macOS
+      // sources (CAMetalDisplayLink, AppKit event ports) fire using the
+      // time libuv would otherwise spend blocked in kevent.
+      //
+      // uv_backend_timeout tells us how long libuv would block. We give
+      // that budget to CFRunLoop instead. After CFRunLoop returns, libuv
+      // proceeds to its own kevent poll. External wakeups (display-link
+      // via request_qt_pump, wait-bridge pipe, backstop timer) ensure
+      // libuv wakes promptly when there is real work.
+      const int timeout_ms = uv_backend_timeout(self->loop_);
+      const double timeout_sec = timeout_ms < 0 ? 0.05 : timeout_ms / 1000.0;
+      CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout_sec, false);
+      return;
+    }
+#elif defined(Q_OS_WIN)
+    if (self->driver_mode_ == PumpDriverMode::WaitBridge) {
+      // Zero-timeout peek: detect pending Win32 messages before libuv
+      // enters IOCP. If messages are queued, pump immediately so Qt
+      // can process them without waiting for the backstop timer.
+      MSG msg;
+      if (PeekMessageW(&msg, nullptr, 0, 0, PM_NOREMOVE)) {
+        self->pump_events();
+      }
+      return;
+    }
+#endif
+    self->pump_events();
   }
 
   static void on_timer(uv_timer_t *handle) {
     auto *self = static_cast<LibuvQtPump *>(handle->data);
     self->set_timer_referenced(false);
+    if (self->shutdown_requested_.load()) {
+      return;
+    }
     self->pump_events();
   }
 
   static void on_wait_bridge_poll(uv_poll_t *handle, int status, int events) {
     auto *self = static_cast<LibuvQtPump *>(handle->data);
     if (self == nullptr || status < 0 || (events & UV_READABLE) == 0) {
+      return;
+    }
+    if (self->shutdown_requested_.load()) {
       return;
     }
     self->pump_events();
@@ -305,13 +411,18 @@ private:
 
     std::optional<std::uint64_t> delay_ms;
 #if defined(__APPLE__)
+    // On macOS, CFRunLoopRunInMode in on_prepare handles native timer
+    // dispatch. The libuv timer is a backstop to ensure periodic pumps.
+    delay_ms = idle_poll_delay_ms();
+#else
     if (driver_mode_ == PumpDriverMode::WaitBridge) {
       delay_ms = current_runtime_wait_bridge_timer_delay_ms();
+      if (!delay_ms.has_value()) {
+        delay_ms = idle_poll_delay_ms();
+      }
     } else {
       delay_ms = idle_poll_delay_ms();
     }
-#else
-    delay_ms = idle_poll_delay_ms();
 #endif
 
     if (!delay_ms.has_value()) {
@@ -330,6 +441,136 @@ private:
     set_timer_referenced(true);
   }
 
+#if defined(__APPLE__)
+  void setup_cfrunloop_libuv_source() {
+    const int backend_fd = uv_backend_fd(loop_);
+    if (backend_fd < 0) {
+      return;
+    }
+
+    CFFileDescriptorContext ctx{};
+    ctx.info = this;
+    cf_fd_ = CFFileDescriptorCreate(
+        kCFAllocatorDefault, backend_fd, false,
+        &LibuvQtPump::cf_fd_callback, &ctx);
+    if (cf_fd_ == nullptr) {
+      return;
+    }
+    CFFileDescriptorEnableCallBacks(cf_fd_, kCFFileDescriptorReadCallBack);
+    cf_fd_source_ = CFFileDescriptorCreateRunLoopSource(
+        kCFAllocatorDefault, cf_fd_, 0);
+    if (cf_fd_source_ == nullptr) {
+      CFRelease(cf_fd_);
+      cf_fd_ = nullptr;
+      return;
+    }
+    CFRunLoopAddSource(CFRunLoopGetMain(), cf_fd_source_,
+                       kCFRunLoopDefaultMode);
+  }
+
+  void teardown_cfrunloop_libuv_source() {
+    if (cf_fd_source_ != nullptr) {
+      CFRunLoopRemoveSource(CFRunLoopGetMain(), cf_fd_source_,
+                            kCFRunLoopDefaultMode);
+      CFRelease(cf_fd_source_);
+      cf_fd_source_ = nullptr;
+    }
+    if (cf_fd_ != nullptr) {
+      CFFileDescriptorInvalidate(cf_fd_);
+      CFRelease(cf_fd_);
+      cf_fd_ = nullptr;
+    }
+  }
+
+  /// Re-arm after each callback (CFFileDescriptor is one-shot).
+  void rearm_cfrunloop_libuv_source() {
+    if (cf_fd_ != nullptr) {
+      CFFileDescriptorEnableCallBacks(cf_fd_, kCFFileDescriptorReadCallBack);
+    }
+  }
+
+  static void cf_fd_callback(CFFileDescriptorRef /* fdref */,
+                             CFOptionFlags /* callback_types */,
+                             void *info) {
+    auto *self = static_cast<LibuvQtPump *>(info);
+    // Re-arm so we stay registered. The actual libuv→CFRunLoop
+    // integration is handled by on_prepare's CFRunLoopRunInMode;
+    // we must NOT call uv_async_send here — it would make the
+    // kevent fd immediately readable again, causing a busy spin.
+    self->rearm_cfrunloop_libuv_source();
+  }
+#endif  // __APPLE__
+
+#if defined(Q_OS_WIN)
+  void setup_win32_wait_bridge() {
+    if (wait_bridge_kind_ != WaitBridgeKind::WindowsHandle ||
+        wait_bridge_windows_handle_ == 0) {
+      return;
+    }
+
+    auto *handle = reinterpret_cast<HANDLE>(wait_bridge_windows_handle_);
+    BOOL ok = RegisterWaitForSingleObject(
+        &win32_wait_handle_,
+        handle,
+        &LibuvQtPump::on_wait_bridge_win32_event,
+        this,
+        INFINITE,
+        WT_EXECUTEONLYONCE);
+    if (!ok) {
+      // Non-fatal: fall back to polling. Driver mode stays WaitBridge
+      // but the event-driven wake won't fire; backstop timer covers it.
+      return;
+    }
+    win32_wait_registered_ = true;
+  }
+
+  void rearm_win32_wait_bridge() {
+    if (!win32_wait_registered_ || wait_bridge_windows_handle_ == 0) {
+      return;
+    }
+    // Unregister previous one-shot wait, then re-register.
+    // INVALID_HANDLE_VALUE = block until any in-flight callback completes.
+    UnregisterWaitEx(win32_wait_handle_, INVALID_HANDLE_VALUE);
+    win32_wait_handle_ = nullptr;
+
+    auto *handle = reinterpret_cast<HANDLE>(wait_bridge_windows_handle_);
+    BOOL ok = RegisterWaitForSingleObject(
+        &win32_wait_handle_,
+        handle,
+        &LibuvQtPump::on_wait_bridge_win32_event,
+        this,
+        INFINITE,
+        WT_EXECUTEONLYONCE);
+    if (!ok) {
+      win32_wait_registered_ = false;
+    }
+  }
+
+  void teardown_win32_wait_bridge() {
+    if (!win32_wait_registered_) {
+      return;
+    }
+    // INVALID_HANDLE_VALUE = wait for callback to complete before returning.
+    UnregisterWaitEx(win32_wait_handle_, INVALID_HANDLE_VALUE);
+    win32_wait_registered_ = false;
+    win32_wait_handle_ = nullptr;
+  }
+
+  static void CALLBACK on_wait_bridge_win32_event(
+      PVOID context, BOOLEAN /* timed_out */) {
+    auto *self = static_cast<LibuvQtPump *>(context);
+    if (self->shutdown_requested_.load()) {
+      return;
+    }
+    // Wake libuv from IOCP sleep. The actual message processing
+    // happens in on_prepare (PeekMessage) or pump_events.
+    // This is a one-shot wait; rearm happens after pump_events().
+    if (self->async_initialized_) {
+      uv_async_send(&self->async_);
+    }
+  }
+#endif  // Q_OS_WIN
+
   uv_loop_t *loop_ = nullptr;
   const std::uint64_t polling_fallback_idle_ms_ = 8;
   const std::uint64_t external_wake_backstop_ms_ = 64;
@@ -337,8 +578,18 @@ private:
   uv_prepare_t prepare_{};
   uv_timer_t timer_{};
   uv_poll_t wait_bridge_poll_{};
+#if defined(__APPLE__)
+  CFFileDescriptorRef cf_fd_ = nullptr;
+  CFRunLoopSourceRef cf_fd_source_ = nullptr;
+#endif
+#if defined(Q_OS_WIN)
+  HANDLE win32_wait_handle_ = nullptr;
+  bool win32_wait_registered_ = false;
+#endif
   bool started_ = false;
   bool pumping_ = false;
+  std::atomic<bool> shutdown_requested_{false};
+  std::function<void()> on_shutdown_;
   bool timer_referenced_ = true;
   bool aggressive_poll_ = false;
   bool async_initialized_ = false;

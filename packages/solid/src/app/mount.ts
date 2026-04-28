@@ -1,8 +1,7 @@
 import { createComponent, createContext, createRoot, type JSX } from "solid-js"
 import type { QtApp } from "@qt-solid/core"
 
-import { createNativeRendererBinding, type NativeQtRendererBinding } from "../runtime/native-renderer-binding.ts"
-import { _render as renderQtTree, QtRendererBindingContext, rememberQtRendererNode } from "../runtime/reconciler.ts"
+import { _render as renderQtTree, initRenderer, handleEvent, nativeRoot } from "../runtime/renderer.ts"
 import type { QtRendererNode } from "../runtime/renderer.ts"
 
 import type { RenderQtOptions } from "./types.ts"
@@ -28,7 +27,6 @@ function destroyRootChildren(root: QtRendererNode): void {
 }
 
 function mountQtRoot(
-  binding: NativeQtRendererBinding,
   node: () => JSX.Element,
   app?: QtApp,
   windowLifecycle?: AppWindowLifecycle,
@@ -41,6 +39,8 @@ function mountQtRoot(
   let shutdownRequested = false
   let shutdownOriginal: (() => void) | undefined
   let mounting = app != null
+
+  const root = nativeRoot()
 
   const finishDispose = () => {
     if (disposed) {
@@ -94,28 +94,24 @@ function mountQtRoot(
   try {
     disposeRoot = createRoot((dispose) => {
       const renderDispose = renderQtTree(
-        () =>
-          createComponent(QtRendererBindingContext.Provider, {
-            value: binding,
-            get children() {
-              if (!windowLifecycle) {
-                return node()
-              }
+        () => {
+          if (!windowLifecycle) {
+            return node()
+          }
 
-              return createComponent(QtAppWindowLifecycleContext.Provider, {
-                value: windowLifecycle,
-                get children() {
-                  return node()
-                },
-              })
+          return createComponent(QtAppWindowLifecycleContext.Provider, {
+            value: windowLifecycle,
+            get children() {
+              return node()
             },
-          }),
-        binding.root,
+          })
+        },
+        root,
       )
 
       return () => {
         renderDispose()
-        destroyRootChildren(binding.root)
+        destroyRootChildren(root)
         dispose()
       }
     })
@@ -146,10 +142,9 @@ export function mountQtScene(
   windowLifecycle?: AppWindowLifecycle,
   onShutdown?: () => void,
 ): () => void {
-  const binding = createNativeRendererBinding(app)
-  rememberQtRendererNode(binding.root, binding)
+  initRenderer(app)
   options.attachNativeEvents?.((event) => {
-    binding.handleEvent(event)
+    handleEvent(event)
   })
-  return mountQtRoot(binding, node, app, windowLifecycle, onShutdown)
+  return mountQtRoot(node, app, windowLifecycle, onShutdown)
 }

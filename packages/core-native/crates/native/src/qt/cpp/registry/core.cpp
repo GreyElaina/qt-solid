@@ -1,76 +1,153 @@
+#include <cmath>
+#include <unordered_set>
+
+#include "qt_taffy_layout.h"
+
+struct WidgetEntry;
+class QtRegistry;
+
+struct ContainerOps {
+  const char *debug_name = "none";
+  void (*insert_child)(WidgetEntry &parent, QWidget *child, int index,
+                       const WidgetEntry &child_entry) = nullptr;
+  void (*remove_child)(WidgetEntry &parent, QWidget *child) = nullptr;
+};
+
+static constexpr std::uint32_t kNoTaffyHandle = UINT32_MAX;
+
+struct ChildLayoutData {
+  int flex_grow = 0;
+  int flex_shrink = 0;
+  int flex_basis = -1; // -1 = auto
+  int max_width = -1;  // -1 = none
+  int max_height = -1; // -1 = none
+  int margin = 0;
+  std::uint8_t align_self_tag = static_cast<std::uint8_t>(AlignSelfKind::Auto);
+  float aspect_ratio = 0.0f; // 0 = none
+  int grid_row = -1;
+  int grid_col = -1;
+  int grid_row_span = 1;
+  int grid_col_span = 1;
+  std::uint32_t taffy_child_handle = kNoTaffyHandle;
+};
+
+struct WidgetStyleData {
+  int min_width = 0;
+  int min_height = 0;
+};
+
 struct WidgetEntry {
+  std::uint32_t node_id = 0;
   WidgetKind kind;
   QWidget *widget = nullptr;
   QLayout *layout = nullptr;
-  FlexDirectionKind flex_direction = FlexDirectionKind::Column;
-  AlignItemsKind align_items = AlignItemsKind::Stretch;
-  JustifyContentKind justify_content = JustifyContentKind::FlexStart;
-  int gap = 0;
-  int padding = 0;
-  int min_width = 0;
-  int min_height = 0;
-  int flex_grow = 0;
-  int flex_shrink = 1;
+
+  const ContainerOps *container_ops = nullptr;
+
+  WidgetStyleData style;
+  ChildLayoutData child_layout;
+  std::uint32_t wired_event_mask = 0;
+
+  WidgetEntry() = default;
+  WidgetEntry(const WidgetEntry &) = delete;
+  WidgetEntry &operator=(const WidgetEntry &) = delete;
+  WidgetEntry(WidgetEntry &&) = default;
+  WidgetEntry &operator=(WidgetEntry &&) = default;
 };
 
-static int clamp_non_negative(int value) { return std::max(0, value); }
+static const ContainerOps kFlexContainerOps = {
+    .debug_name = "TaffyFlexLayout",
+    .insert_child =
+        [](WidgetEntry &parent, QWidget *child, int index,
+           const WidgetEntry &) {
+          auto *taffy = static_cast<QTaffyLayout *>(parent.layout);
+          if (!taffy) {
+            throw_error("TaffyFlexLayout insert_child requires QTaffyLayout");
+          }
+          taffy->insertWidget(index, child);
+        },
+    .remove_child =
+        [](WidgetEntry &parent, QWidget *child) {
+          if (parent.layout) {
+            parent.layout->removeWidget(child);
+          }
+        },
+};
 
-static int clamp_stretch(int value) { return std::clamp(clamp_non_negative(value), 0, 255); }
+struct GridContainerData {
+  int row_gap = 0;
+  int col_gap = 0;
+};
 
-static QBoxLayout::Direction to_box_direction(FlexDirectionKind direction) {
-  switch (direction) {
-  case FlexDirectionKind::Column:
-    return QBoxLayout::TopToBottom;
-  case FlexDirectionKind::Row:
-    return QBoxLayout::LeftToRight;
+static const ContainerOps kGridContainerOps = {
+    .debug_name = "GridLayout",
+    .insert_child =
+        [](WidgetEntry &parent, QWidget *child, int,
+           const WidgetEntry &child_entry) {
+          auto *grid = qobject_cast<QGridLayout *>(parent.layout);
+          if (!grid) {
+            throw_error("GridLayout insert_child requires QGridLayout");
+          }
+          const auto &cl = child_entry.child_layout;
+          const int row = cl.grid_row < 0 ? grid->rowCount() : cl.grid_row;
+          const int col = cl.grid_col < 0 ? 0 : cl.grid_col;
+          grid->addWidget(child, row, col, cl.grid_row_span, cl.grid_col_span);
+        },
+    .remove_child =
+        [](WidgetEntry &parent, QWidget *child) {
+          if (parent.layout) {
+            parent.layout->removeWidget(child);
+          }
+        },
+};
+
+struct StackedContainerData {
+  int current_index = 0;
+};
+
+static const ContainerOps kStackedContainerOps = {
+    .debug_name = "StackedLayout",
+    .insert_child =
+        [](WidgetEntry &parent, QWidget *child, int index,
+           const WidgetEntry &) {
+          auto *stacked = qobject_cast<QStackedLayout *>(parent.layout);
+          if (!stacked) {
+            throw_error("StackedLayout insert_child requires QStackedLayout");
+          }
+          stacked->insertWidget(index, child);
+        },
+    .remove_child =
+        [](WidgetEntry &parent, QWidget *child) {
+          if (parent.layout) {
+            parent.layout->removeWidget(child);
+          }
+        },
+};
+
+static QWidget *deepest_child_at_excluding(
+    QWidget *root, const QPoint &point_in_root,
+    const std::unordered_set<const QWidget *> &skipped_roots) {
+  if (root == nullptr || !root->isVisible() ||
+      skipped_roots.find(root) != skipped_roots.end() ||
+      !root->rect().contains(point_in_root)) {
+    return nullptr;
   }
 
-  throw_error("unsupported flex direction");
-}
-
-static Qt::Alignment layout_alignment(FlexDirectionKind direction,
-                                      JustifyContentKind justify_content,
-                                      AlignItemsKind align_items) {
-  Qt::Alignment alignment = {};
-  const bool row = direction == FlexDirectionKind::Row;
-
-  switch (justify_content) {
-  case JustifyContentKind::FlexStart:
-    alignment |= row ? Qt::AlignLeft : Qt::AlignTop;
-    break;
-  case JustifyContentKind::Center:
-    alignment |= row ? Qt::AlignHCenter : Qt::AlignVCenter;
-    break;
-  case JustifyContentKind::FlexEnd:
-    alignment |= row ? Qt::AlignRight : Qt::AlignBottom;
-    break;
+  const auto children =
+      root->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
+  for (auto it = children.rbegin(); it != children.rend(); ++it) {
+    QWidget *child = *it;
+    if (child == nullptr || !child->isVisible()) {
+      continue;
+    }
+    const QPoint point_in_child = child->mapFrom(root, point_in_root);
+    if (QWidget *deepest =
+            deepest_child_at_excluding(child, point_in_child, skipped_roots)) {
+      return deepest;
+    }
   }
 
-  switch (align_items) {
-  case AlignItemsKind::FlexStart:
-    alignment |= row ? Qt::AlignTop : Qt::AlignLeft;
-    break;
-  case AlignItemsKind::Center:
-    alignment |= row ? Qt::AlignVCenter : Qt::AlignHCenter;
-    break;
-  case AlignItemsKind::FlexEnd:
-    alignment |= row ? Qt::AlignBottom : Qt::AlignRight;
-    break;
-  case AlignItemsKind::Stretch:
-    break;
-  }
-
-  return alignment;
-}
-
-static QSizePolicy::Policy item_size_policy(int flex_grow, int flex_shrink) {
-  if (flex_grow > 0) {
-    return QSizePolicy::Expanding;
-  }
-  if (flex_shrink == 0) {
-    return QSizePolicy::Fixed;
-  }
-  return QSizePolicy::Preferred;
+  return root;
 }
 
 class WindowFrameTracker final : public QObject {
@@ -99,112 +176,68 @@ private:
   QWidget *target_ = nullptr;
 };
 
-static std::unique_ptr<QWidget> create_probe_widget(WidgetKind kind) {
-  switch (kind) {
-#include "qt_widget_probe_cases.inc"
-  }
+class MotionMouseEventFilter final : public QObject {
+public:
+  using MouseEventHandler = std::function<bool(QObject *, QMouseEvent *)>;
 
-  throw_error("unsupported widget probe kind");
-}
+  explicit MotionMouseEventFilter(MouseEventHandler handler,
+                                  QObject *parent = nullptr)
+      : QObject(parent), handler_(std::move(handler)) {}
 
-static bool meta_type_matches(const QMetaProperty &property,
-                              PropPayloadKind payload_kind) {
-  const QMetaType meta_type = property.metaType();
-  switch (payload_kind) {
-  case PropPayloadKind::String:
-    return meta_type.id() == QMetaType::QString;
-  case PropPayloadKind::Bool:
-    return meta_type.id() == QMetaType::Bool;
-  case PropPayloadKind::I32:
-  case PropPayloadKind::Enum:
-    return meta_type.id() == QMetaType::Int;
-  case PropPayloadKind::F64:
-    return meta_type.id() == QMetaType::Double;
-  }
-
-  return false;
-}
-
-static const char *event_value_cpp_type(EventValueKind kind) {
-  switch (kind) {
-  case EventValueKind::String:
-    return "QString";
-  case EventValueKind::Bool:
-    return "bool";
-  case EventValueKind::I32:
-    return "int";
-  case EventValueKind::F64:
-    return "double";
-  }
-
-  throw_error("unsupported event value kind");
-}
-
-static QByteArray signal_signature(const std::string &lower_name,
-                                   const CompiledEventBinding &binding) {
-  QByteArray signature(lower_name.c_str(), static_cast<qsizetype>(lower_name.size()));
-  signature += '(';
-
-  bool first = true;
-  auto append_type = [&](const char *type_name) {
-    if (!first) {
-      signature += ',';
+protected:
+  bool eventFilter(QObject *watched, QEvent *event) override {
+    switch (event->type()) {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::MouseMove:
+      return handler_(watched, static_cast<QMouseEvent *>(event));
+    default:
+      return QObject::eventFilter(watched, event);
     }
-    signature += type_name;
-    first = false;
-  };
-
-  switch (binding.payload_kind) {
-  case EventPayloadKind::Unit:
-    break;
-  case EventPayloadKind::Scalar:
-    append_type(event_value_cpp_type(binding.scalar_kind));
-    break;
-  case EventPayloadKind::Object:
-    for (const auto &field : binding.payload_fields) {
-      append_type(event_value_cpp_type(field.kind));
-    }
-    break;
   }
 
-  signature += ')';
-  return signature;
-}
+private:
+  MouseEventHandler handler_;
+};
 
-static void apply_layout_style(WidgetEntry &widget) {
-  auto *box_layout = qobject_cast<QBoxLayout *>(widget.layout);
-  if (!box_layout) {
-    throw_error("expected QBoxLayout for layout-backed widget");
+static void replay_child_taffy_style(WidgetEntry &child) {
+  if (child.child_layout.taffy_child_handle == kNoTaffyHandle) return;
+  auto *parent = child.widget->parentWidget();
+  if (!parent) return;
+  auto *taffy = dynamic_cast<QTaffyLayout *>(parent->layout());
+  if (!taffy) return;
+  auto eid = taffy->engine_id();
+  auto node = child.child_layout.taffy_child_handle;
+  qt_taffy::engine_set_flex_grow(eid, node, static_cast<float>(child.child_layout.flex_grow));
+  qt_taffy::engine_set_flex_shrink(eid, node, static_cast<float>(child.child_layout.flex_shrink));
+  if (child.child_layout.flex_basis >= 0) {
+    qt_taffy::engine_set_flex_basis_px(eid, node, static_cast<float>(child.child_layout.flex_basis));
+  } else {
+    qt_taffy::engine_set_flex_basis_auto(eid, node);
   }
-
-  box_layout->setDirection(to_box_direction(widget.flex_direction));
-  box_layout->setSpacing(widget.gap);
-  box_layout->setContentsMargins(widget.padding, widget.padding,
-                                 widget.padding, widget.padding);
-
-  const auto alignment = layout_alignment(
-      widget.flex_direction, widget.justify_content, widget.align_items);
-  box_layout->setAlignment(alignment);
+  qt_taffy::engine_set_min_width_px(eid, node, static_cast<float>(child.style.min_width));
+  qt_taffy::engine_set_min_height_px(eid, node, static_cast<float>(child.style.min_height));
+  if (child.child_layout.max_width >= 0) {
+    qt_taffy::engine_set_max_width_px(eid, node, static_cast<float>(child.child_layout.max_width));
+  }
+  if (child.child_layout.max_height >= 0) {
+    qt_taffy::engine_set_max_height_px(eid, node, static_cast<float>(child.child_layout.max_height));
+  }
+  qt_taffy::engine_set_align_self(eid, node, child.child_layout.align_self_tag);
+  qt_taffy::engine_set_margin_px(eid, node,
+                        static_cast<float>(child.child_layout.margin),
+                        static_cast<float>(child.child_layout.margin),
+                        static_cast<float>(child.child_layout.margin),
+                        static_cast<float>(child.child_layout.margin));
+  qt_taffy::engine_set_aspect_ratio(eid, node, child.child_layout.aspect_ratio);
+  taffy->invalidate();
 }
 
 static void apply_widget_style(WidgetEntry &widget) {
-  widget.widget->setMinimumWidth(widget.min_width);
-  widget.widget->setMinimumHeight(widget.min_height);
-
-  auto policy = widget.widget->sizePolicy();
-  const auto item_policy = item_size_policy(widget.flex_grow, widget.flex_shrink);
-  const auto stretch = clamp_stretch(widget.flex_grow);
-  policy.setHorizontalPolicy(item_policy);
-  policy.setVerticalPolicy(item_policy);
-  policy.setHorizontalStretch(stretch);
-  policy.setVerticalStretch(stretch);
-  widget.widget->setSizePolicy(policy);
-
-  if (auto *parent = widget.widget->parentWidget()) {
-    if (auto *box_layout = qobject_cast<QBoxLayout *>(parent->layout())) {
-      box_layout->setStretchFactor(widget.widget, widget.flex_grow);
-    }
-  }
+  widget.widget->setMinimumWidth(widget.style.min_width);
+  widget.widget->setMinimumHeight(widget.style.min_height);
+  replay_child_taffy_style(widget);
 }
 
 static void mark_window_scene_dirty(QWidget *widget) {
@@ -340,32 +373,15 @@ static bool copy_widget_backingstore_into(QWidget *widget,
   return copy_source_image(source);
 }
 
-#include "qt_widget_prop_dispatch.inc"
-#include "qt_widget_host_methods.inc"
-
 class QtRegistry {
 public:
-  void compile_meta_contracts() {
-    contracts_.clear();
-
-    for (const auto kind : kAllWidgetKinds) {
-      auto probe = create_probe_widget(kind);
-      CompiledWidgetContract contract;
-      contract.kind_tag = static_cast<std::uint8_t>(kind);
-      compile_prop_contract(kind, probe->metaObject(), contract);
-      compile_event_contract(kind, probe->metaObject(), contract);
-      contracts_.emplace(contract.kind_tag, std::move(contract));
-    }
-  }
-
   void create_widget(std::uint32_t id, std::uint8_t kind_tag) {
     if (entries_.find(id) != entries_.end()) {
       throw_error("qt registry already contains widget id");
     }
 
     const auto kind = widget_kind_from_tag(kind_tag);
-    const auto &contract = compiled_contract(kind);
-    WidgetEntry entry{.kind = kind};
+    WidgetEntry entry{.node_id = id, .kind = kind};
 
     switch (kind) {
 #include "qt_widget_create_cases.inc"
@@ -378,9 +394,10 @@ public:
 #if !defined(Q_OS_MACOS)
     new WindowFrameTracker(entry.widget);
 #endif
-    wire_widget_events(id, entry.widget, contract);
     apply_widget_style(entry);
-    entries_.emplace(id, entry);
+    qt_taffy::child_layout_register(id);
+    widget_to_id_.emplace(entry.widget, id);
+    entries_.emplace(id, std::move(entry));
   }
 
   void insert_child(std::uint32_t parent_id, std::uint32_t child_id,
@@ -395,38 +412,53 @@ public:
       }
       child_widget->setParent(nullptr);
       apply_widget_style(child);
-      child_widget->show();
-      child_widget->raise();
-      child_widget->activateWindow();
+      if (child_widget->isVisible()) {
+        child_widget->show();
+        child_widget->raise();
+        if (auto *host = dynamic_cast<HostWindowWidget *>(child_widget)) {
+          if (host->window_kind() == 0) {
+            child_widget->activateWindow();
+          }
+        } else {
+          child_widget->activateWindow();
+        }
+      }
       return;
     }
 
     auto &parent = entry(parent_id);
-    if (!parent.layout) {
-      throw_error("parent node does not expose a Qt layout");
+    if (!parent.container_ops || !parent.container_ops->insert_child) {
+      throw_error("parent node does not support child insertion");
     }
 
     const int insert_at =
         anchor_id_or_zero == 0
-            ? parent.layout->count()
+            ? (parent.layout ? parent.layout->count() : 0)
             : find_layout_index(parent.layout, entry(anchor_id_or_zero).widget);
     if (insert_at < 0) {
       throw_error("anchor widget is not attached to parent layout");
     }
 
-    if (auto *box_layout = qobject_cast<QBoxLayout *>(parent.layout)) {
-      box_layout->insertWidget(insert_at, child_widget);
-      apply_widget_style(child);
-      child_widget->show();
-      mark_window_scene_dirty(parent.widget);
-      return;
+    parent.container_ops->insert_child(parent, child_widget, insert_at, child);
+
+    if (auto *taffy = dynamic_cast<QTaffyLayout *>(parent.layout)) {
+      int child_index = taffy->indexOf(child_widget);
+      if (child_index >= 0) {
+        child.child_layout.taffy_child_handle = taffy->child_node(child_index);
+        qt_taffy::child_layout_set_taffy_handle(child_id, taffy->child_node(child_index), taffy->engine_id());
+      }
     }
 
-    throw_error("unsupported Qt layout type for insert_child");
+    apply_widget_style(child);
+    child_widget->show();
+    mark_window_scene_dirty(parent.widget);
   }
 
   void remove_child(std::uint32_t parent_id, std::uint32_t child_id) {
     auto &child = entry(child_id);
+    child.child_layout.taffy_child_handle = kNoTaffyHandle;
+    qt_taffy::child_layout_clear_taffy_handle(child_id);
+
     if (parent_id == kRootNodeId) {
       child.widget->hide();
       child.widget->setParent(nullptr);
@@ -434,17 +466,18 @@ public:
     }
 
     auto &parent = entry(parent_id);
-    if (!parent.layout) {
-      throw_error("parent node does not expose a Qt layout");
+    if (parent.container_ops && parent.container_ops->remove_child) {
+      parent.container_ops->remove_child(parent, child.widget);
+    } else if (parent.layout) {
+      parent.layout->removeWidget(child.widget);
     }
-
-    parent.layout->removeWidget(child.widget);
     child.widget->hide();
     child.widget->setParent(nullptr);
     mark_window_scene_dirty(parent.widget);
   }
 
-  void destroy_widget(std::uint32_t id) {
+  void destroy_widget(std::uint32_t id,
+                      ::rust::Slice<const std::uint32_t> subtree_ids) {
     auto it = entries_.find(id);
     if (it == entries_.end()) {
       return;
@@ -463,17 +496,13 @@ public:
       detach_widget(widget);
     }
 
-    std::vector<std::uint32_t> remove_ids;
-    remove_ids.reserve(entries_.size());
-    for (const auto &[candidate_id, candidate] : entries_) {
-      if (candidate.widget == widget ||
-          is_descendant(candidate.widget, widget)) {
-        remove_ids.push_back(candidate_id);
+    for (const auto remove_id : subtree_ids) {
+      auto eit = entries_.find(remove_id);
+      if (eit != entries_.end()) {
+        widget_to_id_.erase(eit->second.widget);
+        entries_.erase(eit);
       }
-    }
-
-    for (const auto remove_id : remove_ids) {
-      entries_.erase(remove_id);
+      qt_taffy::child_layout_unregister(remove_id);
     }
 
     if (defer_top_level_delete) {
@@ -506,11 +535,6 @@ public:
 
   void request_repaint(std::uint32_t id) {
     auto &widget = entry(id);
-    if (auto *texture_widget =
-            dynamic_cast<TexturePaintHostWidget *>(widget.widget)) {
-      texture_widget->mark_frame_dirty();
-      return;
-    }
     widget.widget->update();
   }
 
@@ -538,8 +562,7 @@ public:
   QtWidgetCaptureLayout capture_widget_layout(std::uint32_t id) {
     auto &widget_entry = entry(id);
     auto *widget = widget_entry.widget;
-    const bool rgba_capture =
-        dynamic_cast<CustomPaintHostWidget *>(widget) != nullptr;
+    const bool rgba_capture = false;
     const qreal scale_factor = widget->windowHandle() != nullptr
                                    ? widget->windowHandle()->devicePixelRatio()
                                    : widget->devicePixelRatioF();
@@ -559,10 +582,10 @@ public:
     };
   }
 
-  rust::Vec<QtRect> capture_widget_visible_rects(std::uint32_t id) {
+  ::rust::Vec<QtRect> capture_widget_visible_rects(std::uint32_t id) {
     auto &widget_entry = entry(id);
     auto *widget = widget_entry.widget;
-    rust::Vec<QtRect> rects;
+    ::rust::Vec<QtRect> rects;
     const auto region = widget->visibleRegion();
     for (auto it = region.begin(); it != region.end(); ++it) {
       const QRect rect = *it;
@@ -580,10 +603,15 @@ public:
     return rects;
   }
 
+  void set_widget_mouse_transparent(std::uint32_t id, bool transparent) {
+    auto &widget = entry(id);
+    widget.widget->setAttribute(Qt::WA_TransparentForMouseEvents, transparent);
+  }
+
   void capture_widget_into(std::uint32_t id, std::uint32_t width_px,
                            std::uint32_t height_px, std::size_t stride,
                            bool include_children,
-                           rust::Slice<std::uint8_t> bytes) {
+                           ::rust::Slice<std::uint8_t> bytes) {
     auto &widget_entry = entry(id);
     auto *widget = widget_entry.widget;
     const auto layout = capture_widget_layout(id);
@@ -632,7 +660,7 @@ public:
   void capture_widget_region_into(std::uint32_t id, std::uint32_t width_px,
                                   std::uint32_t height_px, std::size_t stride,
                                   bool include_children, QtRect rect,
-                                  rust::Slice<std::uint8_t> bytes) {
+                                  ::rust::Slice<std::uint8_t> bytes) {
     auto &widget_entry = entry(id);
     auto *widget = widget_entry.widget;
     const auto layout = capture_widget_layout(id);
@@ -756,258 +784,6 @@ public:
     }
   }
 
-  void apply_string_prop(std::uint32_t id, std::uint16_t prop_id,
-                         std::uint64_t trace_id, rust::Str value) {
-    qt_solid_spike::qt::trace_cpp_stage(
-        trace_id, rust::Str("cpp.apply_string_prop.enter"), id, prop_id,
-        rust::Str(""));
-
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::String) {
-      throw_error("Qt host prop slot payload mismatch for string prop apply");
-    }
-
-    if (binding.lower_kind == PropLowerKind::MetaProperty) {
-      write_meta_property(widget, binding, QVariant(to_qstring(value)));
-      qt_solid_spike::qt::trace_cpp_stage(
-          trace_id, rust::Str("cpp.apply_string_prop.exit"), id, prop_id,
-          rust::Str(binding.js_name));
-      return;
-    }
-
-    {
-      const QSignalBlocker blocker(widget.widget);
-      if (apply_generated_string_prop(widget, binding, value)) {
-        qt_solid_spike::qt::trace_cpp_stage(
-            trace_id, rust::Str("cpp.apply_string_prop.exit"), id, prop_id,
-            rust::Str(binding.js_name));
-        return;
-      }
-    }
-
-    throw_error("Qt host contract has unsupported custom string prop lowering");
-  }
-
-  void apply_i32_prop(std::uint32_t id, std::uint16_t prop_id,
-                      std::uint64_t trace_id, std::int32_t value) {
-    qt_solid_spike::qt::trace_cpp_stage(
-        trace_id, rust::Str("cpp.apply_i32_prop.enter"), id, prop_id,
-        rust::Str(""));
-
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::I32 &&
-        binding.payload_kind != PropPayloadKind::Enum) {
-      throw_error("Qt host prop slot payload mismatch for i32 prop apply");
-    }
-
-    if (binding.lower_kind == PropLowerKind::MetaProperty) {
-      write_meta_property(widget, binding, QVariant(value));
-      qt_solid_spike::qt::trace_cpp_stage(
-          trace_id, rust::Str("cpp.apply_i32_prop.exit"), id, prop_id,
-          rust::Str(binding.js_name));
-      return;
-    }
-
-    {
-      const QSignalBlocker blocker(widget.widget);
-      if (apply_generated_i32_prop(widget, binding, value)) {
-        qt_solid_spike::qt::trace_cpp_stage(
-            trace_id, rust::Str("cpp.apply_i32_prop.exit"), id, prop_id,
-            rust::Str(binding.js_name));
-        return;
-      }
-    }
-
-    throw_error("Qt host contract has unsupported custom i32 prop lowering");
-  }
-
-  void apply_bool_prop(std::uint32_t id, std::uint16_t prop_id,
-                       std::uint64_t trace_id, bool value) {
-    qt_solid_spike::qt::trace_cpp_stage(
-        trace_id, rust::Str("cpp.apply_bool_prop.enter"), id, prop_id,
-        rust::Str(""));
-
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::Bool) {
-      throw_error("Qt host prop slot payload mismatch for bool prop apply");
-    }
-
-    if (binding.lower_kind == PropLowerKind::MetaProperty) {
-      write_meta_property(widget, binding, QVariant(value));
-      qt_solid_spike::qt::trace_cpp_stage(
-          trace_id, rust::Str("cpp.apply_bool_prop.exit"), id, prop_id,
-          rust::Str(binding.js_name));
-      return;
-    }
-
-    {
-      const QSignalBlocker blocker(widget.widget);
-      if (apply_generated_bool_prop(widget, binding, value)) {
-        qt_solid_spike::qt::trace_cpp_stage(
-            trace_id, rust::Str("cpp.apply_bool_prop.exit"), id, prop_id,
-            rust::Str(binding.js_name));
-        return;
-      }
-    }
-
-    throw_error("Qt host contract has unsupported custom bool prop lowering");
-  }
-
-  void apply_f64_prop(std::uint32_t id, std::uint16_t prop_id,
-                      std::uint64_t trace_id, double value) {
-    qt_solid_spike::qt::trace_cpp_stage(
-        trace_id, rust::Str("cpp.apply_f64_prop.enter"), id, prop_id,
-        rust::Str(""));
-
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::F64) {
-      throw_error("Qt host prop slot payload mismatch for f64 prop apply");
-    }
-
-    if (binding.lower_kind == PropLowerKind::MetaProperty) {
-      write_meta_property(widget, binding, QVariant(value));
-      qt_solid_spike::qt::trace_cpp_stage(
-          trace_id, rust::Str("cpp.apply_f64_prop.exit"), id, prop_id,
-          rust::Str(binding.js_name));
-      return;
-    }
-
-    {
-      const QSignalBlocker blocker(widget.widget);
-      if (apply_generated_f64_prop(widget, binding, value)) {
-        qt_solid_spike::qt::trace_cpp_stage(
-            trace_id, rust::Str("cpp.apply_f64_prop.exit"), id, prop_id,
-            rust::Str(binding.js_name));
-        return;
-      }
-    }
-
-    throw_error("Qt host contract has unsupported custom f64 prop lowering");
-  }
-
-  rust::String read_string_prop(std::uint32_t id, std::uint16_t prop_id) {
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::String) {
-      throw_error("Qt host prop slot payload mismatch for string prop read");
-    }
-    if (!binding.has_read_lowering) {
-      throw_error("Qt host contract has no string read lowering for prop id");
-    }
-
-    if (binding.read_lower_kind == PropLowerKind::MetaProperty) {
-      const QMetaProperty property =
-          widget.widget->metaObject()->property(binding.read_property_index);
-      const QVariant variant = property.read(widget.widget);
-      if (!variant.isValid() || !variant.canConvert<QString>()) {
-        throw_error("Qt host failed to read string property");
-      }
-      return to_rust_string(variant.toString());
-    }
-
-    rust::String generated;
-    if (read_generated_string_prop(widget, binding, &generated)) {
-      return generated;
-    }
-
-    throw_error("Qt host contract has unsupported custom string prop read lowering");
-  }
-
-  std::int32_t read_i32_prop(std::uint32_t id, std::uint16_t prop_id) {
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::I32 &&
-        binding.payload_kind != PropPayloadKind::Enum) {
-      throw_error("Qt host prop slot payload mismatch for i32 prop read");
-    }
-    if (!binding.has_read_lowering) {
-      throw_error("Qt host contract has no i32 read lowering for prop id");
-    }
-
-    if (binding.read_lower_kind == PropLowerKind::MetaProperty) {
-      const QMetaProperty property =
-          widget.widget->metaObject()->property(binding.read_property_index);
-      const QVariant variant = property.read(widget.widget);
-      if (!variant.isValid()) {
-        throw_error("Qt host failed to read i32 property");
-      }
-      return variant.toInt();
-    }
-
-    std::int32_t generated = 0;
-    if (read_generated_i32_prop(widget, binding, &generated)) {
-      return generated;
-    }
-
-    throw_error("Qt host contract has unsupported custom i32 prop read lowering");
-  }
-
-  double read_f64_prop(std::uint32_t id, std::uint16_t prop_id) {
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::F64) {
-      throw_error("Qt host prop slot payload mismatch for f64 prop read");
-    }
-    if (!binding.has_read_lowering) {
-      throw_error("Qt host contract has no f64 read lowering for prop id");
-    }
-
-    if (binding.read_lower_kind == PropLowerKind::MetaProperty) {
-      const QMetaProperty property =
-          widget.widget->metaObject()->property(binding.read_property_index);
-      const QVariant variant = property.read(widget.widget);
-      if (!variant.isValid()) {
-        throw_error("Qt host failed to read f64 property");
-      }
-      return variant.toDouble();
-    }
-
-    double generated = 0.0;
-    if (read_generated_f64_prop(widget, binding, &generated)) {
-      return generated;
-    }
-
-    throw_error("Qt host contract has unsupported custom f64 prop read lowering");
-  }
-
-  bool read_bool_prop(std::uint32_t id, std::uint16_t prop_id) {
-    auto &widget = entry(id);
-    const auto &binding = compiled_prop_binding(widget.kind, prop_id);
-    if (binding.payload_kind != PropPayloadKind::Bool) {
-      throw_error("Qt host prop slot payload mismatch for bool prop read");
-    }
-    if (!binding.has_read_lowering) {
-      throw_error("Qt host contract has no bool read lowering for prop id");
-    }
-
-    if (binding.read_lower_kind == PropLowerKind::MetaProperty) {
-      const QMetaProperty property =
-          widget.widget->metaObject()->property(binding.read_property_index);
-      const QVariant variant = property.read(widget.widget);
-      if (!variant.isValid()) {
-        throw_error("Qt host failed to read bool property");
-      }
-      return variant.toBool();
-    }
-
-    bool generated = false;
-    if (read_generated_bool_prop(widget, binding, &generated)) {
-      return generated;
-    }
-
-    throw_error("Qt host contract has unsupported custom bool prop read lowering");
-  }
-
-  QtMethodValue call_host_slot(std::uint32_t id, std::uint16_t slot,
-                               const rust::Vec<QtMethodValue> &args) {
-    auto &widget = entry(id);
-    return call_generated_host_slot(widget, slot, args);
-  }
-
   void debug_click_node(std::uint32_t id) {
     auto &widget = entry(id);
     if (auto *button = qobject_cast<QAbstractButton *>(widget.widget)) {
@@ -1028,7 +804,7 @@ public:
     throw_error("debug_close_node requires a host window widget");
   }
 
-  void debug_input_insert_text(std::uint32_t id, rust::Str value) {
+  void debug_input_insert_text(std::uint32_t id, ::rust::Str value) {
     auto &widget = entry(id);
     if (auto *input = qobject_cast<QLineEdit *>(widget.widget)) {
       input->insert(to_qstring(value));
@@ -1046,6 +822,38 @@ public:
   QtNodeBounds debug_node_bounds(std::uint32_t id) {
     auto &widget = entry(id);
     return bounds_for_widget(widget.widget);
+  }
+
+  QtScreenGeometry get_screen_geometry(std::uint32_t id) {
+    auto &widget = entry(id);
+    QScreen *screen = widget.widget->screen();
+    if (!screen) {
+      screen = QGuiApplication::primaryScreen();
+    }
+    if (!screen) {
+      return QtScreenGeometry{0, 0, 0, 0};
+    }
+    QRect avail = screen->availableGeometry();
+    return QtScreenGeometry{avail.x(), avail.y(), avail.width(), avail.height()};
+  }
+
+  void focus_widget(std::uint32_t id) {
+    auto &widget = entry(id);
+    if (widget.widget) {
+      widget.widget->setFocus(Qt::OtherFocusReason);
+    }
+  }
+
+  QtScreenGeometry get_widget_size_hint(std::uint32_t id) {
+    auto &widget = entry(id);
+    if (!widget.widget) {
+      return QtScreenGeometry{0, 0, 0, 0};
+    }
+    QSize hint = widget.widget->sizeHint();
+    if (!hint.isValid()) {
+      hint = widget.widget->size();
+    }
+    return QtScreenGeometry{0, 0, hint.width(), hint.height()};
   }
 
   std::uint32_t debug_node_at_point(std::int32_t screen_x,
@@ -1090,6 +898,19 @@ public:
     update_inspect_hover();
   }
 
+  void install_motion_mouse_filter(QApplication *app) {
+    if (motion_mouse_event_filter_ || app == nullptr) {
+      return;
+    }
+
+    motion_mouse_event_filter_ = new MotionMouseEventFilter(
+        [this](QObject *watched, QMouseEvent *event) {
+          return handle_motion_mouse_event(watched, event);
+        },
+        app);
+    app->installEventFilter(motion_mouse_event_filter_);
+  }
+
   void debug_clear_highlight() { clear_highlight(); }
 
   QtRealizedNodeState debug_node_state(std::uint32_t id) {
@@ -1112,9 +933,9 @@ public:
     state.has_min_height = true;
     state.min_height = widget.widget->minimumHeight();
     state.has_flex_grow = true;
-    state.flex_grow = widget.flex_grow;
+    state.flex_grow = widget.child_layout.flex_grow;
     state.has_flex_shrink = true;
-    state.flex_shrink = widget.flex_shrink;
+    state.flex_shrink = widget.child_layout.flex_shrink;
     state.has_enabled = true;
     state.enabled = widget.widget->isEnabled();
 
@@ -1142,24 +963,13 @@ public:
       state.value = spin->value();
     }
 
-    if (widget.layout) {
-      state.flex_direction_tag =
-          static_cast<std::uint8_t>(widget.flex_direction);
-      state.justify_content_tag =
-          static_cast<std::uint8_t>(widget.justify_content);
-      state.align_items_tag = static_cast<std::uint8_t>(widget.align_items);
-      state.has_gap = true;
-      state.gap = widget.gap;
-      state.has_padding = true;
-      state.padding = widget.padding;
-    }
-
     return state;
   }
 
   void clear() {
     inspect_mode_enabled_ = false;
     inspect_press_active_ = false;
+    clear_active_motion_mouse_target();
     if (inspect_poll_timer_) {
       inspect_poll_timer_->stop();
     }
@@ -1203,6 +1013,31 @@ public:
     }
   }
 
+  void set_window_transient_owner(std::uint32_t window_id, std::uint32_t owner_id) {
+    auto &window_entry = entry(window_id);
+    auto *window_host = dynamic_cast<HostWindowWidget *>(window_entry.widget);
+    if (!window_host) {
+      throw_error("set_window_transient_owner: target is not a window widget");
+    }
+
+    QWidget *owner_widget = nullptr;
+    if (owner_id != 0) {
+      auto &owner_entry = entry(owner_id);
+      owner_widget = owner_entry.widget;
+      if (owner_widget) {
+        owner_widget = owner_widget->window();
+      }
+    }
+
+    if (owner_widget && owner_widget->windowHandle() && window_host->windowHandle()) {
+      window_host->windowHandle()->setTransientParent(owner_widget->windowHandle());
+    }
+  }
+
+  QWidget *widget_ptr(std::uint32_t id) {
+    return entry(id).widget;
+  }
+
 private:
   WidgetEntry &entry(std::uint32_t id) {
     auto it = entries_.find(id);
@@ -1224,10 +1059,9 @@ private:
   std::uint32_t widget_id_for_widget(QWidget *widget) const {
     for (auto *current = widget; current != nullptr;
          current = current->parentWidget()) {
-      for (const auto &[candidate_id, candidate] : entries_) {
-        if (candidate.widget == current) {
-          return candidate_id;
-        }
+      auto it = widget_to_id_.find(current);
+      if (it != widget_to_id_.end()) {
+        return it->second;
       }
     }
 
@@ -1236,6 +1070,131 @@ private:
 
   std::uint32_t widget_id_at_point(const QPoint &global_pos) const {
     return widget_id_for_widget(QApplication::widgetAt(global_pos));
+  }
+
+  void clear_active_motion_mouse_target() {
+    active_motion_target_widget_.clear();
+    active_motion_root_id_ = 0;
+    active_motion_window_id_ = 0;
+  }
+
+  std::uint32_t motion_root_id_for_widget(
+      QWidget *widget, const ::rust::Vec<std::uint32_t> &motion_root_ids) const {
+    if (widget == nullptr || motion_root_ids.empty()) {
+      return 0;
+    }
+
+    const std::unordered_set<std::uint32_t> motion_root_set(motion_root_ids.begin(),
+                                                            motion_root_ids.end());
+    for (QWidget *current = widget; current != nullptr;
+         current = current->parentWidget()) {
+      const std::uint32_t node_id = widget_id_for_widget(current);
+      if (node_id != 0 && motion_root_set.find(node_id) != motion_root_set.end()) {
+        return node_id;
+      }
+    }
+
+    return 0;
+  }
+
+  bool dispatch_mouse_event_to_widget(QWidget *target_widget,
+                                      const QPointF &target_local_pos,
+                                      QMouseEvent *event) {
+    if (target_widget == nullptr || event == nullptr) {
+      return false;
+    }
+
+    QWidget *target_window = target_widget->window();
+    const QPoint global_pos = event->globalPosition().toPoint();
+    const QPointF window_pos =
+        target_window != nullptr
+            ? QPointF(target_window->mapFromGlobal(global_pos))
+            : QPointF(global_pos);
+    QMouseEvent cloned(event->type(), target_local_pos, window_pos,
+                       event->globalPosition(), event->button(), event->buttons(),
+                       event->modifiers(), event->pointingDevice());
+
+    dispatching_motion_mouse_event_ = true;
+    QCoreApplication::sendEvent(target_widget, &cloned);
+    dispatching_motion_mouse_event_ = false;
+    return true;
+  }
+
+  bool dispatch_motion_mouse_event(
+      const qt_solid_spike::qt::QtMotionMouseTarget &target, QMouseEvent *event,
+      QWidget *preferred_target_widget, bool keep_active_capture) {
+    auto it = entries_.find(target.root_node_id);
+    if (it == entries_.end() || it->second.widget == nullptr || event == nullptr) {
+      return false;
+    }
+
+    QWidget *root_widget = it->second.widget;
+    QWidget *target_widget = nullptr;
+    const QPoint root_local_floor(static_cast<int>(std::floor(target.local_x)),
+                                  static_cast<int>(std::floor(target.local_y)));
+    if (preferred_target_widget != nullptr &&
+        (preferred_target_widget == root_widget ||
+         root_widget->isAncestorOf(preferred_target_widget))) {
+      target_widget = preferred_target_widget;
+    } else {
+      target_widget = deepest_child_at(root_widget, root_local_floor);
+    }
+    if (target_widget == nullptr) {
+      target_widget = root_widget;
+    }
+
+    const QPoint target_local_floor =
+        target_widget->mapFrom(root_widget, root_local_floor);
+    const QPointF target_local(
+        static_cast<double>(target_local_floor.x()) +
+            (target.local_x - std::floor(target.local_x)),
+        static_cast<double>(target_local_floor.y()) +
+            (target.local_y - std::floor(target.local_y)));
+    const bool dispatched =
+        dispatch_mouse_event_to_widget(target_widget, target_local, event);
+    if (!dispatched) {
+      return false;
+    }
+
+    if (keep_active_capture) {
+      active_motion_target_widget_ = target_widget;
+      active_motion_root_id_ = target.root_node_id;
+      active_motion_window_id_ = widget_id_for_widget(root_widget->window());
+    } else if (event->type() == QEvent::MouseButtonRelease) {
+      clear_active_motion_mouse_target();
+    }
+
+    return true;
+  }
+
+  bool dispatch_underlying_mouse_event(
+      QWidget *window_widget, const ::rust::Vec<std::uint32_t> &motion_root_ids,
+      QMouseEvent *event) {
+    if (window_widget == nullptr || event == nullptr) {
+      return false;
+    }
+
+    std::unordered_set<const QWidget *> skipped_roots;
+    skipped_roots.reserve(motion_root_ids.size());
+    for (std::uint32_t root_id : motion_root_ids) {
+      auto it = entries_.find(root_id);
+      if (it != entries_.end() && it->second.widget != nullptr) {
+        skipped_roots.insert(it->second.widget);
+      }
+    }
+
+    const QPoint window_point =
+        window_widget->mapFromGlobal(event->globalPosition().toPoint());
+    QWidget *target_widget =
+        deepest_child_at_excluding(window_widget, window_point, skipped_roots);
+    if (target_widget == nullptr) {
+      return false;
+    }
+
+    return dispatch_mouse_event_to_widget(target_widget,
+                                          QPointF(target_widget->mapFromGlobal(
+                                              event->globalPosition().toPoint())),
+                                          event);
   }
 
   void update_inspect_hover() {
@@ -1290,255 +1249,74 @@ private:
     }
   }
 
-  const CompiledWidgetContract &compiled_contract(WidgetKind kind) const {
-    const auto kind_tag = static_cast<std::uint8_t>(kind);
-    auto it = contracts_.find(kind_tag);
-    if (it == contracts_.end()) {
-      throw_error("Qt host contract registry is not compiled for widget kind");
+  bool handle_motion_mouse_event(QObject *watched, QMouseEvent *event) {
+    if (dispatching_motion_mouse_event_ || event == nullptr) {
+      return false;
     }
-    return it->second;
-  }
 
-  const CompiledPropBinding &compiled_prop_binding(WidgetKind kind,
-                                                   const char *js_name) const {
-    const auto &contract = compiled_contract(kind);
-    auto it = std::find_if(contract.props.begin(), contract.props.end(),
-                           [&](const CompiledPropBinding &binding) {
-                             return binding.js_name == js_name;
-                           });
-    if (it == contract.props.end()) {
-      throw_error("Qt host contract registry is missing prop binding");
-    }
-    return *it;
-  }
-
-  const CompiledPropBinding &
-  compiled_prop_binding(WidgetKind kind, std::uint16_t prop_id) const {
-    const auto &contract = compiled_contract(kind);
-    auto it = std::find_if(contract.props.begin(), contract.props.end(),
-                           [&](const CompiledPropBinding &binding) {
-                             return binding.prop_id == prop_id;
-                           });
-    if (it == contract.props.end()) {
-      throw_error("Qt host contract registry is missing prop id binding");
-    }
-    return *it;
-  }
-
-  void compile_prop_contract(WidgetKind kind, const QMetaObject *meta_object,
-                             CompiledWidgetContract &contract) const {
-    const auto kind_tag = static_cast<std::uint8_t>(kind);
-    const std::size_t prop_count =
-        qt_solid_spike::qt::qt_widget_prop_count(kind_tag);
-
-    for (std::size_t index = 0; index < prop_count; ++index) {
-      const std::uint16_t prop_id =
-          qt_solid_spike::qt::qt_widget_prop_id(kind_tag, index);
-      const std::string js_name(
-          qt_solid_spike::qt::qt_widget_prop_js_name(kind_tag, index));
-      const auto payload_kind = prop_payload_kind_from_tag(
-          qt_solid_spike::qt::qt_widget_prop_payload_kind(kind_tag,
-                                                               index));
-      const bool non_negative =
-          qt_solid_spike::qt::qt_widget_prop_non_negative(kind_tag, index);
-      const auto lower_kind = prop_lower_kind_from_tag(
-          qt_solid_spike::qt::qt_widget_prop_lower_kind(kind_tag, index));
-      const std::string lower_name(
-          qt_solid_spike::qt::qt_widget_prop_lower_name(kind_tag, index));
-      const std::uint8_t read_lower_kind_tag =
-          qt_solid_spike::qt::qt_widget_prop_read_lower_kind(kind_tag,
-                                                                  index);
-      const std::string read_lower_name(
-          qt_solid_spike::qt::qt_widget_prop_read_lower_name(kind_tag,
-                                                                  index));
-
-      CompiledPropBinding binding;
-      binding.prop_id = prop_id;
-      binding.js_name = js_name;
-      binding.payload_kind = payload_kind;
-      binding.non_negative = non_negative;
-      binding.lower_kind = lower_kind;
-      binding.lower_name = lower_name;
-
-      if (binding.lower_name.empty()) {
-        throw_error("Rust prop lowering metadata is missing a target name");
-      }
-
-      if (lower_kind == PropLowerKind::MetaProperty) {
-        const int property_index =
-            meta_object->indexOfProperty(binding.lower_name.c_str());
-        if (property_index < 0) {
-          throw_error(
-              "failed to resolve Qt property from Rust prop lowering metadata");
+    auto *watched_widget = qobject_cast<QWidget *>(watched);
+    const QPoint global_pos = event->globalPosition().toPoint();
+    if (active_motion_target_widget_ != nullptr && active_motion_root_id_ != 0 &&
+        (event->type() == QEvent::MouseMove ||
+         event->type() == QEvent::MouseButtonRelease)) {
+      try {
+        const auto mapped = qt_solid_spike::qt::qt_window_motion_map_point_to_root(
+            active_motion_window_id_, active_motion_root_id_, global_pos.x(),
+            global_pos.y());
+        if (mapped.found) {
+          return dispatch_motion_mouse_event(
+              mapped, event, active_motion_target_widget_,
+              event->type() != QEvent::MouseButtonRelease);
         }
+      } catch (const rust::Error &error) {
+        qWarning() << "motion mouse map failed:" << error.what();
+      }
+      clear_active_motion_mouse_target();
+    }
 
-        const QMetaProperty property = meta_object->property(property_index);
-        if (!property.isValid() || !property.isWritable()) {
-          throw_error(
-              "Qt property from Rust prop lowering metadata is not writable");
-        }
-        if (!meta_type_matches(property, payload_kind)) {
-          throw_error("Qt property type does not match Rust prop schema");
-        }
+    if (watched_widget == nullptr) {
+      return false;
+    }
 
-        binding.property_index = property_index;
-      } else if (!supports_generated_host_prop_lowering(kind, binding.lower_name,
-                                                        payload_kind)) {
-        throw_error("Qt host contract has unsupported custom prop lowering");
+    QWidget *window_widget = watched_widget->window();
+    if (window_widget == nullptr) {
+      return false;
+    }
+    const std::uint32_t window_id = widget_id_for_widget(window_widget);
+    if (window_id == 0) {
+      return false;
+    }
+
+    try {
+      const auto hit = qt_solid_spike::qt::qt_window_motion_hit_test(
+          window_id, global_pos.x(), global_pos.y());
+      if (hit.found) {
+        return dispatch_motion_mouse_event(
+            hit, event, nullptr,
+            event->type() == QEvent::MouseButtonPress ||
+                event->type() == QEvent::MouseButtonDblClick);
       }
 
-      if (read_lower_kind_tag != 0) {
-        binding.has_read_lowering = true;
-        binding.read_lower_kind = prop_lower_kind_from_tag(read_lower_kind_tag);
-        binding.read_lower_name = read_lower_name;
-
-        if (binding.read_lower_name.empty()) {
-          throw_error(
-              "Rust prop read-lowering metadata is missing a target name");
-        }
-
-        if (binding.read_lower_kind == PropLowerKind::MetaProperty) {
-          const int property_index =
-              meta_object->indexOfProperty(binding.read_lower_name.c_str());
-          if (property_index < 0) {
-            throw_error("failed to resolve Qt property from Rust read-lowering "
-                        "metadata");
-          }
-
-          const QMetaProperty property = meta_object->property(property_index);
-          if (!property.isValid() || !property.isReadable()) {
-            throw_error(
-                "Qt property from Rust read-lowering metadata is not readable");
-          }
-          if (!meta_type_matches(property, payload_kind)) {
-            throw_error("Qt property type does not match Rust read schema");
-          }
-
-          binding.read_property_index = property_index;
-        } else if (!supports_generated_host_prop_reading(
-                       kind, binding.read_lower_name, payload_kind)) {
-          throw_error(
-              "Qt host contract has unsupported custom prop read lowering");
-        }
+      const auto motion_root_ids =
+          qt_solid_spike::qt::qt_window_motion_hit_root_ids(window_id);
+      if (motion_root_ids.empty()) {
+        return false;
       }
 
-      contract.props.push_back(std::move(binding));
+      if (motion_root_id_for_widget(watched_widget, motion_root_ids) == 0) {
+        return false;
+      }
+
+      if (dispatch_underlying_mouse_event(window_widget, motion_root_ids, event)) {
+        return true;
+      }
+
+      return true;
+    } catch (const rust::Error &error) {
+      qWarning() << "motion mouse dispatch failed:" << error.what();
+      return false;
     }
   }
-
-  void compile_event_contract(WidgetKind kind, const QMetaObject *meta_object,
-                              CompiledWidgetContract &contract) const {
-    const auto kind_tag = static_cast<std::uint8_t>(kind);
-    const std::size_t event_count =
-        qt_solid_spike::qt::qt_widget_event_count(kind_tag);
-
-    for (std::size_t index = 0; index < event_count; ++index) {
-      const auto payload_kind = event_payload_kind_from_tag(
-          qt_solid_spike::qt::qt_widget_event_payload_kind(kind_tag,
-                                                                index));
-      const std::size_t payload_field_count =
-          qt_solid_spike::qt::qt_widget_event_payload_field_count(kind_tag,
-                                                                       index);
-      const auto lower_kind = event_lower_kind_from_tag(
-          qt_solid_spike::qt::qt_widget_event_lower_kind(kind_tag, index));
-      const std::string lower_name(
-          qt_solid_spike::qt::qt_widget_event_lower_name(kind_tag, index));
-
-      CompiledEventBinding binding;
-      binding.event_index = static_cast<std::uint8_t>(index);
-      binding.payload_kind = payload_kind;
-      binding.lower_kind = lower_kind;
-      binding.lower_name = lower_name;
-      binding.has_scalar_kind = false;
-      if (binding.payload_kind == EventPayloadKind::Scalar) {
-        binding.has_scalar_kind = true;
-        binding.scalar_kind = event_value_kind_from_tag(
-            qt_solid_spike::qt::qt_widget_event_payload_scalar_kind(
-                kind_tag, index));
-      }
-      for (std::size_t field_index = 0; field_index < payload_field_count;
-           ++field_index) {
-        binding.payload_fields.push_back(CompiledEventBinding::PayloadField{
-            std::string(
-                qt_solid_spike::qt::qt_widget_event_payload_field_name(
-                    kind_tag, index, field_index)),
-            event_value_kind_from_tag(
-                qt_solid_spike::qt::qt_widget_event_payload_field_kind(
-                    kind_tag, index, field_index)),
-        });
-      }
-
-      if (binding.lower_name.empty()) {
-        throw_error("Rust event lowering metadata is missing a target name");
-      }
-
-      if (binding.payload_kind == EventPayloadKind::Object &&
-          binding.payload_fields.empty()) {
-        throw_error("Qt host event object payload is missing fields");
-      }
-
-      if (binding.payload_kind != EventPayloadKind::Object &&
-          !binding.payload_fields.empty()) {
-        throw_error(
-            "Qt host scalar event payload unexpectedly declared fields");
-      }
-
-      if (binding.payload_kind == EventPayloadKind::Scalar &&
-          !binding.has_scalar_kind) {
-        throw_error("Qt host scalar event payload is missing scalar kind");
-      }
-
-      if (binding.lower_kind == EventLowerKind::Custom) {
-        contract.events.push_back(binding);
-        continue;
-      }
-
-      const QByteArray signature =
-          signal_signature(binding.lower_name, binding);
-      const int signal_index =
-          meta_object->indexOfSignal(signature.constData());
-      if (signal_index < 0) {
-        throw_error("failed to resolve Qt signal from Rust event metadata");
-      }
-
-      binding.signal_method_index = signal_index;
-      contract.events.push_back(binding);
-    }
-  }
-
-  void write_meta_property(WidgetEntry &widget,
-                           const CompiledPropBinding &binding,
-                           const QVariant &value) {
-    if (binding.lower_kind != PropLowerKind::MetaProperty ||
-        binding.property_index < 0) {
-      throw_error("requested Qt meta-property write for non-meta prop binding");
-    }
-
-    const QMetaProperty property =
-        widget.widget->metaObject()->property(binding.property_index);
-    if (!property.isValid()) {
-      throw_error(
-          "failed to resolve Qt meta-property from compiled host contract");
-    }
-
-    const QVariant current = property.read(widget.widget);
-    if (current == value) {
-      return;
-    }
-
-    const QSignalBlocker blocker(widget.widget);
-    if (!property.write(widget.widget, value)) {
-      throw_error(
-          "failed to write Qt meta-property from compiled host contract");
-    }
-  }
-
-  void write_meta_property(WidgetEntry &widget, const char *js_name,
-                           const QVariant &value) {
-    const auto &binding = compiled_prop_binding(widget.kind, js_name);
-    write_meta_property(widget, binding, value);
-  }
-
   static bool is_descendant(QWidget *candidate, QWidget *ancestor) {
     for (auto *parent = candidate->parentWidget(); parent != nullptr;
          parent = parent->parentWidget()) {
@@ -1606,13 +1384,18 @@ private:
     highlighted_widget_.clear();
   }
 
-  std::unordered_map<std::uint8_t, CompiledWidgetContract> contracts_;
   std::unordered_map<std::uint32_t, WidgetEntry> entries_;
+  std::unordered_map<const QWidget *, std::uint32_t> widget_to_id_;
   std::vector<QPointer<QWidget>> pending_top_level_deletes_;
   QPointer<QWidget> highlighted_widget_;
   QPointer<DebugHighlightOverlay> highlight_overlay_;
   QPointer<QTimer> inspect_poll_timer_;
   QPointer<InspectModeEventFilter> inspect_event_filter_;
+  QPointer<MotionMouseEventFilter> motion_mouse_event_filter_;
+  QPointer<QWidget> active_motion_target_widget_;
+  std::uint32_t active_motion_root_id_ = 0;
+  std::uint32_t active_motion_window_id_ = 0;
+  bool dispatching_motion_mouse_event_ = false;
   bool inspect_mode_enabled_ = false;
   bool inspect_press_active_ = false;
 };
@@ -1643,12 +1426,13 @@ public:
 
       app_ = std::make_unique<QApplication>(argc_, argv_);
       app_->setApplicationName(QStringLiteral("qt-solid-spike"));
+      app_->setQuitOnLastWindowClosed(false);
       qt_wgpu_renderer::sync_unified_compositor_active_state();
       QObject::connect(app_.get(), &QGuiApplication::applicationStateChanged,
                        app_.get(), [](Qt::ApplicationState state) {
                          if (state == Qt::ApplicationActive) {
                            qt_solid_spike::qt::emit_app_event(
-                               rust::Str("activate"));
+                               ::rust::Str("activate"));
                          }
                        });
 #if defined(__APPLE__)
@@ -1666,7 +1450,7 @@ public:
       pump_ = std::make_unique<LibuvQtPump>(loop_);
       pump_->start();
       pump_->pump_events();
-      registry_.compile_meta_contracts();
+      registry_.install_motion_mouse_filter(app_.get());
       started_ = true;
     } catch (...) {
       if (pump_) {
@@ -1691,37 +1475,20 @@ public:
 
     pump_->request_pump();
   }
-
-  void request_native_wait_once() {
-    if (!started_ || !pump_) {
-      return;
-    }
-
-    pump_->request_native_wait_once();
-  }
-
   void shutdown() {
     if (!started_) {
       return;
     }
 
-    if (pump_) {
-      pump_->abandon_for_process_exit();
-      pump_.release();
-    }
-
-#if defined(__APPLE__)
-    wait_bridge_.reset();
-#endif
-    registry_.clear();
-    for (int index = 0; index < 4; ++index) {
-      QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-      QCoreApplication::processEvents(QEventLoop::AllEvents);
-      QCoreApplication::sendPostedEvents(nullptr);
-    }
-
-    app_.reset();
     started_ = false;
+
+    if (pump_) {
+      pump_->request_shutdown([this]() {
+        execute_teardown();
+      });
+    } else {
+      execute_teardown();
+    }
   }
 
   QtRegistry &registry() {
@@ -1775,6 +1542,21 @@ public:
   }
 
 private:
+  void execute_teardown() {
+#if defined(__APPLE__)
+    wait_bridge_.reset();
+#endif
+    registry_.clear();
+    if (QCoreApplication::instance() != nullptr) {
+      for (int index = 0; index < 4; ++index) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents);
+        QCoreApplication::sendPostedEvents(nullptr);
+      }
+    }
+    app_.reset();
+  }
+
   uv_loop_t *loop_ = nullptr;
   int argc_ = 1;
   std::string argv_storage_;
@@ -1798,15 +1580,6 @@ void request_qt_pump() {
   record_request_qt_pump();
   g_host->request_pump();
 }
-
-void request_qt_native_wait_once() {
-  if (!g_host || !g_host->started()) {
-    return;
-  }
-
-  g_host->request_native_wait_once();
-}
-
 int current_runtime_wait_bridge_unix_fd() noexcept {
   if (!g_host) {
     return -1;
@@ -1823,6 +1596,7 @@ void drain_runtime_wait_bridge_notifications() noexcept {
   g_host->drain_runtime_wait_bridge();
 }
 
+#if !defined(__APPLE__)
 std::optional<std::uint64_t> current_runtime_wait_bridge_timer_delay_ms()
     noexcept {
   if (!g_host) {
@@ -1831,3 +1605,4 @@ std::optional<std::uint64_t> current_runtime_wait_bridge_timer_delay_ms()
 
   return g_host->runtime_wait_bridge_timer_delay_ms();
 }
+#endif

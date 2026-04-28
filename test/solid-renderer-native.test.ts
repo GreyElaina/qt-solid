@@ -25,7 +25,7 @@ describe("native Solid renderer", () => {
       entryExtension: ".ts",
       entrySource: [
         "import { createSignal } from 'solid-js'",
-        "import { __qtSolidDebugCaptureWindowFrame } from '@qt-solid/core'",
+        "import { captureWindowFrame } from '@qt-solid/core/native'",
         "import type { QtApp } from '@qt-solid/core'",
         "import { Button, Column, Input, Label, Text, createApp, createWindow, el } from '@qt-solid/solid'",
         "",
@@ -179,7 +179,7 @@ describe("native Solid renderer", () => {
       entryExtension: ".ts",
       entrySource: [
         "import type { QtApp } from '@qt-solid/core'",
-        "import { __qtSolidDebugCaptureWindowFrame } from '@qt-solid/core'",
+        "import { captureWindowFrame } from '@qt-solid/core/native'",
         "import { Text, createApp, createWindow } from '@qt-solid/solid'",
         "",
         "export async function run(app: QtApp) {",
@@ -202,7 +202,7 @@ describe("native Solid renderer", () => {
         "  if (!windowNode) {",
         "    throw new Error('missing mounted window node for debug frame capture')",
         "  }",
-        "  const segmentedFrame = __qtSolidDebugCaptureWindowFrame(windowNode.id)",
+        "  const segmentedFrame = captureWindowFrame(windowNode.id)",
         "  console.log('FRAME_BEFORE', JSON.stringify(before))",
         "  console.log('FRAME_AFTER', JSON.stringify(after))",
         "  console.log('CAPTURE', JSON.stringify({",

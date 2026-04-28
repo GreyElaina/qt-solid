@@ -23,7 +23,7 @@ namespace qt_solid_spike::qt {
 namespace {
 
 constexpr char kBridgeQueueLabel[] =
-    "dev.opencode.qt-solid-spike.macos-event-buffer";
+    "majo.akashina.qt-solid-spike.macos-event-buffer";
 constexpr long long kMaxBufferedEvents = 128;
 
 void throw_errno(const char *operation) {
@@ -309,3 +309,13 @@ int MacosEventBufferBridge::read_fd() const noexcept { return impl_->read_fd(); 
 void MacosEventBufferBridge::drain() noexcept { impl_->drain(); }
 
 } // namespace qt_solid_spike::qt
+
+#import <QuartzCore/CAMetalLayer.h>
+
+extern "C" void qt_wgpu_set_metal_layer_presents_with_transaction(void *layer, bool value) {
+  if (layer == nullptr) {
+    return;
+  }
+  auto *metal_layer = (__bridge CAMetalLayer *)layer;
+  metal_layer.presentsWithTransaction = value ? YES : NO;
+}

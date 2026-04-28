@@ -11,14 +11,9 @@ import {
   normalizeQtSolidFilename,
   transformQtSolidModule,
 } from "./compiler-shared.js"
-import {
-  QT_SOLID_COMPILER_RT_ID,
-  QT_SOLID_REGISTRATION_ID,
-  QT_SOLID_RUNTIME_ID,
-  normalizeWidgetLibraries,
-  renderQtSolidRegistrationModule,
-  renderQtSolidRuntimeModule,
-} from "./widget-library-assembly.js"
+
+export const QT_SOLID_RUNTIME_ID = "\0qt-solid:runtime"
+export const QT_SOLID_COMPILER_RT_ID = "\0qt-solid:compiler-rt"
 
 const require = createRequire(import.meta.url)
 const SOLID_JS_RUNTIME_ENTRY = require.resolve("solid-js/dist/solid.js")
@@ -33,24 +28,6 @@ function resolveBootstrapInput(input) {
   return resolvePath(input)
 }
 
-function widgetLibraryPackageBases(widgetLibraries) {
-  return widgetLibraries.map((specifier) =>
-    specifier.endsWith("/widget-library")
-      ? specifier.slice(0, -"/widget-library".length)
-      : specifier,
-  )
-}
-
-function isExternalWidgetLibraryPath(id, widgetLibraries, widgetLibraryPackageBasesList) {
-  if (widgetLibraries.includes(id)) {
-    return true
-  }
-
-  return widgetLibraryPackageBasesList.some(
-    (base) => id === `${base}/native` || id.startsWith(`${base}/native/`),
-  )
-}
-
 export function createQtSolidRolldownPlugin(input = {}) {
   const bootstrapEnabled = input.bootstrap ?? true
   const bootstrapEntry = input.bootstrapEntry ?? DEFAULT_QT_SOLID_BOOTSTRAP_ENTRY
@@ -63,8 +40,6 @@ export function createQtSolidRolldownPlugin(input = {}) {
   const runtimeEntry = input.runtimeEntry ?? DEFAULT_QT_SOLID_RUNTIME_ENTRY
   const compilerRuntimeEntry = input.compilerRuntimeEntry ?? DEFAULT_QT_SOLID_COMPILER_RT_ENTRY
   const sourceMaps = input.sourceMaps ?? true
-  const widgetLibraries = normalizeWidgetLibraries(input.widgetLibraries)
-  const widgetLibraryPackageBasesList = widgetLibraryPackageBases(widgetLibraries)
   let entryPath
 
   return {
@@ -91,10 +66,6 @@ export function createQtSolidRolldownPlugin(input = {}) {
 
       if (id === QT_SOLID_COMPILER_RT_ID) {
         return QT_SOLID_COMPILER_RT_ID
-      }
-
-      if (id === QT_SOLID_REGISTRATION_ID) {
-        return QT_SOLID_REGISTRATION_ID
       }
 
       if (id === moduleName) {
@@ -126,13 +97,6 @@ export function createQtSolidRolldownPlugin(input = {}) {
         }
       }
 
-      if (isExternalWidgetLibraryPath(id, widgetLibraries, widgetLibraryPackageBasesList)) {
-        return {
-          id,
-          external: true,
-        }
-      }
-
       if (id === "solid-js") {
         return SOLID_JS_RUNTIME_ENTRY
       }
@@ -159,15 +123,11 @@ export function createQtSolidRolldownPlugin(input = {}) {
     },
     load(id) {
       if (id === QT_SOLID_RUNTIME_ID) {
-        return renderQtSolidRuntimeModule(runtimeEntry, QT_SOLID_REGISTRATION_ID)
+        return `export * from ${JSON.stringify(runtimeEntry)}\n`
       }
 
       if (id === QT_SOLID_COMPILER_RT_ID) {
-        return renderQtSolidRuntimeModule(compilerRuntimeEntry, QT_SOLID_REGISTRATION_ID)
-      }
-
-      if (id === QT_SOLID_REGISTRATION_ID) {
-        return renderQtSolidRegistrationModule(widgetLibraries)
+        return `export * from ${JSON.stringify(compilerRuntimeEntry)}\n`
       }
 
       if (id !== QT_SOLID_BOOTSTRAP_ID) {

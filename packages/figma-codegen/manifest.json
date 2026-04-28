@@ -1,0 +1,23 @@
+{
+  "name": "qt-solid codegen",
+  "id": "000000000000001",
+  "api": "1.0.0",
+  "editorType": ["figma", "dev"],
+  "capabilities": ["codegen"],
+  "codegenLanguages": [
+    { "label": "qt-solid JSX", "value": "qt-solid" }
+  ],
+  "codegenPreferences": [
+    {
+      "itemType": "select",
+      "propertyName": "output",
+      "label": "Output level",
+      "options": [
+        { "label": "Components + fragments", "value": "auto", "isDefault": true },
+        { "label": "Fragments only", "value": "fragments" }
+      ]
+    }
+  ],
+  "main": "dist/code.js",
+  "documentAccess": "dynamic-page"
+}

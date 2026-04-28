@@ -9,7 +9,6 @@ export interface BuildNodeBundleOptions {
   entrySource: string
   projectRoot: string
   tag: string
-  widgetLibraries?: readonly string[]
 }
 
 export async function buildNodeBundle(
@@ -31,7 +30,6 @@ export async function buildNodeBundle(
       bootstrap: options.bootstrap,
       entryPath,
       outfile: bundlePath,
-      widgetLibraries: options.widgetLibraries,
     })
 
     return { bundlePath, cleanup }

@@ -10,17 +10,49 @@ import {
 } from "solid-js"
 import type { QtNode } from "@qt-solid/core/native"
 
-import { createElement as createQtElement, setProp as setQtProp, spread as spreadQtProps } from "../runtime/reconciler.ts"
+import {
+  createElement as createQtElement,
+  insert as insertInto,
+  setProp as setQtProp,
+  spread as spreadQtProps,
+  createCanvasFragmentBinding,
+  destroyCanvasFragmentBinding,
+  registerCanvasBinding,
+  unregisterCanvasBinding,
+  CanvasScopeContext,
+} from "../runtime/renderer.ts"
 
 import { createApp } from "./app.ts"
 import { QtAppWindowLifecycleContext, type AppWindowLifecycle } from "./mount.ts"
-import { createRuntimeElement, extendProps, toAccessor, windowPropsFrom } from "./props.ts"
+import { extendProps, toAccessor, windowPropsFrom } from "./props.ts"
 import type { RenderQtOptions, WindowComposable, WindowHandle, WindowSource } from "./types.ts"
 
 export function useWindow(source: WindowSource): WindowComposable {
   const read = toAccessor(source)
 
-  return (children) => createRuntimeElement("window", windowPropsFrom(read, children))
+  return (children) => {
+    const node = createQtElement("window")
+    const windowNode = node as unknown as QtNode
+    spreadQtProps(node, windowPropsFrom(read))
+
+    const fragmentBinding = createCanvasFragmentBinding(windowNode.id)
+    registerCanvasBinding(windowNode.id, fragmentBinding.root)
+
+    onCleanup(() => {
+      unregisterCanvasBinding(windowNode.id)
+      destroyCanvasFragmentBinding(windowNode.id)
+    })
+
+    createComponent(CanvasScopeContext.Provider, {
+      value: { canvasNodeId: windowNode.id, root: fragmentBinding.root },
+      get children() {
+        insertInto(fragmentBinding.root, children)
+        return undefined
+      },
+    })
+
+    return node
+  }
 }
 
 export function createWindow(source: WindowSource, body: () => JSX.Element): WindowHandle {
@@ -42,10 +74,10 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
   const windowNative = () => {
     const node = requireNode()
     return {
-      readFrameState: () => node.__qtSolidReadWindowFrameState(),
-      requestRepaint: () => node.__qtSolidRequestRepaint(),
-      requestNextFrame: () => node.__qtSolidRequestNextFrame(),
-      capture: () => node.__qtSolidCaptureWidget(),
+      readFrameState: () => node.readWindowFrameState(),
+      requestRepaint: () => node.requestRepaint(),
+      requestNextFrame: () => node.requestNextFrame(),
+      capture: () => node.captureWidget(),
     }
   }
 
@@ -77,9 +109,10 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
 
     const node = createQtElement("window")
     currentNode = node as unknown as QtNode
+    const windowNode = node as unknown as QtNode
     spreadQtProps(
       node,
-      extendProps(windowPropsFrom(read, body), {
+      extendProps(windowPropsFrom(read), {
         onCloseRequested: {
           enumerable: true,
           get() {
@@ -90,6 +123,22 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
         },
       }),
     )
+
+    const fragmentBinding = createCanvasFragmentBinding(windowNode.id)
+    registerCanvasBinding(windowNode.id, fragmentBinding.root)
+
+    onCleanup(() => {
+      unregisterCanvasBinding(windowNode.id)
+      destroyCanvasFragmentBinding(windowNode.id)
+    })
+
+    createComponent(CanvasScopeContext.Provider, {
+      value: { canvasNodeId: windowNode.id, root: fragmentBinding.root },
+      get children() {
+        insertInto(fragmentBinding.root, body)
+        return undefined
+      },
+    })
 
     onCleanup(() => {
       if (currentNode === (node as unknown as QtNode)) {
@@ -104,7 +153,7 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
       previousVisible = nextVisible
     })
 
-    return node as unknown as JSX.Element
+    return node
   }
 
   const render = () => createComponent(WindowMount, {})

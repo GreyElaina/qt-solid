@@ -13,14 +13,6 @@
     "./native": {
       "types": "./native/index.d.ts",
       "default": "./native/index.js"
-    },
-    "./widget-library": {
-      "types": "./src/widget-library.ts",
-      "default": "./src/widget-library.ts"
-    },
-    "./qt-host.shared": {
-      "types": "./src/qt-host.shared.ts",
-      "default": "./src/qt-host.shared.ts"
     }
   }
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@qt-solid/figma-codegen",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "build": "rolldown -c",
+    "watch": "rolldown -c --watch"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.0",
+    "esbuild": "^0.25.0",
+    "rolldown": "^1.0.0-rc.17"
+  }
+}

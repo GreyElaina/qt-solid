@@ -97,28 +97,6 @@ pub(crate) fn request_wake() {
     });
 }
 
-pub(crate) fn request_native_wait_once() {
-    WINDOW_HOST.with(|slot| {
-        let Ok(slot) = slot.try_borrow() else {
-            return;
-        };
-        if let Some(host) = slot.as_ref() {
-            host.request_native_wait_once();
-        }
-    });
-}
-
-pub(crate) fn notify_native_frame_source() {
-    WINDOW_HOST.with(|slot| {
-        let Ok(slot) = slot.try_borrow() else {
-            return;
-        };
-        if let Some(host) = slot.as_ref() {
-            host.notify_native_frame_source();
-        }
-    });
-}
-
 pub(crate) fn backend_name() -> Option<String> {
     WINDOW_HOST.with(|slot| {
         let Ok(slot) = slot.try_borrow() else {
@@ -193,7 +171,17 @@ pub(crate) fn wait_bridge_windows_handle() -> u64 {
         .unwrap_or_else(detected_integration)
         .wait_bridge_kind
     {
-        WaitBridgeKind::WindowsHandle => crate::qt::qt_runtime_wait_bridge_windows_handle(),
+        #[cfg(target_os = "windows")]
+        WaitBridgeKind::WindowsHandle => WINDOW_HOST.with(|slot| {
+            let Ok(slot) = slot.try_borrow() else {
+                return 0;
+            };
+            slot.as_ref()
+                .map(|host| host.bridge_event_handle())
+                .unwrap_or(0)
+        }),
+        #[cfg(not(target_os = "windows"))]
+        WaitBridgeKind::WindowsHandle => 0,
         WaitBridgeKind::None | WaitBridgeKind::UnixFd => 0,
     }
 }
@@ -205,14 +193,24 @@ pub(crate) fn ffi_pump_zero_timeout() -> bool {
 pub(crate) fn ffi_request_wake() {
     request_wake();
 }
-
-pub(crate) fn ffi_request_native_wait_once() {
-    request_native_wait_once();
-}
-
+/// Return an opaque pointer to the NativeFrameNotifier for display-link use.
+/// The pointer is valid for the lifetime of the WindowHost. Caller must not free it.
+#[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
-pub extern "C" fn qt_solid_notify_native_frame_source() {
-    notify_native_frame_source();
+pub extern "C" fn qt_solid_native_frame_notifier() -> *const std::ffi::c_void {
+    use std::ffi::c_void;
+    static NOTIFIER_ADDR: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let addr = *NOTIFIER_ADDR.get_or_init(|| {
+        WINDOW_HOST.with(|slot| {
+            let slot = slot.borrow();
+            let host = slot.as_ref().expect(
+                "qt_solid_native_frame_notifier called before WindowHost is initialized",
+            );
+            let notifier = host.native_frame_notifier();
+            Box::into_raw(Box::new(notifier)) as usize
+        })
+    });
+    addr as *const c_void
 }
 
 pub(crate) fn ffi_supports_zero_timeout_pump() -> bool {

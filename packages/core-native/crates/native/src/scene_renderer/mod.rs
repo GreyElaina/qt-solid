@@ -1,15 +1,15 @@
 use napi::Result;
-use qt_solid_widget_core::{
-    runtime::WidgetCapture,
-    vello::Scene,
-};
+use crate::canvas::vello::Scene;
+use crate::runtime::capture::WidgetCapture;
 
 #[cfg(target_os = "macos")]
 mod macos_cpu;
+pub(crate) mod effect_pass;
+#[cfg(not(target_os = "macos"))]
 mod wgpu_hybrid;
 
 pub(crate) fn render_scene_to_capture(
-    target: qt_wgpu_renderer::QtCompositorTarget,
+    target: qt_compositor::QtCompositorTarget,
     node_id: u32,
     width_px: u32,
     height_px: u32,
@@ -32,22 +32,4 @@ pub(crate) fn render_scene_to_capture(
             scene,
         )
     }
-}
-
-pub(crate) fn render_scene_into_compositor_layer(
-    target: qt_wgpu_renderer::QtCompositorTarget,
-    node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    scale_factor: f64,
-    scene: &Scene,
-) -> Result<()> {
-    wgpu_hybrid::render_scene_into_compositor_layer(
-        target,
-        node_id,
-        width_px,
-        height_px,
-        scale_factor,
-        scene,
-    )
 }

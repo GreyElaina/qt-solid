@@ -31,7 +31,6 @@ describe("node SEA prep", () => {
         entryPath,
         outDir,
         nodeBinary: nodeBin,
-        widgetLibraries: ["@qt-solid/core-widgets/widget-library"],
       })
 
       expect(existsSync(result.bundlePath)).toBe(true)
@@ -49,9 +48,6 @@ describe("node SEA prep", () => {
       )
       expect(config.assets["node_modules/@qt-solid/core/native/index.js"]).toBe(
         join(outDir, "node_modules/@qt-solid/core/native/index.js"),
-      )
-      expect(config.assets["node_modules/@qt-solid/core-widgets/package.json"]).toBe(
-        join(outDir, "node_modules/@qt-solid/core-widgets/package.json"),
       )
       expect(config.assets["app/cdp-worker.mjs"]).toBe(join(outDir, "app/cdp-worker.mjs"))
     } finally {
@@ -80,7 +76,6 @@ describe("node SEA prep", () => {
         entryPath,
         outDir,
         nodeBinary: nodeBin,
-        widgetLibraries: ["@qt-solid/core-widgets/widget-library"],
       })
 
       expect(existsSync(result.prepBlobPath)).toBe(true)

@@ -24,17 +24,11 @@ const directSeaMinimumVersion = [25, 5, 0]
 const runtimePackageSpecs = {
   "@qt-solid/core": {
     packageDir: resolve(repositoryRoot, "packages/core"),
-    entries: ["package.json", "native", "src/widget-library.ts", "src/qt-host.shared.ts"],
-  },
-  "@qt-solid/core-widgets": {
-    packageDir: resolve(repositoryRoot, "packages/core-widgets"),
-    entries: ["package.json", "src/native.ts", "src/widget-library.ts", "src/qt-host.ts"],
-  },
-  "@qt-solid/example-widgets": {
-    packageDir: resolve(repositoryRoot, "packages/example-widgets"),
-    entries: ["package.json", "native", "src/native.ts", "src/widget-library.ts", "src/qt-host.ts"],
+    entries: ["package.json", "native", "lowlevel"],
   },
 }
+
+const runtimePackageNames = Object.keys(runtimePackageSpecs)
 
 function nativeBinaryCandidates(platform, arch) {
   if (platform === "darwin") {
@@ -68,12 +62,6 @@ function nativeBinaryCandidates(platform, arch) {
   }
 
   return []
-}
-
-function packageBaseForWidgetLibrary(specifier) {
-  return specifier.endsWith("/widget-library")
-    ? specifier.slice(0, -"/widget-library".length)
-    : specifier
 }
 
 function ensureDir(path) {
@@ -199,14 +187,6 @@ function copyRuntimeTree(sourcePath, targetPath) {
 
   ensureDir(dirname(resolvedTargetPath))
   copyFileSync(sourcePath, resolvedTargetPath)
-}
-
-function collectRuntimePackages(widgetLibraries) {
-  const packages = new Set(["@qt-solid/core"])
-  for (const specifier of widgetLibraries ?? []) {
-    packages.add(packageBaseForWidgetLibrary(specifier))
-  }
-  return [...packages]
 }
 
 function validateNativeRuntimePackages(packageNames, targetPlatform, targetArch) {
@@ -538,19 +518,16 @@ export async function buildSolidNodeSeaPrep(options) {
   const prepNodeBinary = options.prepNodeBinary ?? options.nodeBinary ?? process.execPath
   const targetPlatform = options.targetPlatform ?? process.platform
   const targetArch = options.targetArch ?? process.arch
-  const widgetLibraries = options.widgetLibraries ?? []
-  const runtimePackages = collectRuntimePackages(widgetLibraries)
 
-  validateNativeRuntimePackages(runtimePackages, targetPlatform, targetArch)
+  validateNativeRuntimePackages(runtimePackageNames, targetPlatform, targetArch)
 
   await buildSolidNodeBundle({
     bootstrap: options.bootstrap ?? true,
     entryPath: resolve(options.entryPath),
     outfile: bundlePath,
-    widgetLibraries,
   })
 
-  for (const packageName of runtimePackages) {
+  for (const packageName of runtimePackageNames) {
     stageRuntimePackage(packageName, outDir)
   }
 

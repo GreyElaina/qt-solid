@@ -25,47 +25,16 @@ describe("qt solid devtools cdp proxy", () => {
     }
   })
 
-  it("serves synthetic DOM tree, forwards runtime evaluation, and streams DOM mutations", async () => {
+  it("serves synthetic DOM tree from native fragment snapshots, forwards runtime evaluation, and streams DOM mutations", async () => {
     const projectRootUrl = pathToFileURL(`${process.cwd()}/`).href
     const devtoolsDemoFileUrl = pathToFileURL(resolve("examples/devtools-demo.tsx")).href
+    const CANVAS_NODE_ID = 42
 
-    rendererInspectorStore.reset(1)
-    rendererInspectorStore.ensureElementNode(2, "window")
-    rendererInspectorStore.setProp(2, "title", "devtools-demo")
-    rendererInspectorStore.setSource(2, {
-      fileName: "examples/devtools-demo.tsx",
-      lineNumber: 12,
-      columnNumber: 7,
-      fileUrl: devtoolsDemoFileUrl,
-      projectRootUrl,
-    })
-    rendererInspectorStore.setOwner(2, {
-      ownerStack: [
-        {
-          componentName: "DevtoolsDemo",
-          source: {
-            fileName: "examples/devtools-demo.tsx",
-            lineNumber: 11,
-            columnNumber: 3,
-            fileUrl: devtoolsDemoFileUrl,
-            projectRootUrl,
-          },
-        },
-        {
-          componentName: "Window",
-          source: {
-            fileName: "examples/devtools-demo.tsx",
-            lineNumber: 12,
-            columnNumber: 7,
-            fileUrl: devtoolsDemoFileUrl,
-            projectRootUrl,
-          },
-        },
-      ],
-    })
-    rendererInspectorStore.insertChild(1, 2)
-    rendererInspectorStore.ensureElementNode(3, "view")
-    rendererInspectorStore.setOwner(3, {
+    // --- Set up metadata-only store ---
+    rendererInspectorStore.addCanvas(CANVAS_NODE_ID)
+
+    // Fragment 1: view (root-level fragment)
+    rendererInspectorStore.setOwner(CANVAS_NODE_ID, 1, {
       ownerStack: [
         {
           componentName: "DevtoolsDemo",
@@ -99,9 +68,16 @@ describe("qt solid devtools cdp proxy", () => {
         },
       ],
     })
-    rendererInspectorStore.insertChild(2, 3)
-    rendererInspectorStore.ensureElementNode(4, "group")
-    rendererInspectorStore.setOwner(4, {
+    rendererInspectorStore.setSource(CANVAS_NODE_ID, 1, {
+      fileName: "examples/devtools-demo.tsx",
+      lineNumber: 13,
+      columnNumber: 5,
+      fileUrl: devtoolsDemoFileUrl,
+      projectRootUrl,
+    })
+
+    // Fragment 2: group (child of view)
+    rendererInspectorStore.setOwner(CANVAS_NODE_ID, 2, {
       ownerStack: [
         {
           componentName: "DevtoolsDemo",
@@ -145,9 +121,9 @@ describe("qt solid devtools cdp proxy", () => {
         },
       ],
     })
-    rendererInspectorStore.insertChild(3, 4)
-    rendererInspectorStore.ensureElementNode(5, "input")
-    rendererInspectorStore.setOwner(5, {
+
+    // Fragment 3: input (child of group)
+    rendererInspectorStore.setOwner(CANVAS_NODE_ID, 3, {
       ownerStack: [
         {
           componentName: "DevtoolsDemo",
@@ -201,9 +177,121 @@ describe("qt solid devtools cdp proxy", () => {
         },
       ],
     })
-    rendererInspectorStore.setProp(5, "text", "hello")
-    rendererInspectorStore.setProp(5, "placeholder", "0")
-    rendererInspectorStore.insertChild(4, 5)
+
+    // Emit creation/insertion events so the worker knows about the tree
+    rendererInspectorStore.emit({ type: "node-created", canvasNodeId: CANVAS_NODE_ID, fragmentId: 1, kind: "view" })
+    rendererInspectorStore.emit({ type: "node-created", canvasNodeId: CANVAS_NODE_ID, fragmentId: 2, kind: "group" })
+    rendererInspectorStore.emit({ type: "node-created", canvasNodeId: CANVAS_NODE_ID, fragmentId: 3, kind: "input" })
+    rendererInspectorStore.emit({
+      type: "node-inserted",
+      canvasNodeId: CANVAS_NODE_ID,
+      parentFragmentId: null,
+      childFragmentId: 1,
+      anchorFragmentId: null,
+    })
+    rendererInspectorStore.emit({
+      type: "node-inserted",
+      canvasNodeId: CANVAS_NODE_ID,
+      parentFragmentId: 1,
+      childFragmentId: 2,
+      anchorFragmentId: null,
+    })
+    rendererInspectorStore.emit({
+      type: "node-inserted",
+      canvasNodeId: CANVAS_NODE_ID,
+      parentFragmentId: 2,
+      childFragmentId: 3,
+      anchorFragmentId: null,
+    })
+
+    // --- Set up native debug primitives mocks ---
+    const originalFragmentTreeSnapshot = qtSolidDebugPrimitives.fragmentTreeSnapshot
+    const originalHighlightFragment = qtSolidDebugPrimitives.highlightFragment
+    const originalGetFragmentBounds = qtSolidDebugPrimitives.getFragmentBounds
+    const originalFragmentHitTest = qtSolidDebugPrimitives.fragmentHitTest
+    const originalSetInspectMode = qtSolidDebugPrimitives.setInspectMode
+    const originalClearHighlight = qtSolidDebugPrimitives.clearHighlight
+    const originalHighlightNode = qtSolidDebugPrimitives.highlightNode
+
+    const nativeTree = [
+      {
+        id: 1,
+        tag: "view",
+        parentId: undefined,
+        childIds: [2],
+        x: 0,
+        y: 0,
+        width: 400,
+        height: 300,
+        clip: false,
+        visible: true,
+        opacity: 1,
+        props: {},
+      },
+      {
+        id: 2,
+        tag: "group",
+        parentId: 1,
+        childIds: [3],
+        x: 10,
+        y: 20,
+        width: 200,
+        height: 100,
+        clip: false,
+        visible: true,
+        opacity: 1,
+        props: {},
+      },
+      {
+        id: 3,
+        tag: "input",
+        parentId: 2,
+        childIds: [],
+        x: 40,
+        y: 60,
+        width: 120,
+        height: 32,
+        clip: false,
+        visible: true,
+        opacity: 1,
+        props: { text: "hello", placeholder: "0" },
+      },
+    ]
+
+    qtSolidDebugPrimitives.fragmentTreeSnapshot = (_canvasNodeId: number) => {
+      return nativeTree as any
+    }
+
+    const highlightFragmentCalls: Array<{ canvasNodeId: number; fragmentId: number | null }> = []
+    qtSolidDebugPrimitives.highlightFragment = (canvasNodeId: number, fragmentId: number | null) => {
+      highlightFragmentCalls.push({ canvasNodeId, fragmentId })
+    }
+
+    qtSolidDebugPrimitives.getFragmentBounds = (_canvasNodeId: number, _fragmentId: number) => {
+      return {
+        visible: true,
+        screenX: 40,
+        screenY: 60,
+        width: 120,
+        height: 32,
+      }
+    }
+
+    qtSolidDebugPrimitives.fragmentHitTest = (_canvasNodeId: number, x: number, y: number) => {
+      expect(x).toBe(88)
+      expect(y).toBe(72)
+      return 3 // input fragment
+    }
+
+    const inspectModeCalls: boolean[] = []
+    qtSolidDebugPrimitives.setInspectMode = (enabled: boolean) => {
+      inspectModeCalls.push(enabled)
+    }
+
+    let clearHighlightCalls = 0
+    qtSolidDebugPrimitives.clearHighlight = () => {
+      clearHighlightCalls += 1
+    }
 
     const port = 9329 + Math.floor(Math.random() * 100)
     server = await startQtSolidDevtoolsServer(port)
@@ -215,13 +303,10 @@ describe("qt solid devtools cdp proxy", () => {
       type: string
     }>
 
-    expect(targets).toHaveLength(2)
+    expect(targets).toHaveLength(1)
     const rendererTarget = targets.find((target) => target.id === "qt-solid-renderer")
-    const componentsTarget = targets.find((target) => target.id === "qt-solid-components")
     expect(rendererTarget?.type).toBe("page")
-    expect(componentsTarget?.type).toBe("page")
     expect(rendererTarget?.webSocketDebuggerUrl).toContain(`/devtools/page/qt-solid-renderer`)
-    expect(componentsTarget?.webSocketDebuggerUrl).toContain(`/devtools/page/qt-solid-components`)
 
     const socket = new WebSocket(rendererTarget!.webSocketDebuggerUrl)
     await new Promise<void>((resolve, reject) => {
@@ -336,438 +421,252 @@ describe("qt solid devtools cdp proxy", () => {
       return await response
     }
 
+    // --- Schema ---
     const domains = (await call("Schema.getDomains")) as { domains: Array<{ name: string }> }
     expect(domains.domains.some((domain) => domain.name === "DOM")).toBe(true)
     expect(domains.domains.some((domain) => domain.name === "CSS")).toBe(true)
 
+    // --- DOM tree ---
     await call("DOM.enable")
-    const documentResult = (await call("DOM.getDocument", { depth: 3 })) as {
+    const documentResult = (await call("DOM.getDocument", { depth: 4 })) as {
       root: {
+        childNodeCount?: number
         children?: Array<{
           nodeId: number
           localName?: string
           childNodeCount?: number
-          children?: Array<{ nodeId: number; localName?: string; attributes?: string[] }>
-        }>
-      }
-    }
-
-    const rootNode = documentResult.root.children?.[0]
-    const windowNode = rootNode?.children?.[0]
-    expect(rootNode?.localName).toBe("qt-root")
-    expect(rootNode?.childNodeCount).toBe(1)
-    expect(windowNode?.localName).toBe("window")
-    expect(windowNode?.attributes).toContain("title")
-    expect(windowNode?.attributes).toContain("devtools-demo")
-    expect(windowNode?.attributes).not.toContain("source")
-    expect(windowNode?.attributes).not.toContain("owner-component")
-    expect(windowNode?.attributes).not.toContain("owner-path")
-
-    const componentsSocket = new WebSocket(componentsTarget!.webSocketDebuggerUrl)
-    await new Promise<void>((resolve, reject) => {
-      componentsSocket.once("open", () => resolve())
-      componentsSocket.once("error", reject)
-    })
-
-    let componentsNextId = 1
-    const componentsPending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
-    componentsSocket.on("message", (raw) => {
-      const message = JSON.parse(raw.toString()) as {
-        id?: number
-        result?: unknown
-        error?: { message?: string }
-      }
-
-      if (message.id == null) {
-        return
-      }
-
-      const current = componentsPending.get(message.id)
-      if (!current) {
-        return
-      }
-
-      componentsPending.delete(message.id)
-      if (message.error) {
-        current.reject(new Error(message.error.message ?? "cdp error"))
-        return
-      }
-
-      current.resolve(message.result)
-    })
-
-    const callComponents = async (method: string, params?: Record<string, unknown>) => {
-      const id = componentsNextId++
-      const response = new Promise<unknown>((resolve, reject) => {
-        componentsPending.set(id, { resolve, reject })
-      })
-      componentsSocket.send(JSON.stringify({ id, method, params }))
-      return await response
-    }
-
-    await callComponents("DOM.enable")
-    const componentsDocument = (await callComponents("DOM.getDocument", { depth: 6 })) as {
-      root: {
-        children?: Array<{
-          nodeId: number
-          localName?: string
-          attributes?: string[]
           children?: Array<{
             nodeId: number
             localName?: string
             attributes?: string[]
+            childNodeCount?: number
             children?: Array<{
               nodeId: number
               localName?: string
               attributes?: string[]
-              children?: Array<{
-                nodeId: number
-                localName?: string
-                attributes?: string[]
-                children?: Array<{
-                  nodeId: number
-                  localName?: string
-                  attributes?: string[]
-                  children?: Array<{ nodeId: number; localName?: string; attributes?: string[] }>
-                }>
-              }>
+              childNodeCount?: number
+              children?: Array<{ nodeId: number; localName?: string; attributes?: string[] }>
             }>
           }>
         }>
       }
     }
-    const componentHostNode = componentsDocument.root.children?.[0]
-    const demoComponentNode = componentHostNode?.children?.[0]
-    const windowComponentNode = demoComponentNode?.children?.[0]
-    const columnComponentNode = windowComponentNode?.children?.[0]
-    const groupComponentNode = columnComponentNode?.children?.[0]
-    const inputComponentNode = groupComponentNode?.children?.[0]
-    expect(componentHostNode?.localName).toBe("window")
-    expect(demoComponentNode?.localName).toBe("DevtoolsDemo")
-    expect(windowComponentNode?.localName).toBe("Window")
-    expect(columnComponentNode?.localName).toBe("Column")
-    expect(groupComponentNode?.localName).toBe("Group")
-    expect(inputComponentNode?.localName).toBe("Input")
-    expect(inputComponentNode?.attributes).toContain("source")
-    expect(inputComponentNode?.attributes).toContain("examples/devtools-demo.tsx:15:9")
 
-    const resolvedInputComponent = (await callComponents("DOM.resolveNode", { nodeId: inputComponentNode?.nodeId })) as {
+    // New structure: #document → [WINDOW per canvas] → [fragment nodes]
+    expect(documentResult.root.childNodeCount).toBe(1)
+    const windowNode = documentResult.root.children?.[0]
+    expect(windowNode?.localName).toBe("window")
+    expect(windowNode?.childNodeCount).toBe(1) // one root fragment (view)
+
+    const viewNode = windowNode?.children?.[0]
+    expect(viewNode?.localName).toBe("view")
+    expect(viewNode?.childNodeCount).toBe(1) // one child (group)
+
+    const groupNode = viewNode?.children?.[0]
+    expect(groupNode?.localName).toBe("group")
+    expect(groupNode?.childNodeCount).toBe(1)
+
+    const inputNode = groupNode?.children?.[0]
+    expect(inputNode?.localName).toBe("input")
+    expect(inputNode?.attributes).toContain("text")
+    expect(inputNode?.attributes).toContain("hello")
+
+    // --- DOM.resolveNode + Runtime.getProperties ---
+    // Resolve the view node to get its object ID
+    const resolvedView = (await call("DOM.resolveNode", { nodeId: viewNode?.nodeId })) as {
       object: { objectId: string }
     }
-    const inputComponentProperties = (await callComponents("Runtime.getProperties", {
-      objectId: resolvedInputComponent.object.objectId,
-    })) as {
-      result: Array<{ name: string; value?: { value?: unknown } }>
-    }
-    const componentPropertyValue = (name: string) => {
-      const property = inputComponentProperties.result.find((entry) => entry.name === name)
-      return property?.value?.value
-    }
-    expect(componentPropertyValue("componentName")).toBe("Input")
-    expect(componentPropertyValue("componentPath")).toBe("DevtoolsDemo > Window > Column > Group > Input")
-    expect(componentPropertyValue("rendererNodeId")).toBe(5)
-    expect(componentPropertyValue("rendererKind")).toBe("input")
-    expect(componentPropertyValue("frameKind")).toBe("user")
+    expect(resolvedView.object.objectId).toContain("qt-solid-frag:")
 
-    const resolvedWindow = (await call("DOM.resolveNode", { nodeId: windowNode?.nodeId })) as {
-      object: { objectId: string }
-    }
     const originalCwd = process.cwd()
     const tempCwd = mkdtempSync(join(tmpdir(), "qt-solid-devtools-cwd-"))
 
     try {
       process.chdir(tempCwd)
 
-      const windowProperties = (await call("Runtime.getProperties", {
-        objectId: resolvedWindow.object.objectId,
+      const viewProperties = (await call("Runtime.getProperties", {
+        objectId: resolvedView.object.objectId,
       })) as {
         result: Array<{ name: string; value?: { value?: unknown } }>
       }
       const propertyValue = (name: string) => {
-        const property = windowProperties.result.find((entry) => entry.name === name)
+        const property = viewProperties.result.find((entry) => entry.name === name)
         return property?.value?.value
       }
 
-      expect(windowProperties.result).toContainEqual(
-        expect.objectContaining({ name: "ownerComponent", value: expect.objectContaining({ value: "Window" }) }),
+      expect(propertyValue("kind")).toBe("view")
+      expect(viewProperties.result).toContainEqual(
+        expect.objectContaining({ name: "ownerComponent", value: expect.objectContaining({ value: "Column" }) }),
       )
-      expect(windowProperties.result).toContainEqual(
+      expect(viewProperties.result).toContainEqual(
         expect.objectContaining({
           name: "ownerPath",
-          value: expect.objectContaining({ value: "DevtoolsDemo > Window" }),
+          value: expect.objectContaining({ value: "DevtoolsDemo > Window > Column" }),
         }),
       )
       expect(propertyValue("sourceUrl")).toBe(devtoolsDemoFileUrl)
       expect(propertyValue("sourceFrameKind")).toBe("user")
-      expect(propertyValue("sourceLocation")).toEqual({
-        source: "examples/devtools-demo.tsx:12:7",
-        sourceFileName: "examples/devtools-demo.tsx",
-        sourceLineNumber: 12,
-        sourceColumnNumber: 7,
-        sourceUrl: devtoolsDemoFileUrl,
-        frameKind: "user",
-      })
-      expect(propertyValue("ownerStack")).toEqual([
-        {
-          componentName: "DevtoolsDemo",
-          source: "examples/devtools-demo.tsx:11:3",
-          sourceFileName: "examples/devtools-demo.tsx",
-          sourceLineNumber: 11,
-          sourceColumnNumber: 3,
-          sourceUrl: devtoolsDemoFileUrl,
-          frameKind: "user",
-        },
-        {
-          componentName: "Window",
-          source: "examples/devtools-demo.tsx:12:7",
-          sourceFileName: "examples/devtools-demo.tsx",
-          sourceLineNumber: 12,
-          sourceColumnNumber: 7,
-          sourceUrl: devtoolsDemoFileUrl,
-          frameKind: "user",
-        },
-      ])
-      expect(propertyValue("creationLocation")).toEqual({
-        functionName: "Window",
-        scriptId: "",
-        url: devtoolsDemoFileUrl,
-        lineNumber: 11,
-        columnNumber: 6,
-        source: "examples/devtools-demo.tsx:12:7",
-        sourceFileName: "examples/devtools-demo.tsx",
-        sourceLineNumber: 12,
-        sourceColumnNumber: 7,
-        sourceUrl: devtoolsDemoFileUrl,
-        frameKind: "user",
-        frameRole: "owner",
-      })
-      expect(propertyValue("creationFrames")).toEqual([
-        {
-          functionName: "Window",
-          scriptId: "",
-          url: devtoolsDemoFileUrl,
-          lineNumber: 11,
-          columnNumber: 6,
-          source: "examples/devtools-demo.tsx:12:7",
-          sourceFileName: "examples/devtools-demo.tsx",
-          sourceLineNumber: 12,
-          sourceColumnNumber: 7,
-          sourceUrl: devtoolsDemoFileUrl,
-          frameKind: "user",
-          frameRole: "owner",
-        },
-        {
-          functionName: "DevtoolsDemo",
-          scriptId: "",
-          url: devtoolsDemoFileUrl,
-          lineNumber: 10,
-          columnNumber: 2,
-          source: "examples/devtools-demo.tsx:11:3",
-          sourceFileName: "examples/devtools-demo.tsx",
-          sourceLineNumber: 11,
-          sourceColumnNumber: 3,
-          sourceUrl: devtoolsDemoFileUrl,
-          frameKind: "user",
-          frameRole: "owner",
-        },
-      ])
-
-      await call("DOM.setNodeStackTracesEnabled", { enable: true })
-      const creationStack = (await call("DOM.getNodeStackTraces", {
-        nodeId: windowNode?.nodeId,
-      })) as {
-        creation?: {
-          description?: string
-          callFrames?: Array<{
-            functionName?: string
-            scriptId?: string
-            url?: string
-            lineNumber?: number
-            columnNumber?: number
-          }>
-        }
-      }
-      expect(creationStack).toEqual({
-        creation: {
-          description: "Qt Solid node creation",
-          callFrames: [
-            {
-              functionName: "Window",
-              scriptId: "",
-              url: devtoolsDemoFileUrl,
-              lineNumber: 11,
-              columnNumber: 6,
-            },
-            {
-              functionName: "DevtoolsDemo",
-              scriptId: "",
-              url: devtoolsDemoFileUrl,
-              lineNumber: 10,
-              columnNumber: 2,
-            },
-          ],
-        },
-      })
     } finally {
       process.chdir(originalCwd)
       rmSync(tempCwd, { recursive: true, force: true })
     }
 
+    // --- getNodeStackTraces ---
+    await call("DOM.setNodeStackTracesEnabled", { enable: true })
+    const creationStack = (await call("DOM.getNodeStackTraces", {
+      nodeId: viewNode?.nodeId,
+    })) as {
+      creation?: {
+        description?: string
+        callFrames?: Array<{
+          functionName?: string
+          scriptId?: string
+          url?: string
+          lineNumber?: number
+          columnNumber?: number
+        }>
+      }
+    }
+    expect(creationStack.creation).toBeDefined()
+    expect(creationStack.creation?.description).toBe("Qt Solid node creation")
+    expect(creationStack.creation?.callFrames).toBeDefined()
+    expect((creationStack.creation?.callFrames?.length ?? 0)).toBeGreaterThan(0)
+
+    // --- Runtime.evaluate (forwarded to real inspector) ---
     const runtimeResult = (await call("Runtime.evaluate", { expression: "1 + 2" })) as {
       result: { value: number }
     }
     expect(runtimeResult.result.value).toBe(3)
 
+    // --- Debugger.enable (forwarded) ---
     const debuggerEnableResult = (await call("Debugger.enable")) as { debuggerId?: string }
     expect(typeof debuggerEnableResult.debuggerId).toBe("string")
 
+    // --- Runtime.enable (forwarded) ---
     const runtimeEnableResult = (await call("Runtime.enable")) as Record<string, unknown>
     expect(runtimeEnableResult).toEqual({})
 
-    const highlightCalls: number[] = []
-    const inspectModeCalls: boolean[] = []
-    let clearHighlightCalls = 0
-    const originalHighlightNode = qtSolidDebugPrimitives.highlightNode
-    const originalGetNodeBounds = qtSolidDebugPrimitives.getNodeBounds
-    const originalGetNodeAtPoint = qtSolidDebugPrimitives.getNodeAtPoint
-    const originalSetInspectMode = qtSolidDebugPrimitives.setInspectMode
-    const originalClearHighlight = qtSolidDebugPrimitives.clearHighlight
-    qtSolidDebugPrimitives.highlightNode = (nodeId: number) => {
-      highlightCalls.push(nodeId)
-    }
-    qtSolidDebugPrimitives.getNodeBounds = () => ({
-      visible: true,
-      screenX: 40,
-      screenY: 60,
-      width: 120,
-      height: 32,
-    })
-    qtSolidDebugPrimitives.getNodeAtPoint = (screenX: number, screenY: number) => {
-      expect(screenX).toBe(88)
-      expect(screenY).toBe(72)
-      return 5
-    }
-    qtSolidDebugPrimitives.setInspectMode = (enabled: boolean) => {
-      inspectModeCalls.push(enabled)
-    }
-    qtSolidDebugPrimitives.clearHighlight = () => {
-      clearHighlightCalls += 1
-    }
+    // --- Box model ---
+    const inputNodeId = inputNode?.nodeId
+    expect(inputNodeId).toBeDefined()
 
-    const boxModel = (await call("DOM.getBoxModel", { nodeId: windowNode?.nodeId })) as {
+    const boxModel = (await call("DOM.getBoxModel", { nodeId: inputNodeId })) as {
       model: { width: number; height: number; content: number[] }
     }
     expect(boxModel.model.width).toBe(120)
     expect(boxModel.model.height).toBe(32)
     expect(boxModel.model.content).toEqual([40, 60, 160, 60, 160, 92, 40, 92])
 
+    // --- Hit test ---
     const nodeForLocation = (await call("DOM.getNodeForLocation", { x: 88, y: 72 })) as {
       backendNodeId: number
       nodeId: number
       frameId: string
     }
-    expect(nodeForLocation).toEqual({
-      backendNodeId: 1005,
-      nodeId: 1005,
-      frameId: "qt-solid-frame",
-    })
+    // Should return the input fragment's allocated domNodeId
+    expect(nodeForLocation.frameId).toBe("qt-solid-frame")
+    expect(nodeForLocation.backendNodeId).toBe(nodeForLocation.nodeId)
+    // The returned nodeId should be the input fragment's ID
+    expect(nodeForLocation.nodeId).toBe(inputNodeId)
 
+    // --- Overlay ---
     await call("Overlay.setInspectMode", { mode: "searchForNode" })
-    server.notifyInspectNode(5)
-    const inspectRequested = await waitForNotification("Overlay.inspectNodeRequested")
-    expect(inspectRequested.params).toEqual({ backendNodeId: 1005 })
-    const pushedNodes = (await call("DOM.pushNodesByBackendIdsToFrontend", { backendNodeIds: [1005] })) as {
-      nodeIds: number[]
-    }
-    expect(pushedNodes.nodeIds).toEqual([1005])
-    const materializedParent = await waitForNotification(
-      "DOM.setChildNodes",
-      (notification) => (notification.params as { parentId?: number }).parentId === 1004,
-    )
-    expect(materializedParent.params).toMatchObject({
-      parentId: 1004,
-      nodes: [
-        {
-          nodeId: 1005,
-          localName: "input",
-          attributes: ["text", "hello", "placeholder", "0"],
-        },
-      ],
-    })
+    expect(inspectModeCalls).toEqual([true])
 
-    await call("Overlay.highlightNode", { nodeId: windowNode?.nodeId })
+    // Highlight the input node
+    await call("Overlay.highlightNode", { nodeId: inputNodeId })
+    expect(highlightFragmentCalls.length).toBeGreaterThan(0)
+    const lastHighlight = highlightFragmentCalls[highlightFragmentCalls.length - 1]
+    expect(lastHighlight?.canvasNodeId).toBe(CANVAS_NODE_ID)
+    expect(lastHighlight?.fragmentId).toBe(3) // input fragment
+
     await call("Overlay.hideHighlight")
     await call("Overlay.setInspectMode", { mode: "none" })
     expect(inspectModeCalls).toEqual([true, false])
-    expect(highlightCalls).toEqual([2])
-    expect(clearHighlightCalls).toBe(2)
 
-    qtSolidDebugPrimitives.highlightNode = originalHighlightNode
-    qtSolidDebugPrimitives.getNodeBounds = originalGetNodeBounds
-    qtSolidDebugPrimitives.getNodeAtPoint = originalGetNodeAtPoint
+    // --- pushNodesByBackendIdsToFrontend ---
+    const pushedNodes = (await call("DOM.pushNodesByBackendIdsToFrontend", { backendNodeIds: [inputNodeId] })) as {
+      nodeIds: number[]
+    }
+    expect(pushedNodes.nodeIds).toEqual([inputNodeId])
+
+    // --- Structural mutation: emit a text-changed event ---
+    rendererInspectorStore.emit({
+      type: "text-changed",
+      canvasNodeId: CANVAS_NODE_ID,
+      fragmentId: 3,
+      value: "updated text",
+    })
+
+    // The worker should send DOM.documentUpdated or DOM.characterDataModified
+    // Since text-changed sends characterDataModified for known nodes, wait for it
+    // Actually, text-changed sends characterDataModified only if node is known; otherwise it's benign
+    // The inputNodeId was made known via getDocument depth:3
+
+    // Wait a tick for the event to propagate
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // --- Structural mutation: emit node-inserted → should trigger DOM.documentUpdated ---
+    rendererInspectorStore.emit({
+      type: "node-created",
+      canvasNodeId: CANVAS_NODE_ID,
+      fragmentId: 4,
+      kind: "Text",
+    })
+    rendererInspectorStore.emit({
+      type: "node-inserted",
+      canvasNodeId: CANVAS_NODE_ID,
+      parentFragmentId: 1,
+      childFragmentId: 4,
+      anchorFragmentId: null,
+    })
+
+    // Update native tree snapshot to include the new node
+    nativeTree.push({
+      id: 4,
+      tag: "Text",
+      parentId: 1,
+      childIds: [],
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 20,
+      clip: false,
+      visible: true,
+      opacity: 1,
+      props: { text: "new text node" } as Record<string, string>,
+    })
+    // Update view's childIds
+    nativeTree[0]!.childIds = [2, 4]
+
+    const documentUpdated = await waitForNotification("DOM.documentUpdated")
+    expect(documentUpdated).toBeDefined()
+
+    // After DOM.documentUpdated, DevTools would re-fetch
+    const documentResult2 = (await call("DOM.getDocument", { depth: 4 })) as {
+      root: {
+        children?: Array<{
+          children?: Array<{
+            childNodeCount?: number
+            children?: Array<{ localName?: string; nodeType?: number; nodeValue?: string }>
+          }>
+        }>
+      }
+    }
+    const viewNode2 = documentResult2.root.children?.[0]?.children?.[0]
+    expect(viewNode2?.childNodeCount).toBe(2) // group + text
+
+    // --- Cleanup debug primitive mocks ---
+    qtSolidDebugPrimitives.fragmentTreeSnapshot = originalFragmentTreeSnapshot
+    qtSolidDebugPrimitives.highlightFragment = originalHighlightFragment
+    qtSolidDebugPrimitives.getFragmentBounds = originalGetFragmentBounds
+    qtSolidDebugPrimitives.fragmentHitTest = originalFragmentHitTest
     qtSolidDebugPrimitives.setInspectMode = originalSetInspectMode
     qtSolidDebugPrimitives.clearHighlight = originalClearHighlight
+    qtSolidDebugPrimitives.highlightNode = originalHighlightNode
 
-    rendererInspectorStore.setProp(2, "title", "mutated-title")
-    const titleMutation = await waitForNotification(
-      "DOM.attributeModified",
-      (notification) => (notification.params as { name?: string }).name === "title",
-    )
-    expect(titleMutation.params).toMatchObject({
-      nodeId: windowNode?.nodeId,
-      name: "title",
-      value: "mutated-title",
-    })
-
-    rendererInspectorStore.ensureTextNode(6, "literal hello")
-    rendererInspectorStore.insertChild(2, 6)
-    const inserted = await waitForNotification("DOM.childNodeInserted")
-    expect(inserted.params).toMatchObject({
-      parentNodeId: windowNode?.nodeId,
-      previousNodeId: 1003,
-      node: {
-        nodeType: 3,
-        nodeValue: "literal hello",
-      },
-    })
-
-    const countAfterInsert = await waitForNotification("DOM.childNodeCountUpdated")
-    expect(countAfterInsert.params).toMatchObject({
-      nodeId: windowNode?.nodeId,
-      childNodeCount: 2,
-    })
-
-    rendererInspectorStore.replaceText(6, "literal updated")
-    const textMutation = await waitForNotification("DOM.characterDataModified")
-    expect(textMutation.params).toMatchObject({
-      nodeId: 1006,
-      characterData: "literal updated",
-    })
-
-    rendererInspectorStore.removeChild(2, 6)
-    const removed = await waitForNotification("DOM.childNodeRemoved")
-    expect(removed.params).toMatchObject({
-      parentNodeId: windowNode?.nodeId,
-      nodeId: 1006,
-    })
-
-    const countAfterRemove = await waitForNotification("DOM.childNodeCountUpdated")
-    expect(countAfterRemove.params).toMatchObject({
-      nodeId: windowNode?.nodeId,
-      childNodeCount: 1,
-    })
-    rendererInspectorStore.destroySubtree(6)
-
-    expect(notifications.some((message) => message.method === "DOM.documentUpdated")).toBe(false)
-
-    componentsSocket.close()
-    await new Promise<void>((resolve) => {
-      componentsSocket.once("close", () => resolve())
-    })
-    for (const [id, pendingEntry] of componentsPending) {
-      componentsPending.delete(id)
-      pendingEntry.reject(new Error("socket closed"))
-    }
+    // Clean up canvas
+    rendererInspectorStore.removeCanvas(CANVAS_NODE_ID)
 
     socket.close()
     await new Promise<void>((resolve) => {

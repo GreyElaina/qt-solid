@@ -8,14 +8,9 @@ import {
   normalizeQtSolidFilename,
   transformQtSolidModule,
 } from "./compiler-shared.js"
-import {
-  QT_SOLID_COMPILER_RT_ID,
-  QT_SOLID_REGISTRATION_ID,
-  QT_SOLID_RUNTIME_ID,
-  normalizeWidgetLibraries,
-  renderQtSolidRegistrationModule,
-  renderQtSolidRuntimeModule,
-} from "./widget-library-assembly.js"
+
+export const QT_SOLID_RUNTIME_ID = "\0qt-solid:runtime"
+export const QT_SOLID_COMPILER_RT_ID = "\0qt-solid:compiler-rt"
 
 const require = createRequire(import.meta.url)
 const SOLID_JS_BROWSER_ENTRY = require.resolve("solid-js/dist/solid.js")
@@ -52,7 +47,6 @@ export function createQtSolidVitePlugin(input = {}) {
     input.compilerRuntimeModuleName ?? DEFAULT_QT_SOLID_COMPILER_RT_MODULE_NAME
   const runtimeEntry = input.runtimeEntry ?? DEFAULT_QT_SOLID_RUNTIME_ENTRY
   const compilerRuntimeEntry = input.compilerRuntimeEntry ?? DEFAULT_QT_SOLID_COMPILER_RT_ENTRY
-  const widgetLibraries = normalizeWidgetLibraries(input.widgetLibraries)
   let devServer = false
 
   return {
@@ -93,10 +87,6 @@ export function createQtSolidVitePlugin(input = {}) {
         return QT_SOLID_COMPILER_RT_ID
       }
 
-      if (id === QT_SOLID_REGISTRATION_ID) {
-        return QT_SOLID_REGISTRATION_ID
-      }
-
       if (id === moduleName) {
         return QT_SOLID_RUNTIME_ID
       }
@@ -112,16 +102,12 @@ export function createQtSolidVitePlugin(input = {}) {
       return null
     },
     load(id) {
-      if (id === QT_SOLID_REGISTRATION_ID) {
-        return renderQtSolidRegistrationModule(widgetLibraries)
-      }
-
       if (id === QT_SOLID_RUNTIME_ID) {
-        return renderQtSolidRuntimeModule(runtimeEntry, QT_SOLID_REGISTRATION_ID)
+        return `export * from ${JSON.stringify(runtimeEntry)}\n`
       }
 
       if (id === QT_SOLID_COMPILER_RT_ID) {
-        return renderQtSolidRuntimeModule(compilerRuntimeEntry, QT_SOLID_REGISTRATION_ID)
+        return `export * from ${JSON.stringify(compilerRuntimeEntry)}\n`
       }
 
       return null

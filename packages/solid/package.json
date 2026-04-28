@@ -47,7 +47,6 @@
     "@babel/core": "^7.29.0",
     "@babel/preset-typescript": "^7.28.5",
     "@qt-solid/core": "workspace:*",
-    "@qt-solid/core-widgets": "workspace:*",
     "babel-preset-solid": "^1.9.12",
     "solid-js": "^1.9.12",
     "solid-refresh": "^0.7.8"
@@ -55,5 +54,8 @@
   "peerDependencies": {
     "rolldown": "^1.0.0-rc.14",
     "vite": "^8.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
   }
 }

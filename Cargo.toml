@@ -1,15 +1,13 @@
 [workspace]
 members = [
     "packages/core-native/crates/native",
-    "packages/core-native/crates/runtime-core",
-    "packages/core-native/crates/widget-core",
     "packages/core-native/crates/window-host",
-    "packages/core-native/crates/widget-build",
-    "packages/core-native/crates/native-build",
-    "packages/core-native/macros/qt-widget-derive",
-    "packages/core-widgets",
-    "packages/example-widgets",
-    "packages/example-widgets/crates/schema",
-    "packages/core-native/crates/widgets-registry", "packages/core-native/crates/qt-wgpu-renderer", "packages/core-native/crates/qt-compositor-types", "packages/core-native/crates/qt-compositor-core", "packages/core-native/crates/qt-compositor-gpu", "packages/core-native/crates/qt-compositor-surface", "packages/core-native/crates/qt-compositor-macos", "packages/core-native/crates/qt-compositor-windows", "packages/core-native/crates/qt-compositor-x11", "packages/core-native/crates/qt-compositor-wayland",
+
+    "packages/core-native/crates/qt-compositor",
+    "packages/core-native/crates/motion",
+    "packages/core-native/macros/fragment-derive",
 ]
 resolver = "2"
+
+[patch.crates-io]
+anyrender_vello_hybrid = { path = "third_party/anyrender_vello_hybrid" }

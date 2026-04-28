@@ -3,12 +3,20 @@
 #include "qt/macos_event_buffer_bridge.h"
 #include "qt/macos_display_link_bridge.h"
 #include "qt_cocoa_dispatcher_private_shim.h"
+#include <CoreFoundation/CoreFoundation.h>
+#elif defined(_WIN32)
+#include <windows.h>
 #endif
 #include "qt_wgpu_platform.h"
 #include "native/src/qt/ffi.rs.h"
 #include "rust_widget_binding_host.h"
 #include "qt_widget_host_includes.inc"
 #include "qt_widget_overrides.inc"
+
+#include <array>
+#include <cstring>
+#include <limits>
+#include <unordered_map>
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDebug>
@@ -23,12 +31,16 @@
 #include <QtCore/QSignalBlocker>
 #include <QtCore/QTimer>
 #include <QtCore/QThread>
+#include <QtCore/QMimeData>
 #include <QtCore/QVariant>
 #include <QtCore/QVersionNumber>
 #include <QtGui/QCloseEvent>
+#include <QtGui/QClipboard>
 #include <QtGui/QCursor>
 #include <QtGui/QExposeEvent>
 #include <QtGui/QFont>
+#include <QtGui/QFontMetricsF>
+#include <QtGui/QGlyphRun>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QBackingStore>
 #include <QtGui/QImage>
@@ -36,7 +48,11 @@
 #include <QtGui/QMouseEvent>
 #include <QtGui/QPaintEvent>
 #include <QtGui/QPainter>
+#include <QtGui/QPainterPath>
 #include <QtGui/QPlatformSurfaceEvent>
+#include <QtGui/QRawFont>
+#include <QtGui/QStyleHints>
+#include <QtGui/QTextLayout>
 #include <QtGui/QWheelEvent>
 #include <QtGui/QWindow>
 #include <private/qbackingstorerhisupport_p.h>
@@ -52,7 +68,9 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSizePolicy>
 #include <QtWidgets/QSlider>
+#include <QtWidgets/QStackedLayout>
 #include <QtWidgets/QWidget>
+#include <QtWidgets/QFileDialog>
 #include <qpa/qplatformbackingstore.h>
 #include <qpa/qplatformgraphicsbuffer.h>
 #include <rhi/qrhi.h>
@@ -92,6 +110,12 @@
 #include <vector>
 
 #include "qt_window_compositor_shaders.inc"
+
+#include "qt_bind_callables_decl.h"
+
+#include "qt_taffy_layout.h"
+
+#include <private/qwidgetlinecontrol_p.h>
 
 namespace qt_solid_spike::qt {
 namespace {
@@ -342,6 +366,20 @@ enum class JustifyContentKind : std::uint8_t {
   FlexEnd = 3,
 };
 
+enum class FlexWrapKind : std::uint8_t {
+  NoWrap = 1,
+  Wrap = 2,
+  WrapReverse = 3,
+};
+
+enum class AlignSelfKind : std::uint8_t {
+  Auto = 1,
+  FlexStart = 2,
+  FlexEnd = 3,
+  Center = 4,
+  Stretch = 5,
+};
+
 enum class FocusPolicyKind : std::uint8_t {
   NoFocus = 1,
   TabFocus = 2,
@@ -350,14 +388,6 @@ enum class FocusPolicyKind : std::uint8_t {
 };
 
 [[noreturn]] void throw_error(const char *message);
-
-QtMethodValue method_unit() {
-  return QtMethodValue{.kind_tag = 0,
-                       .string_value = rust::String(),
-                       .bool_value = false,
-                       .i32_value = 0,
-                       .f64_value = 0.0};
-}
 
 enum class WaitBridgeKind : std::uint8_t {
   None = 0,
@@ -371,78 +401,14 @@ enum class PumpDriverMode : std::uint8_t {
   WaitBridge = 2,
 };
 
-enum class EventPayloadKind : std::uint8_t {
-  Unit = 0,
-  Scalar = 1,
-  Object = 2,
-};
-
-enum class EventValueKind : std::uint8_t {
-  String = 1,
-  Bool = 2,
-  I32 = 3,
-  F64 = 4,
-};
-
-enum class PropPayloadKind : std::uint8_t {
-  String = 1,
-  Bool = 2,
-  I32 = 3,
-  Enum = 4,
-  F64 = 5,
-};
-
-enum class PropLowerKind : std::uint8_t {
-  MetaProperty,
-  Custom,
-};
-
-enum class EventLowerKind : std::uint8_t {
-  QtSignal,
-  Custom,
-};
-
-struct CompiledPropBinding {
-  std::uint16_t prop_id = 0;
-  std::string js_name;
-  PropPayloadKind payload_kind = PropPayloadKind::String;
-  bool non_negative = false;
-  PropLowerKind lower_kind = PropLowerKind::Custom;
-  std::string lower_name;
-  int property_index = -1;
-  bool has_read_lowering = false;
-  PropLowerKind read_lower_kind = PropLowerKind::Custom;
-  std::string read_lower_name;
-  int read_property_index = -1;
-};
-
-struct CompiledEventBinding {
-  std::uint8_t event_index = 0;
-  EventPayloadKind payload_kind = EventPayloadKind::Unit;
-  bool has_scalar_kind = false;
-  EventValueKind scalar_kind = EventValueKind::String;
-  EventLowerKind lower_kind = EventLowerKind::QtSignal;
-  std::string lower_name;
-  struct PayloadField {
-    std::string js_name;
-    EventValueKind kind = EventValueKind::String;
-  };
-  std::vector<PayloadField> payload_fields;
-  int signal_method_index = -1;
-};
-
-struct CompiledWidgetContract {
-  std::uint8_t kind_tag = 0;
-  std::vector<CompiledPropBinding> props;
-  std::vector<CompiledEventBinding> events;
-};
-
 class QtHostState;
 
 int current_runtime_wait_bridge_unix_fd() noexcept;
 void drain_runtime_wait_bridge_notifications() noexcept;
+#if !defined(__APPLE__)
 std::optional<std::uint64_t> current_runtime_wait_bridge_timer_delay_ms()
     noexcept;
+#endif
 
 [[noreturn]] void throw_error(const char *message) {
   throw std::runtime_error(message);
@@ -593,7 +559,13 @@ int qt_runtime_wait_bridge_unix_fd_impl() {
 #endif
 }
 
-std::uint64_t qt_runtime_wait_bridge_windows_handle_impl() { return 0; }
+std::uint64_t qt_runtime_wait_bridge_windows_handle_impl() {
+#if defined(Q_OS_WIN)
+  return qt_solid_spike::qt::window_host_wait_bridge_windows_handle();
+#else
+  return 0;
+#endif
+}
 
 WaitBridgeKind qt_runtime_wait_bridge_kind_impl() {
   if (qt_runtime_wait_bridge_unix_fd_impl() >= 0) {
@@ -613,13 +585,13 @@ bool on_required_qt_host_thread() {
 #endif
 }
 
-QString to_qstring(rust::Str value) {
+QString to_qstring(::rust::Str value) {
   return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
 }
 
-rust::String to_rust_string(const QString &value) {
+::rust::String to_rust_string(const QString &value) {
   const auto utf8 = value.toUtf8();
-  return rust::String(utf8.constData(), static_cast<std::size_t>(utf8.size()));
+  return ::rust::String(utf8.constData(), static_cast<std::size_t>(utf8.size()));
 }
 
 WidgetKind widget_kind_from_tag(std::uint8_t kind_tag) {
@@ -638,45 +610,6 @@ bool widget_kind_is_top_level(WidgetKind kind) {
   throw_error("received unknown widget kind for top-level lookup");
 }
 
-FlexDirectionKind flex_direction_from_tag(std::uint8_t direction_tag) {
-  switch (direction_tag) {
-  case static_cast<std::uint8_t>(FlexDirectionKind::Column):
-    return FlexDirectionKind::Column;
-  case static_cast<std::uint8_t>(FlexDirectionKind::Row):
-    return FlexDirectionKind::Row;
-  default:
-    throw_error("received unknown flex direction tag");
-  }
-}
-
-AlignItemsKind align_items_from_tag(std::uint8_t align_items_tag) {
-  switch (align_items_tag) {
-  case static_cast<std::uint8_t>(AlignItemsKind::FlexStart):
-    return AlignItemsKind::FlexStart;
-  case static_cast<std::uint8_t>(AlignItemsKind::Center):
-    return AlignItemsKind::Center;
-  case static_cast<std::uint8_t>(AlignItemsKind::FlexEnd):
-    return AlignItemsKind::FlexEnd;
-  case static_cast<std::uint8_t>(AlignItemsKind::Stretch):
-    return AlignItemsKind::Stretch;
-  default:
-    throw_error("received unknown align items tag");
-  }
-}
-
-JustifyContentKind justify_content_from_tag(std::uint8_t justify_content_tag) {
-  switch (justify_content_tag) {
-  case static_cast<std::uint8_t>(JustifyContentKind::FlexStart):
-    return JustifyContentKind::FlexStart;
-  case static_cast<std::uint8_t>(JustifyContentKind::Center):
-    return JustifyContentKind::Center;
-  case static_cast<std::uint8_t>(JustifyContentKind::FlexEnd):
-    return JustifyContentKind::FlexEnd;
-  default:
-    throw_error("received unknown justify content tag");
-  }
-}
-
 Qt::FocusPolicy focus_policy_from_tag(std::uint8_t focus_policy_tag) {
   switch (static_cast<FocusPolicyKind>(focus_policy_tag)) {
   case FocusPolicyKind::NoFocus:
@@ -690,73 +623,6 @@ Qt::FocusPolicy focus_policy_from_tag(std::uint8_t focus_policy_tag) {
   }
 
   throw_error("received unknown focus policy tag");
-}
-
-EventPayloadKind event_payload_kind_from_tag(std::uint8_t payload_tag) {
-  switch (payload_tag) {
-  case static_cast<std::uint8_t>(EventPayloadKind::Unit):
-    return EventPayloadKind::Unit;
-  case static_cast<std::uint8_t>(EventPayloadKind::Scalar):
-    return EventPayloadKind::Scalar;
-  case static_cast<std::uint8_t>(EventPayloadKind::Object):
-    return EventPayloadKind::Object;
-  default:
-    throw_error("received unknown event payload tag");
-  }
-}
-
-EventValueKind event_value_kind_from_tag(std::uint8_t payload_tag) {
-  switch (payload_tag) {
-  case static_cast<std::uint8_t>(EventValueKind::String):
-    return EventValueKind::String;
-  case static_cast<std::uint8_t>(EventValueKind::Bool):
-    return EventValueKind::Bool;
-  case static_cast<std::uint8_t>(EventValueKind::I32):
-    return EventValueKind::I32;
-  case static_cast<std::uint8_t>(EventValueKind::F64):
-    return EventValueKind::F64;
-  default:
-    throw_error("received unknown event payload tag");
-  }
-}
-
-PropPayloadKind prop_payload_kind_from_tag(std::uint8_t payload_tag) {
-  switch (payload_tag) {
-  case static_cast<std::uint8_t>(PropPayloadKind::String):
-    return PropPayloadKind::String;
-  case static_cast<std::uint8_t>(PropPayloadKind::Bool):
-    return PropPayloadKind::Bool;
-  case static_cast<std::uint8_t>(PropPayloadKind::I32):
-    return PropPayloadKind::I32;
-  case static_cast<std::uint8_t>(PropPayloadKind::Enum):
-    return PropPayloadKind::Enum;
-  case static_cast<std::uint8_t>(PropPayloadKind::F64):
-    return PropPayloadKind::F64;
-  default:
-    throw_error("received unknown prop payload tag");
-  }
-}
-
-PropLowerKind prop_lower_kind_from_tag(std::uint8_t lower_kind_tag) {
-  switch (lower_kind_tag) {
-  case 1:
-    return PropLowerKind::MetaProperty;
-  case 2:
-    return PropLowerKind::Custom;
-  default:
-    throw_error("received unknown prop lower kind tag");
-  }
-}
-
-EventLowerKind event_lower_kind_from_tag(std::uint8_t lower_kind_tag) {
-  switch (lower_kind_tag) {
-  case 1:
-    return EventLowerKind::QtSignal;
-  case 2:
-    return EventLowerKind::Custom;
-  default:
-    throw_error("received unknown event lower kind tag");
-  }
 }
 
 bool qt_wgpu_timing_enabled() {
@@ -891,8 +757,6 @@ void record_compositor_frame_status(
   maybe_log_qt_wgpu_wake_stats();
 }
 
-#include "qt_widget_kind_values.inc"
-
 #include "debug.cpp"
 
 #include "registry/host.cpp"
@@ -905,7 +769,7 @@ void record_compositor_frame_status(
 
 } // namespace
 
-#include "qt_opaque_dispatch.inc"
+#include "qt_bind_callables.inc"
 
 bool qt_host_started() { return g_host != nullptr && g_host->started(); }
 
@@ -915,10 +779,6 @@ std::uint8_t qt_runtime_wait_bridge_kind_tag() {
 
 std::int32_t qt_runtime_wait_bridge_unix_fd() {
   return qt_runtime_wait_bridge_unix_fd_impl();
-}
-
-std::uint64_t qt_runtime_wait_bridge_windows_handle() {
-  return qt_runtime_wait_bridge_windows_handle_impl();
 }
 
 void start_qt_host(std::uintptr_t uv_loop_ptr) {
@@ -941,6 +801,37 @@ void start_qt_host(std::uintptr_t uv_loop_ptr) {
     g_host = nullptr;
     throw;
   }
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+  QObject::connect(
+      QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
+      QCoreApplication::instance(), [](Qt::ColorScheme scheme) {
+        std::uint8_t tag = 0;
+        switch (scheme) {
+        case Qt::ColorScheme::Light:
+          tag = 1;
+          break;
+        case Qt::ColorScheme::Dark:
+          tag = 2;
+          break;
+        default:
+          break;
+        }
+        qt_solid_spike::qt::qt_system_color_scheme_changed(tag);
+        request_qt_pump();
+      });
+#endif
+
+  // Monitor DPI changes on primary screen.
+  auto *primary_screen = QGuiApplication::primaryScreen();
+  if (primary_screen) {
+    QObject::connect(
+        primary_screen, &QScreen::logicalDotsPerInchChanged,
+        QCoreApplication::instance(), [](qreal dpi) {
+          qt_solid_spike::qt::qt_screen_dpi_changed(dpi);
+          request_qt_pump();
+        });
+  }
 }
 
 void shutdown_qt_host() {
@@ -953,8 +844,6 @@ void shutdown_qt_host() {
   }
 
   g_host->shutdown();
-  delete g_host;
-  g_host = nullptr;
 }
 
 void qt_create_widget(std::uint32_t id, std::uint8_t kind_tag) {
@@ -985,12 +874,13 @@ void qt_remove_child(std::uint32_t parent_id, std::uint32_t child_id) {
   request_qt_pump();
 }
 
-void qt_destroy_widget(std::uint32_t id) {
+void qt_destroy_widget(std::uint32_t id,
+                       rust::Slice<const std::uint32_t> subtree_ids) {
   if (!g_host || !g_host->started()) {
     return;
   }
 
-  g_host->registry().destroy_widget(id);
+  g_host->registry().destroy_widget(id, subtree_ids);
   request_qt_pump();
 }
 
@@ -1033,11 +923,7 @@ void notify_window_compositor_present_complete(std::uint32_t id) {
 
     g_host->registry().notify_window_compositor_frame_complete(id);
   });
-#if defined(Q_OS_MACOS)
-  request_qt_native_wait_once();
-#else
   request_qt_pump();
-#endif
 }
 
 QtWidgetCaptureLayout qt_capture_widget_layout(std::uint32_t id) {
@@ -1048,12 +934,28 @@ QtWidgetCaptureLayout qt_capture_widget_layout(std::uint32_t id) {
   return g_host->registry().capture_widget_layout(id);
 }
 
+void qt_set_window_transient_owner(std::uint32_t window_id, std::uint32_t owner_id) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before setting transient owner");
+  }
+
+  g_host->registry().set_window_transient_owner(window_id, owner_id);
+}
+
 rust::Vec<QtRect> qt_capture_widget_visible_rects(std::uint32_t id) {
   if (!g_host || !g_host->started()) {
     throw_error("call QtApp.start before reading a Qt widget visible region");
   }
 
   return g_host->registry().capture_widget_visible_rects(id);
+}
+
+void qt_set_widget_mouse_transparent(std::uint32_t id, bool transparent) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before changing a Qt widget mouse transparency");
+  }
+
+  g_host->registry().set_widget_mouse_transparent(id, transparent);
 }
 
 void qt_capture_widget_into(std::uint32_t id, std::uint32_t width_px,
@@ -1080,89 +982,6 @@ void qt_capture_widget_region_into(std::uint32_t id, std::uint32_t width_px,
                                                 include_children, rect, bytes);
 }
 
-void qt_apply_string_prop(std::uint32_t id, std::uint16_t prop_id,
-                          std::uint64_t trace_id, rust::Str value) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before applying Qt string props");
-  }
-
-  g_host->registry().apply_string_prop(id, prop_id, trace_id, value);
-  request_qt_pump();
-}
-
-void qt_apply_i32_prop(std::uint32_t id, std::uint16_t prop_id,
-                       std::uint64_t trace_id, std::int32_t value) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before applying Qt i32 props");
-  }
-
-  g_host->registry().apply_i32_prop(id, prop_id, trace_id, value);
-  request_qt_pump();
-}
-
-void qt_apply_f64_prop(std::uint32_t id, std::uint16_t prop_id,
-                       std::uint64_t trace_id, double value) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before applying Qt f64 props");
-  }
-
-  g_host->registry().apply_f64_prop(id, prop_id, trace_id, value);
-  request_qt_pump();
-}
-
-void qt_apply_bool_prop(std::uint32_t id, std::uint16_t prop_id,
-                        std::uint64_t trace_id, bool value) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before applying Qt bool props");
-  }
-
-  g_host->registry().apply_bool_prop(id, prop_id, trace_id, value);
-  request_qt_pump();
-}
-
-QtMethodValue qt_call_host_slot(std::uint32_t id, std::uint16_t slot,
-                                const rust::Vec<QtMethodValue> &args) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before calling Qt host methods");
-  }
-
-  const auto value = g_host->registry().call_host_slot(id, slot, args);
-  request_qt_pump();
-  return value;
-}
-
-rust::String qt_read_string_prop(std::uint32_t id, std::uint16_t prop_id) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before reading Qt string props");
-  }
-
-  return g_host->registry().read_string_prop(id, prop_id);
-}
-
-std::int32_t qt_read_i32_prop(std::uint32_t id, std::uint16_t prop_id) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before reading Qt i32 props");
-  }
-
-  return g_host->registry().read_i32_prop(id, prop_id);
-}
-
-double qt_read_f64_prop(std::uint32_t id, std::uint16_t prop_id) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before reading Qt f64 props");
-  }
-
-  return g_host->registry().read_f64_prop(id, prop_id);
-}
-
-bool qt_read_bool_prop(std::uint32_t id, std::uint16_t prop_id) {
-  if (!g_host || !g_host->started()) {
-    throw_error("call QtApp.start before reading Qt bool props");
-  }
-
-  return g_host->registry().read_bool_prop(id, prop_id);
-}
-
 QtRealizedNodeState qt_debug_node_state(std::uint32_t id) {
   if (!g_host || !g_host->started()) {
     throw_error("call QtApp.start before reading a Qt debug snapshot");
@@ -1177,6 +996,30 @@ QtNodeBounds debug_node_bounds(std::uint32_t id) {
   }
 
   return g_host->registry().debug_node_bounds(id);
+}
+
+QtScreenGeometry get_screen_geometry(std::uint32_t id) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before reading screen geometry");
+  }
+
+  return g_host->registry().get_screen_geometry(id);
+}
+
+void focus_widget(std::uint32_t id) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before focusing widget");
+  }
+
+  g_host->registry().focus_widget(id);
+}
+
+QtScreenGeometry get_widget_size_hint(std::uint32_t id) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before reading widget size hint");
+  }
+
+  return g_host->registry().get_widget_size_hint(id);
 }
 
 std::uint32_t debug_node_at_point(std::int32_t screen_x,
@@ -1251,13 +1094,934 @@ void schedule_debug_event(std::uint32_t delay_ms, rust::Str name) {
   auto *context = QCoreApplication::instance();
   QTimer::singleShot(static_cast<int>(delay_ms), context,
                      [event_name = std::move(event_name)]() {
-                       qt_solid_spike::qt::emit_debug_event(
+                       ::qt_solid_spike::qt::emit_debug_event(
                            rust::Str(event_name));
                      });
   request_qt_pump();
 }
 
+// ---------------------------------------------------------------------------
+// Clipboard
+// ---------------------------------------------------------------------------
+
+rust::String qt_clipboard_get_text() {
+  auto *clipboard = QGuiApplication::clipboard();
+  const QByteArray utf8 = clipboard->text().toUtf8();
+  return rust::String(utf8.constData(), utf8.size());
+}
+
+void qt_clipboard_set_text(rust::Str text) {
+  auto *clipboard = QGuiApplication::clipboard();
+  clipboard->setText(QString::fromUtf8(text.data(), static_cast<int>(text.size())));
+}
+
+bool qt_clipboard_has_text() {
+  auto *clipboard = QGuiApplication::clipboard();
+  const auto *mime = clipboard->mimeData();
+  return mime != nullptr && mime->hasText();
+}
+
+rust::Vec<rust::String> qt_clipboard_formats() {
+  auto *clipboard = QGuiApplication::clipboard();
+  const auto *mime = clipboard->mimeData();
+  rust::Vec<rust::String> result;
+  if (mime == nullptr) {
+    return result;
+  }
+  for (const auto &fmt : mime->formats()) {
+    const QByteArray utf8 = fmt.toUtf8();
+    result.push_back(rust::String(utf8.constData(), utf8.size()));
+  }
+  return result;
+}
+
+rust::Vec<std::uint8_t> qt_clipboard_get(rust::Str mime) {
+  auto *clipboard = QGuiApplication::clipboard();
+  const auto *data = clipboard->mimeData();
+  rust::Vec<std::uint8_t> result;
+  if (data == nullptr) {
+    return result;
+  }
+  const QString qmime = QString::fromUtf8(mime.data(), static_cast<int>(mime.size()));
+  const QByteArray bytes = data->data(qmime);
+  result.reserve(bytes.size());
+  for (int i = 0; i < bytes.size(); ++i) {
+    result.push_back(static_cast<std::uint8_t>(bytes[i]));
+  }
+  return result;
+}
+
+void qt_clipboard_clear() {
+  QGuiApplication::clipboard()->clear();
+}
+
+void qt_clipboard_set(rust::Vec<QtClipboardEntry> entries) {
+  auto *mime_data = new QMimeData();
+  for (const auto &entry : entries) {
+    const QString qmime = QString::fromUtf8(entry.mime.data(), static_cast<int>(entry.mime.size()));
+    const QByteArray bytes(reinterpret_cast<const char *>(entry.data.data()),
+                           static_cast<int>(entry.data.size()));
+    mime_data->setData(qmime, bytes);
+  }
+  QGuiApplication::clipboard()->setMimeData(mime_data);
+}
+
 std::uint64_t trace_now_ns() { return uv_hrtime(); }
+
+// ---------------------------------------------------------------------------
+// Color glyph rasterization — rasterize color glyphs via alphaMapForGlyph
+// ---------------------------------------------------------------------------
+
+struct RasterizedGlyphInfo {
+    double x;
+    double y;
+    std::uint32_t width;
+    std::uint32_t height;
+    double bearing_x;
+    double bearing_y;
+    double scale_factor;
+    std::vector<std::uint8_t> pixels; // RGBA8 premultiplied
+    int run_index;
+};
+
+struct GlyphCollectionResult {
+    QPainterPath outline_path;
+    std::vector<RasterizedGlyphInfo> rasterized_glyphs;
+};
+
+static RasterizedGlyphInfo rasterize_color_glyph(
+    const QRawFont& raw_font,
+    quint32 glyph_id,
+    QPointF position,
+    int run_index)
+{
+    QRectF bbox = raw_font.boundingRect(glyph_id);
+    if (bbox.isEmpty()) {
+        return {position.x(), position.y(), 0, 0, 0.0, 0.0, 1.0, {}, run_index};
+    }
+
+    // Scale up for HiDPI so the rasterized bitmap matches device pixels.
+    double dpr = 1.0;
+    if (auto* screen = QGuiApplication::primaryScreen()) {
+        dpr = screen->devicePixelRatio();
+    }
+    QTransform scale_transform;
+    scale_transform.scale(dpr, dpr);
+
+    QImage img = raw_font.alphaMapForGlyph(glyph_id, QRawFont::PixelAntialiasing, scale_transform);
+    if (img.isNull() || img.width() <= 0 || img.height() <= 0) {
+        return {position.x(), position.y(), 0, 0, 0.0, 0.0, dpr, {}, run_index};
+    }
+
+    // Convert to RGBA8 premultiplied for vello/wgpu.
+    img = img.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+
+    std::uint32_t w = static_cast<std::uint32_t>(img.width());
+    std::uint32_t h = static_cast<std::uint32_t>(img.height());
+    std::vector<std::uint8_t> pixels(w * h * 4);
+    for (std::uint32_t row = 0; row < h; ++row) {
+        const uchar* src = img.constScanLine(row);
+        std::memcpy(pixels.data() + row * w * 4, src, w * 4);
+    }
+
+    // Bearing is in font units (at pixelSize), bitmap is at dpr scale.
+    // Report pixel dimensions at device scale; Rust side will place using
+    // bearing + (w/dpr, h/dpr) as logical size.
+    return {
+        position.x(),
+        position.y(),
+        w, h,
+        bbox.x(),
+        bbox.y(),
+        dpr,
+        std::move(pixels),
+        run_index,
+    };
+}
+
+// Collect glyphs from a single-style layout.
+// Outlines go to path; color glyphs (empty pathForGlyph) are rasterized.
+static GlyphCollectionResult collect_glyphs_with_color_fallback(const QTextLayout& layout) {
+    GlyphCollectionResult result;
+    const auto glyph_runs = layout.glyphRuns();
+    for (const QGlyphRun& run : glyph_runs) {
+        QRawFont raw_font = run.rawFont();
+        const auto indexes = run.glyphIndexes();
+        const auto positions = run.positions();
+
+        for (int i = 0; i < indexes.size(); ++i) {
+            QPainterPath glyph_path = raw_font.pathForGlyph(indexes[i]);
+            if (!glyph_path.isEmpty()) {
+                glyph_path.translate(positions[i]);
+                result.outline_path.addPath(glyph_path);
+            } else {
+                auto rasterized = rasterize_color_glyph(raw_font, indexes[i], positions[i], 0);
+                if (rasterized.width > 0 && rasterized.height > 0) {
+                    result.rasterized_glyphs.push_back(std::move(rasterized));
+                }
+            }
+        }
+    }
+    return result;
+}
+
+// Convert rasterized glyphs into CXX wire types.
+static void fill_rasterized_glyph_wire(
+    const GlyphCollectionResult& gr,
+    rust::Vec<QtRasterizedGlyph>& out_glyphs)
+{
+    for (const auto& rg : gr.rasterized_glyphs) {
+        QtRasterizedGlyph wire;
+        wire.x = rg.x;
+        wire.y = rg.y;
+        wire.width = rg.width;
+        wire.height = rg.height;
+        wire.bearing_x = rg.bearing_x;
+        wire.bearing_y = rg.bearing_y;
+        wire.scale_factor = rg.scale_factor;
+        wire.run_index = static_cast<std::uint32_t>(rg.run_index);
+        wire.pixels.reserve(rg.pixels.size());
+        for (auto byte : rg.pixels) {
+            wire.pixels.push_back(byte);
+        }
+        out_glyphs.push_back(std::move(wire));
+    }
+}
+
+// Helper: construct QFont from common parameters.
+QFont make_qfont(rust::Str font_family, double font_size, std::int32_t font_weight, bool font_italic) {
+  QFont font;
+  if (font_family.size() > 0) {
+    font = QFont(QString::fromUtf8(font_family.data(), static_cast<int>(font_family.size())));
+  } else {
+    font = QGuiApplication::font();
+  }
+  font.setStyleStrategy(QFont::PreferOutline);
+  font.setPointSizeF(font_size);
+  if (font_weight > 0) {
+    font.setWeight(static_cast<QFont::Weight>(font_weight));
+  }
+  if (font_italic) {
+    font.setItalic(true);
+  }
+  return font;
+}
+
+// Helper: collect all glyphs from a QTextLayout into a single QPainterPath.
+QPainterPath collect_glyph_path(const QTextLayout &layout) {
+  QPainterPath combined_path;
+  const auto glyph_runs = layout.glyphRuns();
+  for (const QGlyphRun &run : glyph_runs) {
+    QRawFont raw_font = run.rawFont();
+    const auto indexes = run.glyphIndexes();
+    const auto positions = run.positions();
+    for (int i = 0; i < indexes.size(); ++i) {
+      QPainterPath glyph_path = raw_font.pathForGlyph(indexes[i]);
+      if (!glyph_path.isEmpty()) {
+        glyph_path.translate(positions[i]);
+        combined_path.addPath(glyph_path);
+      }
+    }
+  }
+  return combined_path;
+}
+
+// Helper: serialize a QPainterPath into Vec<QtShapedPathEl>.
+rust::Vec<QtShapedPathEl> serialize_painter_path(const QPainterPath &path) {
+  rust::Vec<QtShapedPathEl> elements;
+  const int count = path.elementCount();
+  for (int i = 0; i < count; /* advanced in loop */) {
+    const QPainterPath::Element &el = path.elementAt(i);
+    switch (el.type) {
+    case QPainterPath::MoveToElement:
+      elements.push_back(QtShapedPathEl{0, el.x, el.y, 0, 0, 0, 0});
+      ++i;
+      break;
+    case QPainterPath::LineToElement:
+      elements.push_back(QtShapedPathEl{1, el.x, el.y, 0, 0, 0, 0});
+      ++i;
+      break;
+    case QPainterPath::CurveToElement: {
+      double c1x = el.x, c1y = el.y;
+      double c2x = 0, c2y = 0, ex = 0, ey = 0;
+      if (i + 1 < count) {
+        const auto &d1 = path.elementAt(i + 1);
+        c2x = d1.x;
+        c2y = d1.y;
+      }
+      if (i + 2 < count) {
+        const auto &d2 = path.elementAt(i + 2);
+        ex = d2.x;
+        ey = d2.y;
+      }
+      elements.push_back(QtShapedPathEl{2, c1x, c1y, c2x, c2y, ex, ey});
+      i += 3;
+      break;
+    }
+    default:
+      ++i;
+      break;
+    }
+  }
+  return elements;
+}
+
+QtShapedTextResult qt_shape_text_to_path(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic, double max_width) {
+  QFont font = make_qfont(font_family, font_size, font_weight, font_italic);
+  QString qtext = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+
+  QTextLayout layout(qtext, font);
+  layout.beginLayout();
+  double y_offset = 0.0;
+  while (true) {
+    QTextLine line = layout.createLine();
+    if (!line.isValid()) break;
+    if (max_width > 0.0) {
+      line.setLineWidth(max_width);
+    } else {
+      line.setLineWidth(std::numeric_limits<qreal>::max());
+    }
+    line.setPosition(QPointF(0.0, y_offset));
+    y_offset += line.height();
+  }
+  layout.endLayout();
+
+  auto glyph_result = collect_glyphs_with_color_fallback(layout);
+  rust::Vec<QtShapedPathEl> elements = serialize_painter_path(glyph_result.outline_path);
+
+  rust::Vec<QtRasterizedGlyph> rasterized_glyphs;
+  fill_rasterized_glyph_wire(glyph_result, rasterized_glyphs);
+
+  QFontMetricsF metrics(font);
+  rust::Vec<QtShapedTextLine> lines;
+  double total_width = 0.0;
+  double total_height = 0.0;
+  for (int i = 0; i < layout.lineCount(); ++i) {
+    QTextLine ln = layout.lineAt(i);
+    QtShapedTextLine line_info;
+    line_info.y_offset = ln.position().y();
+    line_info.width = ln.naturalTextWidth();
+    line_info.height = ln.height();
+    line_info.ascent = ln.ascent();
+    line_info.descent = ln.descent();
+    lines.push_back(line_info);
+    if (ln.naturalTextWidth() > total_width) total_width = ln.naturalTextWidth();
+    total_height = ln.position().y() + ln.height();
+  }
+  if (lines.empty()) {
+    total_width = 0.0;
+    total_height = metrics.ascent() + metrics.descent();
+  }
+
+  return QtShapedTextResult{
+      std::move(elements),
+      std::move(lines),
+      metrics.ascent(),
+      metrics.descent(),
+      total_width,
+      total_height,
+      std::move(rasterized_glyphs),
+  };
+}
+
+QtShapedTextWithCursorsResult qt_shape_text_with_cursors(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic) {
+  QFont font = make_qfont(font_family, font_size, font_weight, font_italic);
+  QString qtext = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+
+  QTextLayout layout(qtext, font);
+  layout.beginLayout();
+  QTextLine line = layout.createLine();
+  if (line.isValid()) {
+    line.setLineWidth(std::numeric_limits<qreal>::max());
+  }
+  layout.endLayout();
+
+  QPainterPath combined_path = collect_glyph_path(layout);
+  rust::Vec<QtShapedPathEl> elements = serialize_painter_path(combined_path);
+
+  QFontMetricsF metrics(font);
+  double total_width =
+      line.isValid() ? line.naturalTextWidth() : metrics.horizontalAdvance(qtext);
+
+  rust::Vec<double> cursor_x_positions;
+  const int text_len = qtext.length();
+  if (line.isValid()) {
+    for (int pos = 0; pos <= text_len; ++pos) {
+      cursor_x_positions.push_back(line.cursorToX(pos));
+    }
+  } else {
+    for (int pos = 0; pos <= text_len; ++pos) {
+      cursor_x_positions.push_back(
+          text_len > 0 ? total_width * pos / text_len : 0.0);
+    }
+  }
+
+  return QtShapedTextWithCursorsResult{
+      std::move(elements),
+      std::move(cursor_x_positions),
+      metrics.ascent(),
+      metrics.descent(),
+      total_width,
+  };
+}
+
+QtStyledShapedTextResult qt_shape_styled_text_to_path(
+    rust::Str text,
+    double default_font_size,
+    rust::Str default_font_family,
+    double max_width,
+    rust::Slice<const QtTextStyleRun> style_runs) {
+
+  QFont default_font = make_qfont(default_font_family, default_font_size, 0, false);
+  QString qtext = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+
+  QTextLayout layout(qtext, default_font);
+
+  // Apply per-run formatting via QTextLayout::FormatRange.
+  QList<QTextLayout::FormatRange> formats;
+  for (std::size_t idx = 0; idx < style_runs.size(); ++idx) {
+    const auto &run = style_runs[idx];
+    QTextLayout::FormatRange range;
+    range.start = run.start;
+    range.length = run.length;
+
+    rust::Str run_family = run.font_family.size() > 0
+        ? rust::Str(run.font_family)
+        : default_font_family;
+    double run_size = run.font_size > 0 ? run.font_size : default_font_size;
+    QFont run_font = make_qfont(run_family, run_size, run.font_weight, run.font_italic);
+    range.format.setFont(run_font);
+    formats.append(range);
+  }
+  layout.setFormats(formats);
+
+  layout.beginLayout();
+  double y_offset = 0.0;
+  while (true) {
+    QTextLine line = layout.createLine();
+    if (!line.isValid()) break;
+    if (max_width > 0.0) {
+      line.setLineWidth(max_width);
+    } else {
+      line.setLineWidth(std::numeric_limits<qreal>::max());
+    }
+    line.setPosition(QPointF(0.0, y_offset));
+    y_offset += line.height();
+  }
+  layout.endLayout();
+
+  // Build per-run glyph paths by attributing glyphs via string indexes.
+  // Color glyphs (empty pathForGlyph) are collected separately.
+  const int num_runs = static_cast<int>(style_runs.size());
+  std::vector<QPainterPath> run_paths(num_runs);
+  GlyphCollectionResult color_result;
+
+  auto resolve_target_run = [&](int char_idx) -> int {
+    for (int r = 0; r < num_runs; ++r) {
+      if (char_idx >= style_runs[r].start &&
+          char_idx < style_runs[r].start + style_runs[r].length) {
+        return r;
+      }
+    }
+    return num_runs > 0 ? 0 : -1;
+  };
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+  const auto glyph_runs = layout.glyphRuns(-1, -1,
+      QTextLayout::GlyphRunRetrievalFlag::RetrieveGlyphIndexes
+      | QTextLayout::GlyphRunRetrievalFlag::RetrieveGlyphPositions
+      | QTextLayout::GlyphRunRetrievalFlag::RetrieveStringIndexes);
+#else
+  const auto glyph_runs = layout.glyphRuns();
+#endif
+  for (const QGlyphRun &gr : glyph_runs) {
+    QRawFont raw_font = gr.rawFont();
+    const auto indexes = gr.glyphIndexes();
+    const auto positions = gr.positions();
+    const auto string_indexes = gr.stringIndexes();
+
+    // If string indexes unavailable, fall back to combined single-run path.
+    if (string_indexes.size() != indexes.size()) {
+      for (int gi = 0; gi < indexes.size(); ++gi) {
+        QPainterPath gp = raw_font.pathForGlyph(indexes[gi]);
+        if (!gp.isEmpty()) {
+          gp.translate(positions[gi]);
+          if (num_runs > 0) run_paths[0].addPath(gp);
+        } else {
+          auto rasterized = rasterize_color_glyph(raw_font, indexes[gi], positions[gi], 0);
+          if (rasterized.width > 0 && rasterized.height > 0) {
+            color_result.rasterized_glyphs.push_back(std::move(rasterized));
+          }
+        }
+      }
+      continue;
+    }
+
+    for (int i = 0; i < indexes.size(); ++i) {
+      int char_idx = (i < string_indexes.size()) ? string_indexes[i] : -1;
+      int target_run = resolve_target_run(char_idx);
+
+      QPainterPath glyph_path = raw_font.pathForGlyph(indexes[i]);
+      if (!glyph_path.isEmpty()) {
+        glyph_path.translate(positions[i]);
+        if (target_run >= 0) {
+          run_paths[target_run].addPath(glyph_path);
+        }
+      } else {
+        // Color glyph — rasterize with run attribution.
+        int run_idx = target_run >= 0 ? target_run : 0;
+        auto rasterized = rasterize_color_glyph(raw_font, indexes[i], positions[i], run_idx);
+        if (rasterized.width > 0 && rasterized.height > 0) {
+          color_result.rasterized_glyphs.push_back(std::move(rasterized));
+        }
+      }
+    }
+  }
+
+  // Serialize per-run paths.
+  rust::Vec<QtStyledShapedRun> result_runs;
+  for (int r = 0; r < num_runs; ++r) {
+    QtStyledShapedRun shaped_run;
+    shaped_run.elements = serialize_painter_path(run_paths[r]);
+    result_runs.push_back(std::move(shaped_run));
+  }
+
+  // Convert rasterized glyphs to wire format.
+  rust::Vec<QtRasterizedGlyph> rasterized_glyphs;
+  fill_rasterized_glyph_wire(color_result, rasterized_glyphs);
+
+  // Line metrics.
+  QFontMetricsF metrics(default_font);
+  rust::Vec<QtShapedTextLine> lines;
+  double total_width = 0.0;
+  double total_height = 0.0;
+  for (int i = 0; i < layout.lineCount(); ++i) {
+    QTextLine ln = layout.lineAt(i);
+    QtShapedTextLine line_info;
+    line_info.y_offset = ln.position().y();
+    line_info.width = ln.naturalTextWidth();
+    line_info.height = ln.height();
+    line_info.ascent = ln.ascent();
+    line_info.descent = ln.descent();
+    lines.push_back(line_info);
+    if (ln.naturalTextWidth() > total_width) total_width = ln.naturalTextWidth();
+    total_height = ln.position().y() + ln.height();
+  }
+  if (lines.empty()) {
+    total_width = 0.0;
+    total_height = metrics.ascent() + metrics.descent();
+  }
+
+  // Combined path for measurement.
+  QPainterPath combined;
+  for (int r = 0; r < num_runs; ++r) {
+    combined.addPath(run_paths[r]);
+  }
+  rust::Vec<QtShapedPathEl> combined_elements = serialize_painter_path(combined);
+
+  return QtStyledShapedTextResult{
+      std::move(combined_elements),
+      std::move(result_runs),
+      std::move(lines),
+      metrics.ascent(),
+      metrics.descent(),
+      total_width,
+      total_height,
+      std::move(rasterized_glyphs),
+  };
+}
+
+std::uint8_t qt_system_color_scheme() {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+  auto scheme = QGuiApplication::styleHints()->colorScheme();
+  switch (scheme) {
+  case Qt::ColorScheme::Light:
+    return 1;
+  case Qt::ColorScheme::Dark:
+    return 2;
+  default:
+    return 0;
+  }
+#else
+  const QColor bg = QGuiApplication::palette().color(QPalette::Window);
+  return bg.lightness() < 128 ? 2 : 1;
+#endif
+}
+
+static HostWindowWidget *require_host_window(std::uint32_t id) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before modifying window properties");
+  }
+  auto *widget = g_host->registry().widget_ptr(id);
+  auto *host = dynamic_cast<HostWindowWidget *>(widget);
+  if (!host) {
+    throw_error("target widget is not a window");
+  }
+  return host;
+}
+
+void qt_window_set_title(std::uint32_t id, rust::Str value) {
+  auto *host = require_host_window(id);
+  host->setWindowTitle(QString::fromUtf8(value.data(), static_cast<int>(value.size())));
+  request_qt_pump();
+}
+
+void qt_window_set_width(std::uint32_t id, std::int32_t value) {
+  auto *host = require_host_window(id);
+  host->resize(value, host->height());
+  request_qt_pump();
+}
+
+void qt_window_set_height(std::uint32_t id, std::int32_t value) {
+  auto *host = require_host_window(id);
+  host->resize(host->width(), value);
+  request_qt_pump();
+}
+
+void qt_window_set_min_width(std::uint32_t id, std::int32_t value) {
+  auto *host = require_host_window(id);
+  host->setMinimumWidth(value);
+  request_qt_pump();
+}
+
+void qt_window_set_min_height(std::uint32_t id, std::int32_t value) {
+  auto *host = require_host_window(id);
+  host->setMinimumHeight(value);
+  request_qt_pump();
+}
+
+void qt_window_set_visible(std::uint32_t id, bool value) {
+  auto *host = require_host_window(id);
+  host->setVisible(value);
+  request_qt_pump();
+}
+
+void qt_window_set_enabled(std::uint32_t id, bool value) {
+  auto *host = require_host_window(id);
+  host->setEnabled(value);
+  request_qt_pump();
+}
+
+void qt_window_set_frameless(std::uint32_t id, bool value) {
+  auto *host = require_host_window(id);
+  host->set_frameless(value);
+  request_qt_pump();
+}
+
+void qt_window_set_transparent_background(std::uint32_t id, bool value) {
+  auto *host = require_host_window(id);
+  host->set_transparent_background(value);
+  request_qt_pump();
+}
+
+void qt_window_set_always_on_top(std::uint32_t id, bool value) {
+  auto *host = require_host_window(id);
+  host->set_always_on_top(value);
+  request_qt_pump();
+}
+
+void qt_window_set_window_kind(std::uint32_t id, std::uint8_t value) {
+  auto *host = require_host_window(id);
+  host->set_window_kind(value);
+  request_qt_pump();
+}
+
+void qt_window_set_screen_position(std::uint32_t id, std::int32_t x,
+                                   std::int32_t y) {
+  auto *host = require_host_window(id);
+  host->set_screen_position(x, y);
+  request_qt_pump();
+}
+
+void qt_window_wire_close_requested(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  host->add_close_requested_handler([id]() {
+    qt_solid_spike::qt::qt_window_event_close_requested(id);
+  });
+}
+
+void qt_window_wire_hover_enter(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  host->setAttribute(Qt::WA_Hover, true);
+  new WidgetEventForwarder(host, QEvent::HoverEnter, [id]() {
+    qt_solid_spike::qt::qt_window_event_hover_enter(id);
+  });
+}
+
+void qt_window_wire_hover_leave(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  host->setAttribute(Qt::WA_Hover, true);
+  new WidgetEventForwarder(host, QEvent::HoverLeave, [id]() {
+    qt_solid_spike::qt::qt_window_event_hover_leave(id);
+  });
+}
+
+void qt_canvas_set_cursor(std::uint32_t node_id, std::uint8_t cursor_tag) {
+  auto *host = require_host_window(node_id);
+  Qt::CursorShape shape;
+  switch (cursor_tag) {
+  case 1: shape = Qt::PointingHandCursor; break;
+  case 2: shape = Qt::IBeamCursor; break;
+  case 3: shape = Qt::CrossCursor; break;
+  case 4: shape = Qt::SizeAllCursor; break;
+  case 5: shape = Qt::WaitCursor; break;
+  case 6: shape = Qt::ForbiddenCursor; break;
+  case 7: shape = Qt::OpenHandCursor; break;
+  case 8: shape = Qt::ClosedHandCursor; break;
+  default: shape = Qt::ArrowCursor; break;
+  }
+  host->setCursor(shape);
+}
+
+void qt_text_edit_activate(std::uint32_t window_id, std::uint32_t canvas_node_id,
+                           std::uint32_t fragment_id, rust::Str text,
+                           double font_size, std::int32_t cursor_pos,
+                           std::int32_t sel_start, std::int32_t sel_end) {
+  auto *host = require_host_window(window_id);
+  QString qtext = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+  host->text_edit_session().activate(canvas_node_id, fragment_id, qtext,
+                                    font_size, cursor_pos, sel_start, sel_end);
+  host->setAttribute(Qt::WA_InputMethodEnabled, true);
+  QGuiApplication::inputMethod()->update(Qt::ImEnabled);
+}
+
+void qt_text_edit_deactivate(std::uint32_t window_id) {
+  auto *host = require_host_window(window_id);
+  host->text_edit_session().deactivate();
+  host->setAttribute(Qt::WA_InputMethodEnabled, false);
+  QGuiApplication::inputMethod()->update(Qt::ImEnabled);
+}
+
+void qt_text_edit_click_to_cursor(std::uint32_t window_id, double local_x) {
+  auto *host = require_host_window(window_id);
+  host->text_edit_session().click_to_cursor(local_x);
+}
+
+void qt_text_edit_drag_to_cursor(std::uint32_t window_id, double local_x) {
+  auto *host = require_host_window(window_id);
+  host->text_edit_session().drag_to_cursor(local_x);
+}
+
+QtTextMeasurement qt_measure_text(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic, double max_width) {
+  QFont font;
+  if (font_family.size() > 0) {
+    font = QFont(QString::fromUtf8(font_family.data(), static_cast<int>(font_family.size())));
+  } else {
+    font = QGuiApplication::font();
+  }
+  font.setStyleStrategy(QFont::PreferOutline);
+  font.setPointSizeF(font_size);
+  if (font_weight > 0) {
+    font.setWeight(static_cast<QFont::Weight>(font_weight));
+  }
+  if (font_italic) {
+    font.setItalic(true);
+  }
+
+  QString qtext = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+
+  QTextLayout layout(qtext, font);
+  layout.beginLayout();
+  double y_offset = 0.0;
+  while (true) {
+    QTextLine line = layout.createLine();
+    if (!line.isValid()) break;
+    if (max_width > 0.0) {
+      line.setLineWidth(max_width);
+    } else {
+      line.setLineWidth(std::numeric_limits<qreal>::max());
+    }
+    line.setPosition(QPointF(0.0, y_offset));
+    y_offset += line.height();
+  }
+  layout.endLayout();
+
+  QFontMetricsF metrics(font);
+  double total_width = 0.0;
+  double total_height = 0.0;
+  std::int32_t line_count = layout.lineCount();
+
+  for (int i = 0; i < line_count; ++i) {
+    QTextLine ln = layout.lineAt(i);
+    double w = ln.naturalTextWidth();
+    if (w > total_width) total_width = w;
+    total_height = ln.position().y() + ln.height();
+  }
+
+  if (line_count == 0) {
+    total_height = metrics.ascent() + metrics.descent();
+  }
+
+  return QtTextMeasurement{
+      total_width,
+      total_height,
+      metrics.ascent(),
+      metrics.descent(),
+      line_count,
+  };
+}
+
+void qt_window_minimize(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  host->showMinimized();
+  request_qt_pump();
+}
+
+void qt_window_maximize(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  host->showMaximized();
+  request_qt_pump();
+}
+
+void qt_window_restore(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  host->showNormal();
+  request_qt_pump();
+}
+
+void qt_window_fullscreen(std::uint32_t id, bool enter) {
+  auto *host = require_host_window(id);
+  if (enter) {
+    host->showFullScreen();
+  } else {
+    host->showNormal();
+  }
+  request_qt_pump();
+}
+
+bool qt_window_is_minimized(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  return host->isMinimized();
+}
+
+bool qt_window_is_maximized(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  return host->isMaximized();
+}
+
+bool qt_window_is_fullscreen(std::uint32_t id) {
+  auto *host = require_host_window(id);
+  return host->isFullScreen();
+}
+
+QtScreenDpiInfo qt_screen_dpi_info(std::uint32_t id) {
+  if (!g_host || !g_host->started()) {
+    throw_error("call QtApp.start before reading screen DPI");
+  }
+
+  auto *widget = g_host->registry().widget_ptr(id);
+  if (!widget) {
+    throw_error("invalid widget id for screen DPI query");
+  }
+
+  auto *screen = widget->screen();
+  if (!screen) {
+    // Fallback to primary screen.
+    screen = QGuiApplication::primaryScreen();
+  }
+  if (!screen) {
+    return QtScreenDpiInfo{96.0, 96.0, 1.0, {0, 0, 0, 0}};
+  }
+
+  auto avail = screen->availableGeometry();
+  return QtScreenDpiInfo{
+      screen->logicalDotsPerInchX(),
+      screen->logicalDotsPerInchY(),
+      screen->devicePixelRatio(),
+      QtScreenGeometry{avail.x(), avail.y(), avail.width(), avail.height()},
+  };
+}
+
+std::atomic<std::uint32_t> next_dialog_request_id{1};
+
+std::uint32_t qt_show_open_file_dialog(std::uint32_t window_id, rust::Str title, rust::Str filter, bool multiple) {
+  std::uint32_t request_id = next_dialog_request_id.fetch_add(1);
+
+  QWidget *parent = nullptr;
+  if (window_id != 0 && g_host && g_host->started()) {
+    parent = g_host->registry().widget_ptr(window_id);
+  }
+
+  QString qtitle = QString::fromUtf8(title.data(), static_cast<int>(title.size()));
+  QString qfilter = QString::fromUtf8(filter.data(), static_cast<int>(filter.size()));
+
+  auto *dialog = new QFileDialog(parent, qtitle, QString(), qfilter);
+  dialog->setFileMode(multiple ? QFileDialog::ExistingFiles : QFileDialog::ExistingFile);
+  dialog->setOption(QFileDialog::DontUseNativeDialog, false);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+  QObject::connect(dialog, &QFileDialog::finished, dialog, [request_id, dialog](int result) {
+    rust::Vec<rust::String> paths;
+    if (result == QDialog::Accepted) {
+      const auto selected = dialog->selectedFiles();
+      for (const auto &f : selected) {
+        paths.push_back(rust::String(f.toUtf8().constData(), f.toUtf8().size()));
+      }
+    }
+    qt_solid_spike::qt::qt_file_dialog_result(request_id, paths);
+    request_qt_pump();
+  });
+
+  dialog->open();
+  return request_id;
+}
+
+std::uint32_t qt_show_save_file_dialog(std::uint32_t window_id, rust::Str title, rust::Str filter, rust::Str default_name) {
+  std::uint32_t request_id = next_dialog_request_id.fetch_add(1);
+
+  QWidget *parent = nullptr;
+  if (window_id != 0 && g_host && g_host->started()) {
+    parent = g_host->registry().widget_ptr(window_id);
+  }
+
+  QString qtitle = QString::fromUtf8(title.data(), static_cast<int>(title.size()));
+  QString qfilter = QString::fromUtf8(filter.data(), static_cast<int>(filter.size()));
+  QString qdefault = QString::fromUtf8(default_name.data(), static_cast<int>(default_name.size()));
+
+  auto *dialog = new QFileDialog(parent, qtitle, qdefault, qfilter);
+  dialog->setAcceptMode(QFileDialog::AcceptSave);
+  dialog->setFileMode(QFileDialog::AnyFile);
+  dialog->setOption(QFileDialog::DontUseNativeDialog, false);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+  QObject::connect(dialog, &QFileDialog::finished, dialog, [request_id, dialog](int result) {
+    rust::Vec<rust::String> paths;
+    if (result == QDialog::Accepted) {
+      const auto selected = dialog->selectedFiles();
+      for (const auto &f : selected) {
+        paths.push_back(rust::String(f.toUtf8().constData(), f.toUtf8().size()));
+      }
+    }
+    qt_solid_spike::qt::qt_file_dialog_result(request_id, paths);
+    request_qt_pump();
+  });
+
+  dialog->open();
+  return request_id;
+}
+
+#if !defined(Q_OS_MACOS)
+void post_frame_signal_for_node(std::uint32_t node_id) {
+  auto *context = QCoreApplication::instance();
+  if (context == nullptr) {
+    return;
+  }
+  QMetaObject::invokeMethod(
+      context,
+      [node_id]() {
+        if (!g_host || !g_host->started()) {
+          return;
+        }
+        auto *widget = g_host->registry().widget_ptr(node_id);
+        auto *host = dynamic_cast<HostWindowWidget *>(widget);
+        if (host != nullptr) {
+          host->drive_compositor_frame_from_signal();
+        }
+      },
+      Qt::QueuedConnection);
+  request_qt_pump();
+}
+#endif
 
 } // namespace qt_solid_spike::qt
 
@@ -1265,3 +2029,9 @@ extern "C" void qt_solid_notify_window_compositor_present_complete(
     std::uint32_t id) {
   qt_solid_spike::qt::notify_window_compositor_present_complete(id);
 }
+
+#if !defined(Q_OS_MACOS)
+extern "C" void qt_solid_post_frame_signal_for_node(std::uint32_t node_id) {
+  qt_solid_spike::qt::post_frame_signal_for_node(node_id);
+}
+#endif

@@ -11,6 +11,8 @@ mod windows;
 use std::{error::Error, fmt};
 
 pub use host::{BackendKind, HostCapabilities, HostIntegration, WaitBridgeKind};
+#[cfg(target_os = "macos")]
+pub use macos::NativeFrameNotifier;
 
 #[cfg(target_os = "linux")]
 type Backend = linux::LinuxWindowHost;
@@ -87,12 +89,17 @@ impl WindowHost {
         self.inner.request_wake();
     }
 
-    pub fn request_native_wait_once(&self) {
-        self.inner.request_native_wait_once();
+
+    #[cfg(target_os = "macos")]
+    pub fn native_frame_notifier(&self) -> NativeFrameNotifier {
+        self.inner.native_frame_notifier()
     }
 
-    pub fn notify_native_frame_source(&self) {
-        self.inner.notify_native_frame_source();
+    /// Return the raw Win32 event HANDLE for the wait bridge.
+    /// Only meaningful when `wait_bridge_kind` is `WindowsHandle`.
+    #[cfg(target_os = "windows")]
+    pub fn bridge_event_handle(&self) -> u64 {
+        self.inner.bridge_event_handle()
     }
 }
 

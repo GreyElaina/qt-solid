@@ -5,7 +5,6 @@ export interface CreateQtSolidVitePluginOptions {
   compilerRuntimeModuleName?: string
   runtimeEntry?: string
   compilerRuntimeEntry?: string
-  widgetLibraries?: readonly string[]
 }
 
 export declare function createQtSolidVitePlugin(
