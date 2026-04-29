@@ -1,7 +1,6 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 #[path = "build/qt_wgpu_renderer.rs"]
@@ -16,42 +15,6 @@ fn add_include_if_exists(build: &mut cc::Build, path: impl AsRef<Path>) {
     if path.exists() {
         build.include(path);
     }
-}
-
-fn resolve_node_include_dir() -> Option<PathBuf> {
-    if let Ok(node_dir) = env::var("npm_config_nodedir") {
-        let node_dir = PathBuf::from(node_dir);
-        for include_dir in [node_dir.join("include/node"), node_dir.clone()] {
-            if include_dir.exists() {
-                return Some(include_dir);
-            }
-        }
-    }
-
-    if let Ok(include_dir) = env::var("NODE_INCLUDE_DIR") {
-        let include_dir = PathBuf::from(include_dir);
-        if include_dir.exists() {
-            return Some(include_dir);
-        }
-    }
-
-    let output = Command::new("node")
-        .args(["-p", "process.execPath"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let exec_path = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
-    let exec_dir = exec_path.parent()?;
-    let candidates = [
-        exec_dir.join("include/node"),
-        exec_dir.parent()?.join("include/node"),
-    ];
-    candidates
-        .into_iter()
-        .find(|include_dir| include_dir.exists())
 }
 
 fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
@@ -138,9 +101,6 @@ fn main() {
     let qt_wgpu_renderer = qt_wgpu_renderer::spec();
     let qt_taffy_layout = qt_taffy_layout::spec();
 
-    println!("cargo:rerun-if-env-changed=npm_config_nodedir");
-    println!("cargo:rerun-if-env-changed=NODE_INCLUDE_DIR");
-    println!("cargo:rerun-if-env-changed=QSB");
     println!("cargo:rerun-if-changed=build/qt_wgpu_renderer.rs");
     println!("cargo:rerun-if-changed=include/qt/widget_host.h");
     println!("cargo:rerun-if-changed=include/qt/ffi.h");
@@ -186,7 +146,6 @@ fn main() {
     ])
     .expect("failed to detect Qt installation");
 
-    let node_include_dir = resolve_node_include_dir();
     let qt_include_dirs = qt_build.include_paths();
     let qt_private_include_dirs = find_qt_private_include_dirs(&qt_build);
     let qt_gui_rhi_include_dirs = find_qt_gui_rhi_include_dirs(&qt_build);
@@ -222,10 +181,6 @@ fn main() {
 
     // Vendored libuv headers (compile-time only; symbols resolved dynamically at runtime).
     add_include_if_exists(&mut build, "../../../../third_party/libuv-include");
-
-    if let Some(node_include_dir) = node_include_dir {
-        add_include_if_exists(&mut build, node_include_dir);
-    }
 
     for include_dir in qt_include_dirs {
         add_include_if_exists(&mut build, include_dir);
