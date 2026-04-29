@@ -293,6 +293,7 @@ pub(crate) fn render_scene_to_capture(
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 ..Default::default()
             });
