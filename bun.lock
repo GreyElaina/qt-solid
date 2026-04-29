@@ -37,6 +37,18 @@
         "rolldown": "1.0.0-rc.14",
       },
     },
+    "examples/storyboard": {
+      "name": "@qt-solid-spike/example-storyboard",
+      "version": "1.0.0",
+      "dependencies": {
+        "@qt-solid/fluent": "workspace:*",
+        "@qt-solid/solid": "workspace:*",
+        "solid-js": "^1.9.12",
+      },
+      "devDependencies": {
+        "rolldown": "1.0.0-rc.14",
+      },
+    },
     "packages/core": {
       "name": "@qt-solid/core",
       "version": "0.0.0",
@@ -69,6 +81,9 @@
     "packages/solid": {
       "name": "@qt-solid/solid",
       "version": "0.0.0",
+      "bin": {
+        "qt-solid-preview": "./src/preview/cli.ts",
+      },
       "dependencies": {
         "@babel/core": "^7.29.0",
         "@babel/preset-typescript": "^7.28.5",
@@ -377,6 +392,8 @@
 
     "@qt-solid-spike/example-rendering-gallery": ["@qt-solid-spike/example-rendering-gallery@workspace:examples/rendering-gallery"],
 
+    "@qt-solid-spike/example-storyboard": ["@qt-solid-spike/example-storyboard@workspace:examples/storyboard"],
+
     "@qt-solid/core": ["@qt-solid/core@workspace:packages/core"],
 
     "@qt-solid/figma-codegen": ["@qt-solid/figma-codegen@workspace:packages/figma-codegen"],
@@ -653,6 +670,8 @@
 
     "@qt-solid-spike/example-rendering-gallery/rolldown": ["rolldown@1.0.0-rc.14", "", { "dependencies": { "@oxc-project/types": "=0.124.0", "@rolldown/pluginutils": "1.0.0-rc.14" }, "optionalDependencies": { "@rolldown/binding-android-arm64": "1.0.0-rc.14", "@rolldown/binding-darwin-arm64": "1.0.0-rc.14", "@rolldown/binding-darwin-x64": "1.0.0-rc.14", "@rolldown/binding-freebsd-x64": "1.0.0-rc.14", "@rolldown/binding-linux-arm-gnueabihf": "1.0.0-rc.14", "@rolldown/binding-linux-arm64-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-arm64-musl": "1.0.0-rc.14", "@rolldown/binding-linux-ppc64-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-s390x-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-x64-musl": "1.0.0-rc.14", "@rolldown/binding-openharmony-arm64": "1.0.0-rc.14", "@rolldown/binding-wasm32-wasi": "1.0.0-rc.14", "@rolldown/binding-win32-arm64-msvc": "1.0.0-rc.14", "@rolldown/binding-win32-x64-msvc": "1.0.0-rc.14" }, "bin": { "rolldown": "bin/cli.mjs" } }, "sha512-bGQjaQyK9k7ovrbYNWNOHorqO0gYZpip+I3PTi4iDL1nDe1qkOOwYp2BHGnpCw4LVcTjM+rhJ0mvxX12lu3hiA=="],
 
+    "@qt-solid-spike/example-storyboard/rolldown": ["rolldown@1.0.0-rc.14", "", { "dependencies": { "@oxc-project/types": "=0.124.0", "@rolldown/pluginutils": "1.0.0-rc.14" }, "optionalDependencies": { "@rolldown/binding-android-arm64": "1.0.0-rc.14", "@rolldown/binding-darwin-arm64": "1.0.0-rc.14", "@rolldown/binding-darwin-x64": "1.0.0-rc.14", "@rolldown/binding-freebsd-x64": "1.0.0-rc.14", "@rolldown/binding-linux-arm-gnueabihf": "1.0.0-rc.14", "@rolldown/binding-linux-arm64-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-arm64-musl": "1.0.0-rc.14", "@rolldown/binding-linux-ppc64-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-s390x-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.14", "@rolldown/binding-linux-x64-musl": "1.0.0-rc.14", "@rolldown/binding-openharmony-arm64": "1.0.0-rc.14", "@rolldown/binding-wasm32-wasi": "1.0.0-rc.14", "@rolldown/binding-win32-arm64-msvc": "1.0.0-rc.14", "@rolldown/binding-win32-x64-msvc": "1.0.0-rc.14" }, "bin": { "rolldown": "bin/cli.mjs" } }, "sha512-bGQjaQyK9k7ovrbYNWNOHorqO0gYZpip+I3PTi4iDL1nDe1qkOOwYp2BHGnpCw4LVcTjM+rhJ0mvxX12lu3hiA=="],
+
     "@qt-solid/figma-codegen/rolldown": ["rolldown@1.0.0-rc.17", "", { "dependencies": { "@oxc-project/types": "=0.127.0", "@rolldown/pluginutils": "1.0.0-rc.17" }, "optionalDependencies": { "@rolldown/binding-android-arm64": "1.0.0-rc.17", "@rolldown/binding-darwin-arm64": "1.0.0-rc.17", "@rolldown/binding-darwin-x64": "1.0.0-rc.17", "@rolldown/binding-freebsd-x64": "1.0.0-rc.17", "@rolldown/binding-linux-arm-gnueabihf": "1.0.0-rc.17", "@rolldown/binding-linux-arm64-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-arm64-musl": "1.0.0-rc.17", "@rolldown/binding-linux-ppc64-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-s390x-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-x64-musl": "1.0.0-rc.17", "@rolldown/binding-openharmony-arm64": "1.0.0-rc.17", "@rolldown/binding-wasm32-wasi": "1.0.0-rc.17", "@rolldown/binding-win32-arm64-msvc": "1.0.0-rc.17", "@rolldown/binding-win32-x64-msvc": "1.0.0-rc.17" }, "bin": { "rolldown": "bin/cli.mjs" } }, "sha512-ZrT53oAKrtA4+YtBWPQbtPOxIbVDbxT0orcYERKd63VJTF13zPcgXTvD4843L8pcsI7M6MErt8QtON6lrB9tyA=="],
 
     "@qt-solid/figma-plugin/rolldown": ["rolldown@1.0.0-rc.17", "", { "dependencies": { "@oxc-project/types": "=0.127.0", "@rolldown/pluginutils": "1.0.0-rc.17" }, "optionalDependencies": { "@rolldown/binding-android-arm64": "1.0.0-rc.17", "@rolldown/binding-darwin-arm64": "1.0.0-rc.17", "@rolldown/binding-darwin-x64": "1.0.0-rc.17", "@rolldown/binding-freebsd-x64": "1.0.0-rc.17", "@rolldown/binding-linux-arm-gnueabihf": "1.0.0-rc.17", "@rolldown/binding-linux-arm64-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-arm64-musl": "1.0.0-rc.17", "@rolldown/binding-linux-ppc64-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-s390x-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-x64-gnu": "1.0.0-rc.17", "@rolldown/binding-linux-x64-musl": "1.0.0-rc.17", "@rolldown/binding-openharmony-arm64": "1.0.0-rc.17", "@rolldown/binding-wasm32-wasi": "1.0.0-rc.17", "@rolldown/binding-win32-arm64-msvc": "1.0.0-rc.17", "@rolldown/binding-win32-x64-msvc": "1.0.0-rc.17" }, "bin": { "rolldown": "bin/cli.mjs" } }, "sha512-ZrT53oAKrtA4+YtBWPQbtPOxIbVDbxT0orcYERKd63VJTF13zPcgXTvD4843L8pcsI7M6MErt8QtON6lrB9tyA=="],
@@ -690,6 +709,38 @@
     "@qt-solid-spike/example-rendering-gallery/rolldown/@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.0.0-rc.14", "", { "os": "win32", "cpu": "x64" }, "sha512-yS/76wZ3HLwb20YbFHEiwoqz//0uFLyEye4IMmcyPFmxHMJnd7DgOcJCGjUG/7fswBkvGT2AJeT24UYOIBtBSw=="],
 
     "@qt-solid-spike/example-rendering-gallery/rolldown/@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-rc.14", "", {}, "sha512-ktoSqSpdex3xml4M3wV//KiF8MiQkMz8bz2e7SUJvCK9qyL/XjAnLLB+UO3+uE9RLxqUhuDzddc7Cf+EaZ169Q=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-android-arm64": ["@rolldown/binding-android-arm64@1.0.0-rc.14", "", { "os": "android", "cpu": "arm64" }, "sha512-rJgm6anlnBiT/lAhYXsBPaJhovM5JqRQ6k8UfDZdUXepaoxys8xcfNFp6bhJdbnTf2+I+YbLFJ5p1/VcI6wl2A=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-darwin-arm64": ["@rolldown/binding-darwin-arm64@1.0.0-rc.14", "", { "os": "darwin", "cpu": "arm64" }, "sha512-21+BaHtD0IF+cFaCJFMM5qMqtIDyT4dHcibIAEr7ZbtjG2MbXO5PjMqGN4rQkWAhrq638dcKWDZ5uUMUisJDHQ=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-darwin-x64": ["@rolldown/binding-darwin-x64@1.0.0-rc.14", "", { "os": "darwin", "cpu": "x64" }, "sha512-5hvOzj4a70rybFDFdKc8EclxoEzY7DjB53Xolbq8Sbo3HaN4U7j7Z45aPQXzCKG2I7HvybzdM2xW/AL0Afmrfg=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-freebsd-x64": ["@rolldown/binding-freebsd-x64@1.0.0-rc.14", "", { "os": "freebsd", "cpu": "x64" }, "sha512-gVaINvIiN1YT7gjxs6d0//GDT2y2DTbKKIbLk5G5VOtCndHCTrbgceFlTgwq3h53k1OXTGd0gJtC5btDanjfbg=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-linux-arm-gnueabihf": ["@rolldown/binding-linux-arm-gnueabihf@1.0.0-rc.14", "", { "os": "linux", "cpu": "arm" }, "sha512-el0dPE3R7H4e3wmaFN+1/jJe4nbTCdkbNMtw9Myj5t38eZXtv+O46hngnwq2VjeZOjz4Rc/FQDI+oGtE9pbZqQ=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-linux-arm64-gnu": ["@rolldown/binding-linux-arm64-gnu@1.0.0-rc.14", "", { "os": "linux", "cpu": "arm64" }, "sha512-+q7jyEYbYHVa+EhjmSh0LcJB46ve0SdGnqGaWfV+g4ud+wzUxIgv4MxZmqG7jNR4wLKX0+FHPn6RP6MDe6T5ZQ=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-linux-arm64-musl": ["@rolldown/binding-linux-arm64-musl@1.0.0-rc.14", "", { "os": "linux", "cpu": "arm64" }, "sha512-MM5zJpuf1Hz6JZmkZDi0WuJBqxDneYoh7WE8Hwy3bj2ebBMpAntS0CWgL/423P/5s9CzE9lygolMMdSkrtmDVg=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-linux-ppc64-gnu": ["@rolldown/binding-linux-ppc64-gnu@1.0.0-rc.14", "", { "os": "linux", "cpu": "ppc64" }, "sha512-73h3xZDs0MSqJGjMyV4EjLXBIRs+YeIs0XN2/6DT5I0W5HyjTagH4QXa3CRHL77UAyS5xpr+RxKlJhkR5g05fA=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-linux-s390x-gnu": ["@rolldown/binding-linux-s390x-gnu@1.0.0-rc.14", "", { "os": "linux", "cpu": "s390x" }, "sha512-/Z9EkQlW8nnP1gmOjXIQRuGDadiRv/8gnYK0/dRv1nra4d2J2j70oqO4ltmpE0W24Ac7i1G0o/HIs9yXXj96mg=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-linux-x64-gnu": ["@rolldown/binding-linux-x64-gnu@1.0.0-rc.14", "", { "os": "linux", "cpu": "x64" }, "sha512-7V6pMjtRh0J7eIcLjs9EvcuSk5Vz4qDY+u8GojpPEQ8X4+6F8Qq1fOkeyTD6QQvZpiuWeWCvSNwjwfi86wIJ+w=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-linux-x64-musl": ["@rolldown/binding-linux-x64-musl@1.0.0-rc.14", "", { "os": "linux", "cpu": "x64" }, "sha512-Yxi4UdSPXJTtGjGEgObeWIWSOmVoXLXa8CmGCdb3GKmJS0kcmcklp1ClSC3VipQRxL0ALj9JuNUxfKUW6bIKjQ=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-openharmony-arm64": ["@rolldown/binding-openharmony-arm64@1.0.0-rc.14", "", { "os": "none", "cpu": "arm64" }, "sha512-YOC79AFS2WCHU6v47tNw/rsLXW/Lj/WDRf8IVDpqN3cZk8ucLFAPxGCeyrIuIE6mYlTQdgIvmj22c/NC9EHTvg=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-wasm32-wasi": ["@rolldown/binding-wasm32-wasi@1.0.0-rc.14", "", { "dependencies": { "@emnapi/core": "1.9.2", "@emnapi/runtime": "1.9.2", "@napi-rs/wasm-runtime": "^1.1.3" }, "cpu": "none" }, "sha512-dXoc9dGlySSwrn5hj8gaHTpFhJhh+eEHEQyWdqc56X/BCYxD1tjOAm5mkMXyEvolne9y9KCQgL1A/xEd1J3RBw=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-win32-arm64-msvc": ["@rolldown/binding-win32-arm64-msvc@1.0.0-rc.14", "", { "os": "win32", "cpu": "arm64" }, "sha512-G24v2feAC4rnKhlgzz0msbi4OCfvZHCS04Hayhy8Aj/kRLnUnN0JNMGJiNxsRLCmK2i9gBIR/X1geQysfr0h5g=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.0.0-rc.14", "", { "os": "win32", "cpu": "x64" }, "sha512-yS/76wZ3HLwb20YbFHEiwoqz//0uFLyEye4IMmcyPFmxHMJnd7DgOcJCGjUG/7fswBkvGT2AJeT24UYOIBtBSw=="],
+
+    "@qt-solid-spike/example-storyboard/rolldown/@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-rc.14", "", {}, "sha512-ktoSqSpdex3xml4M3wV//KiF8MiQkMz8bz2e7SUJvCK9qyL/XjAnLLB+UO3+uE9RLxqUhuDzddc7Cf+EaZ169Q=="],
 
     "@qt-solid/figma-codegen/rolldown/@oxc-project/types": ["@oxc-project/types@0.127.0", "", {}, "sha512-aIYXQBo4lCbO4z0R3FHeucQHpF46l2LbMdxRvqvuRuW2OxdnSkcng5B8+K12spgLDj93rtN3+J2Vac/TIO+ciQ=="],
 

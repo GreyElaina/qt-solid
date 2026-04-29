@@ -132,8 +132,6 @@ namespace {
 
 } // namespace
 
-#include "qt_bind_callables.inc"
-
 // ---------------------------------------------------------------------------
 // FFI routing — thin wrappers that delegate to g_host / registry
 // ---------------------------------------------------------------------------

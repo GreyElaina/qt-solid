@@ -75,6 +75,16 @@ export const ScrollView: Component<ScrollViewProps> = (props) => {
     }
   }
 
+  const overflowX = () => {
+    const dir = direction()
+    return dir === "horizontal" || dir === "both" ? "scroll" : "clip"
+  }
+
+  const overflowY = () => {
+    const dir = direction()
+    return dir === "vertical" || dir === "both" ? "scroll" : "clip"
+  }
+
   return (
     <rect
       ref={(node: CanvasNodeHandle) => { containerRef = node }}
@@ -82,7 +92,8 @@ export const ScrollView: Component<ScrollViewProps> = (props) => {
       height={props.height}
       flexGrow={props.flexGrow}
       flexShrink={props.flexShrink}
-      overflow="scroll"
+      overflowX={overflowX()}
+      overflowY={overflowY()}
       clip={true}
       onWheel={onWheel}
     >

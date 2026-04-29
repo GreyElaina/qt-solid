@@ -16,7 +16,8 @@
     "pretest:native": "npm run build:native",
     "test": "vitest run",
     "test:native": "vitest run ./test/rolldown-app-entry.test.ts ./test/solid-renderer-native.test.ts ./test/solid-renderer-native-tsx.test.ts ./test/solid-renderer-native-intrinsic-tsx.test.ts ./test/solid-renderer-motion-tsx.test.ts",
-    "example:rendering-gallery": "npm --workspace=@qt-solid-spike/example-rendering-gallery run run"
+    "example:rendering-gallery": "npm --workspace=@qt-solid-spike/example-rendering-gallery run run",
+    "example:storyboard": "npm --workspace=@qt-solid-spike/example-storyboard run run"
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",

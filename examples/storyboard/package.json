@@ -1,0 +1,27 @@
+{
+  "name": "@qt-solid-spike/example-storyboard",
+  "version": "1.0.0",
+  "description": "Component storyboard — variant matrix and visual catalog",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "run": "npm run app",
+    "build": "npm --prefix ../.. run build:native:release && rolldown -c ./rolldown.config.mjs",
+    "start": "node --enable-source-maps --conditions=browser ./dist/app.js",
+    "app": "npm run build && npm run start",
+    "dev": "node ../../scripts/run-vite-dev-app.mjs ./dev-entry.tsx"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@qt-solid/solid": "workspace:*",
+    "@qt-solid/fluent": "workspace:*",
+    "solid-js": "^1.9.12"
+  },
+  "devDependencies": {
+    "rolldown": "1.0.0-rc.14"
+  }
+}

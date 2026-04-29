@@ -868,19 +868,15 @@ impl FragmentData {
 }
 
 // ---------------------------------------------------------------------------
-// Fragment node
+// Fragment visual props — user-specified via JSX / prop writes
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
-pub struct FragmentNode {
-    pub id: FragmentId,
-    pub kind: FragmentData,
+pub struct FragmentProps {
     pub explicit_x: Option<f64>,
     pub explicit_y: Option<f64>,
     pub explicit_width: Option<f64>,
     pub explicit_height: Option<f64>,
-    pub layout_x: f64,
-    pub layout_y: f64,
     pub opacity: f32,
     pub blend_mode: BlendMode,
     pub clip: bool,
@@ -889,6 +885,62 @@ pub struct FragmentNode {
     pub cursor: u8,
     pub focusable: bool,
     pub transform: Affine,
+    pub backdrop_blur: Option<f64>,
+}
+
+impl Default for FragmentProps {
+    fn default() -> Self {
+        Self {
+            explicit_x: None,
+            explicit_y: None,
+            explicit_width: None,
+            explicit_height: None,
+            opacity: 1.0,
+            blend_mode: BlendMode::default(),
+            clip: false,
+            visible: true,
+            pointer_events: true,
+            cursor: 0,
+            focusable: false,
+            transform: Affine::IDENTITY,
+            backdrop_blur: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Layout result — taffy output after compute_layout
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LayoutResult {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl LayoutResult {
+    /// Bounding rect at local origin (0,0) with layout-computed size.
+    pub fn bounds(&self) -> Option<Rect> {
+        if self.width > 0.0 || self.height > 0.0 {
+            Some(Rect::new(0.0, 0.0, self.width, self.height))
+        } else {
+            None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Fragment node
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct FragmentNode {
+    pub id: FragmentId,
+    pub kind: FragmentData,
+    pub props: FragmentProps,
+    pub layout: LayoutResult,
     pub children: Vec<FragmentId>,
     pub parent: Option<FragmentId>,
     pub dirty: bool,
@@ -896,7 +948,6 @@ pub struct FragmentNode {
     pub taffy_node: Option<taffy::tree::NodeId>,
     pub promoted: bool,
     pub layer_key: Option<FragmentLayerKey>,
-    pub backdrop_blur: Option<f64>,
     pub timeline: Option<motion::NodeTimeline>,
     /// Cached world-space AABB (set by `recompute_aabbs`).
     world_aabb: Option<Rect>,
@@ -907,26 +958,31 @@ pub struct FragmentNode {
 
 impl FragmentNode {
     fn render_x(&self) -> f64 {
-        self.explicit_x.unwrap_or(self.layout_x)
+        self.props.explicit_x.unwrap_or(self.layout.x)
     }
 
     fn render_y(&self) -> f64 {
-        self.explicit_y.unwrap_or(self.layout_y)
+        self.props.explicit_y.unwrap_or(self.layout.y)
     }
 
     fn local_transform(&self) -> Affine {
-        Affine::translate((self.render_x(), self.render_y())) * self.transform
+        Affine::translate((self.render_x(), self.render_y())) * self.props.transform
     }
 
     fn needs_layer(&self) -> bool {
-        self.opacity < 1.0 - f32::EPSILON || self.clip || self.blend_mode != BlendMode::default()
+        self.props.opacity < 1.0 - f32::EPSILON || self.props.clip || self.props.blend_mode != BlendMode::default()
+    }
+
+    /// Kind-level paint bounds, falling back to layout-computed bounds.
+    fn effective_bounds(&self) -> Option<Rect> {
+        self.kind.local_bounds().or_else(|| self.layout.bounds())
     }
 
     fn clip_rect(&self) -> Option<Rect> {
-        if !self.clip {
+        if !self.props.clip {
             return None;
         }
-        self.kind.local_bounds()
+        self.effective_bounds()
     }
 }
 
@@ -939,10 +995,10 @@ fn apply_sampled_pose_to_fragment(node: &mut FragmentNode, pose: &motion::Sample
     // keeping `explicit_x/y` untouched so that taffy layout (flex flow)
     // is not disrupted.  `explicit_x/y` remains under the control of the
     // user-set JSX `x`/`y` prop.
-    node.opacity = pose.opacity as f32;
+    node.props.opacity = pose.opacity as f32;
 
     // Origin values are [0,1] proportions (0.5 = center). Resolve to pixels.
-    let bounds = node.kind.local_bounds().unwrap_or(Rect::ZERO);
+    let bounds = node.effective_bounds().unwrap_or(Rect::ZERO);
     let origin_x = pose.origin_x * bounds.width();
     let origin_y = pose.origin_y * bounds.height();
     let rotate_rad = pose.rotate_deg.to_radians();
@@ -960,7 +1016,7 @@ fn apply_sampled_pose_to_fragment(node: &mut FragmentNode, pose: &motion::Sample
     // Motion offset (pose.x/y) + layout FLIP translation
     let motion_translate = Affine::translate((pose.x + pose.layout_x, pose.y + pose.layout_y));
 
-    node.transform = motion_translate * layout_scale * user_scale_rotate;
+    node.props.transform = motion_translate * layout_scale * user_scale_rotate;
 
     if node.promoted {
         // Promoted nodes: pose-only dirty — compositor handles transform/opacity.
@@ -1071,7 +1127,7 @@ impl FragmentTree {
                 FragmentData::Text(t) =>
                     (format!("text \"{}\"", &t.text[..t.text.len().min(16)]), 0.0, 0.0),
                 FragmentData::Group(_) =>
-                    ("group".into(), 0.0, 0.0),
+                    ("group".into(), node.layout.width, node.layout.height),
                 _ => ("other".into(), 0.0, 0.0),
             };
             eprintln!(
@@ -1079,7 +1135,7 @@ impl FragmentTree {
                 id.0,
                 node.parent.map_or("-".into(), |p| p.0.to_string()),
                 node.render_x(), node.render_y(), w, h,
-                node.clip as u8, node.visible as u8,
+                node.props.clip as u8, node.props.visible as u8,
                 node.children.iter().map(|c| c.0).collect::<Vec<_>>(),
                 tag,
             );
@@ -1107,20 +1163,12 @@ impl FragmentTree {
             FragmentNode {
                 id,
                 kind,
-                explicit_x: None,
-                explicit_y: None,
-                explicit_width: None,
-                explicit_height: None,
-                layout_x: 0.0,
-                layout_y: 0.0,
-                opacity: 1.0,
-                blend_mode: BlendMode::default(),
-                clip: false,
-                visible: !is_span,
-                pointer_events: !is_span,
-                cursor: 0,
-                focusable: false,
-                transform: Affine::IDENTITY,
+                props: FragmentProps {
+                    visible: !is_span,
+                    pointer_events: !is_span,
+                    ..Default::default()
+                },
+                layout: LayoutResult::default(),
                 children: vec![],
                 parent: None,
                 dirty: true,
@@ -1128,7 +1176,6 @@ impl FragmentTree {
                 taffy_node,
                 promoted: false,
                 layer_key: None,
-                backdrop_blur: None,
                 timeline: None,
                 world_aabb: None,
                 subtree_aabb: None,
@@ -1418,7 +1465,7 @@ impl FragmentTree {
         let circle_sizes: Vec<(taffy::tree::NodeId, f32)> = self.nodes.values()
             .filter_map(|node| {
                 if let (Some(tn), FragmentData::Circle(circle)) = (node.taffy_node, &node.kind) {
-                    if circle.r > 0.0 && node.explicit_width.is_none() && node.explicit_height.is_none() {
+                    if circle.r > 0.0 && node.props.explicit_width.is_none() && node.props.explicit_height.is_none() {
                         Some((tn, (circle.r * 2.0) as f32))
                     } else {
                         None
@@ -1465,12 +1512,12 @@ impl FragmentTree {
             let node = self.nodes.get_mut(&id).unwrap();
             let has_listener = node.listeners.contains(FragmentListeners::LAYOUT);
 
-            let pos_changed = (node.layout_x - lx).abs() > 0.01
-                || (node.layout_y - ly).abs() > 0.01;
+            let pos_changed = (node.layout.x - lx).abs() > 0.01
+                || (node.layout.y - ly).abs() > 0.01;
             if pos_changed {
-                node.layout_x = lx;
-                node.layout_y = ly;
-                if node.explicit_x.is_none() || node.explicit_y.is_none() {
+                node.layout.x = lx;
+                node.layout.y = ly;
+                if node.props.explicit_x.is_none() || node.props.explicit_y.is_none() {
                     node.dirty = true;
                     self.any_dirty = true;
                     self.cached_scene = None;
@@ -1478,42 +1525,53 @@ impl FragmentTree {
                 }
             }
 
-            let mut size_changed = false;
+            // Sync layout size for all nodes (used for clip, hit-test, AABB).
+            let layout_size_changed = (node.layout.width - lw).abs() > 0.01
+                || (node.layout.height - lh).abs() > 0.01;
+            if layout_size_changed {
+                node.layout.width = lw;
+                node.layout.height = lh;
+                node.dirty = true;
+                self.any_dirty = true;
+                self.cached_scene = None;
+                layout_dirty_ids.push(id);
+            }
+
+            // Sync kind-level paint geometry for Rect/Image (their encode reads width/height).
+            let mut paint_size_changed = false;
             match &mut node.kind {
                 FragmentData::Rect(rect) => {
-                    let ew = node.explicit_width.is_some();
-                    let eh = node.explicit_height.is_some();
+                    let ew = node.props.explicit_width.is_some();
+                    let eh = node.props.explicit_height.is_some();
                     let new_w = if ew { rect.width } else { lw };
                     let new_h = if eh { rect.height } else { lh };
                     if (rect.width - new_w).abs() > 0.01 || (rect.height - new_h).abs() > 0.01 {
-                        size_changed = true;
+                        paint_size_changed = true;
                         rect.width = new_w;
                         rect.height = new_h;
-                        node.dirty = true;
-                        self.any_dirty = true;
-                        self.cached_scene = None;
-                        layout_dirty_ids.push(id);
                     }
                 }
                 FragmentData::Image(img) => {
-                    let ew = node.explicit_width.is_some();
-                    let eh = node.explicit_height.is_some();
+                    let ew = node.props.explicit_width.is_some();
+                    let eh = node.props.explicit_height.is_some();
                     let new_w = if ew { img.width } else { lw };
                     let new_h = if eh { img.height } else { lh };
                     if (img.width - new_w).abs() > 0.01 || (img.height - new_h).abs() > 0.01 {
-                        size_changed = true;
+                        paint_size_changed = true;
                         img.width = new_w;
                         img.height = new_h;
-                        node.dirty = true;
-                        self.any_dirty = true;
-                        self.cached_scene = None;
-                        layout_dirty_ids.push(id);
                     }
                 }
                 _ => {}
             }
+            if paint_size_changed {
+                node.dirty = true;
+                self.any_dirty = true;
+                self.cached_scene = None;
+                layout_dirty_ids.push(id);
+            }
 
-            if has_listener && (pos_changed || size_changed) {
+            if has_listener && (pos_changed || layout_size_changed || paint_size_changed) {
                 layout_events.push(FragmentLayoutChange {
                     fragment_id: id,
                     x: lx,
@@ -1788,7 +1846,7 @@ impl FragmentTree {
 
     fn paint_node(&self, scene: &mut Scene, id: FragmentId, parent_transform: Affine) {
         let Some(node) = self.node(id) else { return };
-        if !node.visible { return; }
+        if !node.props.visible { return; }
 
         let transform = parent_transform * node.local_transform();
         let scroll = self.scroll_offsets.get(&id).copied();
@@ -1797,11 +1855,9 @@ impl FragmentTree {
         if needs_layer {
             // Scroll containers need clip even without opacity/clip props.
             let clip_rect = node.clip_rect().or_else(|| {
-                scroll.and_then(|_| {
-                    node.kind.local_bounds()
-                })
+                scroll.and_then(|_| node.effective_bounds())
             });
-            push_fragment_layer(scene, transform, clip_rect, node.opacity, node.blend_mode);
+            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -1824,14 +1880,14 @@ impl FragmentTree {
     /// Paint a single fragment node (self only, no children) into the scene.
     pub fn paint_node_self_only(&self, scene: &mut Scene, id: FragmentId, parent_transform: Affine) {
         let Some(node) = self.node(id) else { return };
-        if !node.visible { return; }
+        if !node.props.visible { return; }
 
         let transform = parent_transform * node.local_transform();
         let needs_layer = node.needs_layer();
 
         if needs_layer {
             let clip_rect = node.clip_rect();
-            push_fragment_layer(scene, transform, clip_rect, node.opacity, node.blend_mode);
+            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -1847,12 +1903,12 @@ impl FragmentTree {
     /// origin regardless of where the node sits in the tree.
     pub fn paint_node_at_origin(&self, scene: &mut Scene, id: FragmentId, transform: Affine) {
         let Some(node) = self.node(id) else { return };
-        if !node.visible { return; }
+        if !node.props.visible { return; }
 
         let needs_layer = node.needs_layer();
         if needs_layer {
             let clip_rect = node.clip_rect();
-            push_fragment_layer(scene, transform, clip_rect, node.opacity, node.blend_mode);
+            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -1981,7 +2037,7 @@ impl FragmentTree {
         self.ensure_aabbs();
         let mut effects = Vec::new();
         for node in self.nodes.values() {
-            let Some(blur_radius) = node.backdrop_blur else { continue };
+            let Some(blur_radius) = node.props.backdrop_blur else { continue };
             if blur_radius <= 0.0 { continue; }
             let Some(world_aabb) = node.world_aabb else { continue };
             let sf = scale_factor as f32;
@@ -2009,7 +2065,7 @@ impl FragmentTree {
         scene_cache: &mut HashMap<FragmentId, Scene>,
     ) {
         let Some(node) = nodes.get(&id) else { return };
-        if !node.visible { return; }
+        if !node.props.visible { return; }
 
         let transform = parent_transform * node.local_transform();
 
@@ -2055,8 +2111,8 @@ impl FragmentTree {
                 bounds,
                 transform,
                 clip_rect,
-                opacity: node.opacity,
-                blend_mode: node.blend_mode,
+                opacity: node.props.opacity,
+                blend_mode: node.props.blend_mode,
             }));
 
             collector.resume_inline_after_split();
@@ -2068,9 +2124,9 @@ impl FragmentTree {
         let needs_layer = node.needs_layer() || scroll.is_some();
         if needs_layer {
             let clip_rect = node.clip_rect().or_else(|| {
-                scroll.and_then(|_| node.kind.local_bounds())
+                scroll.and_then(|_| node.effective_bounds())
             });
-            collector.push_layer(transform, clip_rect, node.opacity, node.blend_mode);
+            collector.push_layer(transform, clip_rect, node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(&mut collector.current_inline, transform);
@@ -2101,7 +2157,7 @@ impl FragmentTree {
         parent_transform: Affine,
     ) {
         let Some(node) = nodes.get(&id) else { return };
-        if !node.visible { return; }
+        if !node.props.visible { return; }
 
         let transform = parent_transform * node.local_transform();
         let scroll = scroll_offsets.get(&id).copied();
@@ -2109,9 +2165,9 @@ impl FragmentTree {
 
         if needs_layer {
             let clip_rect = node.clip_rect().or_else(|| {
-                scroll.and_then(|_| node.kind.local_bounds())
+                scroll.and_then(|_| node.effective_bounds())
             });
-            push_fragment_layer(scene, transform, clip_rect, node.opacity, node.blend_mode);
+            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -2141,7 +2197,7 @@ impl FragmentTree {
         id: FragmentId,
     ) {
         let Some(node) = nodes.get(&id) else { return };
-        if !node.visible { return; }
+        if !node.props.visible { return; }
 
         // Encode root kind at identity (no root x/y/transform applied).
         node.kind.encode(scene, Affine::IDENTITY);
@@ -2176,11 +2232,11 @@ impl FragmentTree {
             if parent.promoted {
                 return false;
             }
-            if parent.opacity < 1.0 - f32::EPSILON {
+            if parent.props.opacity < 1.0 - f32::EPSILON {
                 return false;
             }
-            composed = parent.transform * composed;
-            if parent.clip && !is_axis_aligned_affine(composed) {
+            composed = parent.props.transform * composed;
+            if parent.props.clip && !is_axis_aligned_affine(composed) {
                 return false;
             }
             cursor = parent.parent;
@@ -2199,8 +2255,7 @@ impl FragmentTree {
         let transform = parent_transform * node.local_transform();
 
         let mut result: Option<Rect> = node
-            .kind
-            .local_bounds()
+            .effective_bounds()
             .map(|lb| transform_local_bounds_to_world(lb, transform));
 
         for &child_id in &node.children {
@@ -2331,23 +2386,14 @@ impl FragmentTree {
     }
 
     fn recompute_aabb(&mut self, id: FragmentId, parent_transform: Affine) -> Option<Rect> {
-        let (kind_bounds, taffy_node_id, local_transform, children) = {
+        let (local_bounds, local_transform, children) = {
             let node = self.nodes.get(&id)?;
             (
-                node.kind.local_bounds(),
-                node.taffy_node,
+                node.effective_bounds(),
                 parent_transform * node.local_transform(),
                 node.children.clone(),
             )
         };
-
-        let local_bounds = kind_bounds.or_else(|| {
-            let tn = taffy_node_id?;
-            let layout = self.taffy.layout(tn).ok()?;
-            let w = layout.size.width as f64;
-            let h = layout.size.height as f64;
-            if w > 0.0 || h > 0.0 { Some(Rect::new(0.0, 0.0, w, h)) } else { None }
-        });
 
         let world_aabb = local_bounds.map(|lb| transform_local_bounds_to_world(lb, local_transform));
 
@@ -2407,7 +2453,7 @@ impl FragmentTree {
     ) -> Option<FragmentId> {
         let node = self.node(id)?;
 
-        if !node.visible || !node.pointer_events {
+        if !node.props.visible || !node.props.pointer_events {
             return None;
         }
 
@@ -2420,15 +2466,8 @@ impl FragmentTree {
 
         let transform = parent_transform * node.local_transform();
 
-        if node.clip {
-            let clip = node.kind.local_bounds().or_else(|| {
-                let tn = node.taffy_node?;
-                let layout = self.taffy.layout(tn).ok()?;
-                let w = layout.size.width as f64;
-                let h = layout.size.height as f64;
-                if w > 0.0 || h > 0.0 { Some(Rect::new(0.0, 0.0, w, h)) } else { None }
-            });
-            if let Some(clip_rect) = clip {
+        if node.props.clip {
+            if let Some(clip_rect) = node.effective_bounds() {
                 let inverse = transform.inverse();
                 let local = inverse * Point::new(point.0, point.1);
                 if !clip_rect.contains(local) {
@@ -2453,19 +2492,7 @@ impl FragmentTree {
             }
         }
 
-        let bounds = node.kind.local_bounds().or_else(|| {
-            let taffy_node = node.taffy_node?;
-            let layout = self.taffy.layout(taffy_node).ok()?;
-            let w = layout.size.width as f64;
-            let h = layout.size.height as f64;
-            if w > 0.0 || h > 0.0 {
-                Some(Rect::new(0.0, 0.0, w, h))
-            } else {
-                None
-            }
-        });
-
-        if let Some(bounds) = bounds {
+        if let Some(bounds) = node.effective_bounds() {
             let inverse = transform.inverse();
             let local = inverse * Point::new(point.0, point.1);
             if bounds.contains(local) {
@@ -2490,7 +2517,7 @@ impl FragmentTree {
     fn collect_focusable(&self, children: &[FragmentId], out: &mut Vec<FragmentId>) {
         for &id in children {
             if let Some(node) = self.nodes.get(&id) {
-                if node.visible && node.focusable {
+                if node.props.visible && node.props.focusable {
                     out.push(id);
                 }
                 self.collect_focusable(&node.children, out);
@@ -2555,7 +2582,7 @@ impl FragmentTree {
         let mut current = Some(id);
         while let Some(cid) = current {
             if let Some(node) = self.nodes.get(&cid) {
-                if node.focusable && node.visible {
+                if node.props.focusable && node.props.visible {
                     return Some(cid);
                 }
                 current = node.parent;
@@ -2712,8 +2739,7 @@ pub fn fragment_store_set_prop(
                     apply_layout_string_prop_to_style(style, key, value);
                 });
             }
-            tree.any_dirty = true;
-            tree.cached_scene = None;
+            tree.invalidate();
             return;
         }
 
@@ -2736,9 +2762,9 @@ pub fn fragment_store_set_prop(
                 let fv = *v;
                 if let Some(node) = tree.nodes.get_mut(&fragment_id) {
                     if key == "width" {
-                        node.explicit_width = if fv > 0.0 { Some(fv) } else { None };
+                        node.props.explicit_width = if fv > 0.0 { Some(fv) } else { None };
                     } else {
-                        node.explicit_height = if fv > 0.0 { Some(fv) } else { None };
+                        node.props.explicit_height = if fv > 0.0 { Some(fv) } else { None };
                     }
                 }
                 let v32 = fv as f32;
@@ -2749,6 +2775,18 @@ pub fn fragment_store_set_prop(
                         style.size.height = if v32 > 0.0 { taffy::style::Dimension::length(v32) } else { taffy::style::Dimension::auto() };
                     }
                 });
+            } else if let FragmentValue::Str { ref value } = value {
+                if let Some(dim) = parse_dimension_string(value) {
+                    // Percentage/auto dimensions are layout-driven, clear explicit paint geometry.
+                    if let Some(node) = tree.nodes.get_mut(&fragment_id) {
+                        if key == "width" { node.props.explicit_width = None; } else { node.props.explicit_height = None; }
+                    }
+                    tree.with_taffy_style_mut(fragment_id, |style| {
+                        if key == "width" { style.size.width = dim; } else { style.size.height = dim; }
+                    });
+                    tree.any_dirty = true;
+                    tree.cached_scene = None;
+                }
             }
         }
 
@@ -2776,7 +2814,7 @@ pub fn fragment_store_set_prop(
         // Sync taffy position mode when x/y explicit state changes.
         if key == "x" || key == "y" {
             let (ex, ey) = tree.nodes.get(&fragment_id)
-                .map(|n| (n.explicit_x, n.explicit_y))
+                .map(|n| (n.props.explicit_x, n.props.explicit_y))
                 .unwrap_or((None, None));
             tree.with_taffy_style_mut(fragment_id, |style| {
                 if ex.is_some() || ey.is_some() {
@@ -2867,7 +2905,7 @@ pub fn fragment_store_set_debug_highlight(canvas_node_id: u32, fragment_id: Opti
 
 pub fn fragment_store_get_cursor(canvas_node_id: u32, fragment_id: FragmentId) -> u8 {
     runtime::with_fragment_tree(canvas_node_id, |tree| {
-        tree.nodes.get(&fragment_id).map_or(0, |n| n.cursor)
+        tree.nodes.get(&fragment_id).map_or(0, |n| n.props.cursor)
     })
     .unwrap_or(0)
 }
@@ -3263,11 +3301,25 @@ const LAYOUT_PROPS: &[&str] = &[
     "gap", "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
     "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
     "minWidth", "minHeight", "maxWidth", "maxHeight",
-    "position", "overflow",
+    "position", "overflow", "overflowX", "overflowY",
 ];
 
 fn is_layout_prop(key: &str) -> bool {
     LAYOUT_PROPS.contains(&key)
+}
+
+/// Parse dimension strings like "100%", "50%", "auto".
+fn parse_dimension_string(s: &str) -> Option<taffy::style::Dimension> {
+    let s = s.trim();
+    if s == "auto" {
+        return Some(taffy::style::Dimension::auto());
+    }
+    if let Some(pct) = s.strip_suffix('%') {
+        if let Ok(v) = pct.trim().parse::<f32>() {
+            return Some(taffy::style::Dimension::percent(v / 100.0));
+        }
+    }
+    None
 }
 
 fn apply_layout_prop_to_style(style: &mut taffy::Style, key: &str, v: f32) {
@@ -3371,6 +3423,24 @@ fn apply_layout_string_prop_to_style(style: &mut taffy::Style, key: &str, v: &st
             };
             style.overflow = taffy::geometry::Point { x: ov, y: ov };
         }
+        "overflowX" => {
+            style.overflow.x = match v {
+                "visible" => taffy::style::Overflow::Visible,
+                "clip" => taffy::style::Overflow::Clip,
+                "hidden" => taffy::style::Overflow::Hidden,
+                "scroll" => taffy::style::Overflow::Scroll,
+                _ => taffy::style::Overflow::Visible,
+            };
+        }
+        "overflowY" => {
+            style.overflow.y = match v {
+                "visible" => taffy::style::Overflow::Visible,
+                "clip" => taffy::style::Overflow::Clip,
+                "hidden" => taffy::style::Overflow::Hidden,
+                "scroll" => taffy::style::Overflow::Scroll,
+                _ => taffy::style::Overflow::Visible,
+            };
+        }
         _ => {}
     }
 }
@@ -3379,39 +3449,39 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
     match key {
         "x" => {
             match value {
-                FragmentValue::F64 { value } => { node.explicit_x = Some(value); }
-                FragmentValue::Unset => { node.explicit_x = None; }
+                FragmentValue::F64 { value } => { node.props.explicit_x = Some(value); }
+                FragmentValue::Unset => { node.props.explicit_x = None; }
                 _ => {}
             }
             return;
         }
         "y" => {
             match value {
-                FragmentValue::F64 { value } => { node.explicit_y = Some(value); }
-                FragmentValue::Unset => { node.explicit_y = None; }
+                FragmentValue::F64 { value } => { node.props.explicit_y = Some(value); }
+                FragmentValue::Unset => { node.props.explicit_y = None; }
                 _ => {}
             }
             return;
         }
         "opacity" => {
-            if let FragmentValue::F64 { value } = value { node.opacity = value as f32; }
+            if let FragmentValue::F64 { value } = value { node.props.opacity = value as f32; }
             return;
         }
         "clip" => {
-            if let FragmentValue::Bool { value } = value { node.clip = value; }
+            if let FragmentValue::Bool { value } = value { node.props.clip = value; }
             return;
         }
         "visible" => {
-            if let FragmentValue::Bool { value } = value { node.visible = value; }
+            if let FragmentValue::Bool { value } = value { node.props.visible = value; }
             return;
         }
         "pointerEvents" => {
-            if let FragmentValue::Bool { value } = value { node.pointer_events = value; }
+            if let FragmentValue::Bool { value } = value { node.props.pointer_events = value; }
             return;
         }
         "cursor" => {
             if let FragmentValue::Str { ref value } = value {
-                node.cursor = match value.as_str() {
+                node.props.cursor = match value.as_str() {
                     "pointer" | "hand" => 1,
                     "text" | "ibeam" => 2,
                     "crosshair" => 3,
@@ -3426,7 +3496,7 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
             return;
         }
         "focusable" => {
-            if let FragmentValue::Bool { value } = value { node.focusable = value; }
+            if let FragmentValue::Bool { value } = value { node.props.focusable = value; }
             return;
         }
         "layer" => {
@@ -3435,16 +3505,16 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
         }
         "blendMode" => {
             if let FragmentValue::BlendMode { value } = value {
-                node.blend_mode = value.into();
+                node.props.blend_mode = value.into();
             }
             return;
         }
         "backdropBlur" => {
             match value {
                 FragmentValue::F64 { value } => {
-                    node.backdrop_blur = if value > 0.0 { Some(value) } else { None };
+                    node.props.backdrop_blur = if value > 0.0 { Some(value) } else { None };
                 }
-                FragmentValue::Unset => { node.backdrop_blur = None; }
+                FragmentValue::Unset => { node.props.backdrop_blur = None; }
                 _ => {}
             }
             return;
@@ -3605,11 +3675,9 @@ impl FragmentTree {
         self.nodes.values().map(|node| {
             let tag = snapshot_tag(&node.kind).to_string();
 
-            // Resolve width/height from taffy layout if available.
-            let (width, height) = node.taffy_node
-                .and_then(|tn| self.taffy.layout(tn).ok())
-                .map(|layout| (layout.size.width as f64, layout.size.height as f64))
-                .unwrap_or((0.0, 0.0));
+            // Use layout-computed size (available for all node types).
+            let width = node.layout.width;
+            let height = node.layout.height;
 
             let taffy_style = node.taffy_node
                 .and_then(|tn| self.taffy.style(tn).ok())
@@ -3691,9 +3759,9 @@ impl FragmentTree {
                 y: node.render_y(),
                 width,
                 height,
-                clip: node.clip,
-                visible: node.visible,
-                opacity: node.opacity,
+                clip: node.props.clip,
+                visible: node.props.visible,
+                opacity: node.props.opacity,
                 props,
             }
         }).collect()
@@ -3706,11 +3774,11 @@ impl FragmentTree {
             .filter(|n| n.promoted && n.layer_key.is_some())
             .map(|n| {
                 let bounds = n.world_aabb.unwrap_or(Rect::ZERO);
-                let reasons = if n.opacity < 1.0 - f32::EPSILON && n.clip {
+                let reasons = if n.props.opacity < 1.0 - f32::EPSILON && n.props.clip {
                     "opacity,clip"
-                } else if n.opacity < 1.0 - f32::EPSILON {
+                } else if n.props.opacity < 1.0 - f32::EPSILON {
                     "opacity"
-                } else if n.clip {
+                } else if n.props.clip {
                     "clip"
                 } else {
                     "explicitly promoted"
@@ -3722,7 +3790,7 @@ impl FragmentTree {
                     y: bounds.y0,
                     width: bounds.width(),
                     height: bounds.height(),
-                    opacity: n.opacity,
+                    opacity: n.props.opacity,
                     reasons: reasons.to_string(),
                 }
             })

@@ -146,8 +146,7 @@ fn main() {
     println!("cargo:rerun-if-changed=include/qt/ffi.h");
     println!("cargo:rerun-if-changed=include/qt/macos/event_buffer.h");
     println!("cargo:rerun-if-changed=include/qt/macos/cocoa_dispatcher_shim.h");
-    println!("cargo:rerun-if-changed=shaders/window_compositor.vert");
-    println!("cargo:rerun-if-changed=shaders/window_compositor.frag");
+
     println!("cargo:rerun-if-changed=src/qt/cpp/ffi.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/util.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/host/wait_bridge.cpp");

@@ -170,7 +170,10 @@ mod platform_vblank {
     }
 }
 
-#[cfg(all(any(target_os = "linux", target_os = "freebsd"), feature = "x11"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "freebsd"),
+    any(feature = "x11", feature = "wayland"),
+))]
 mod platform_vblank {
     use super::{FALLBACK_INTERVAL, trace};
     use std::os::fd::AsFd;
@@ -288,7 +291,10 @@ mod platform_vblank {
 // Wayland and other platforms: timer-based fallback.
 #[cfg(not(any(
     target_os = "windows",
-    all(any(target_os = "linux", target_os = "freebsd"), feature = "x11"),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        any(feature = "x11", feature = "wayland"),
+    ),
 )))]
 mod platform_vblank {
     use super::FALLBACK_INTERVAL;

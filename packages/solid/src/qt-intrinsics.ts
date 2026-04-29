@@ -188,8 +188,8 @@ export interface CanvasCommonProps extends CanvasEventProps {
   blendMode?: "normal" | "multiply" | "screen" | "overlay" | "darken" | "lighten" | "color-dodge" | "color-burn" | "hard-light" | "soft-light" | "difference" | "exclusion" | "hue" | "saturation" | "color" | "luminosity"
   children?: unknown
   // Taffy layout props (accepted on all fragment nodes)
-  width?: number
-  height?: number
+  width?: number | `${number}%` | "auto"
+  height?: number | `${number}%` | "auto"
   flexDirection?: string
   flexGrow?: number
   flexShrink?: number
@@ -215,6 +215,8 @@ export interface CanvasCommonProps extends CanvasEventProps {
   maxHeight?: number
   position?: string
   overflow?: "visible" | "clip" | "hidden" | "scroll"
+  overflowX?: "visible" | "clip" | "hidden" | "scroll"
+  overflowY?: "visible" | "clip" | "hidden" | "scroll"
 }
 
 // ---------------------------------------------------------------------------
