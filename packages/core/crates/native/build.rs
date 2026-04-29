@@ -220,6 +220,9 @@ fn main() {
     qt_taffy_layout.add_include_dirs(&mut build);
     add_include_if_exists(&mut build, &out_dir);
 
+    // Vendored libuv headers (compile-time only; symbols resolved dynamically at runtime).
+    add_include_if_exists(&mut build, "../../../../third_party/libuv-include");
+
     if let Some(node_include_dir) = node_include_dir {
         add_include_if_exists(&mut build, node_include_dir);
     }
