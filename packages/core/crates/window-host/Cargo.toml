@@ -8,10 +8,9 @@ block2 = "0.6.2"
 objc2 = { version = "0.6.4", features = ["relax-sign-encoding"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSEvent", "NSGraphicsContext"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2", "CFBase", "CFRunLoop", "CFString"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSObjCRuntime", "NSString", "NSDate", "NSRunLoop"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [dependencies]
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSObjCRuntime", "NSString", "NSDate", "NSRunLoop"] }
