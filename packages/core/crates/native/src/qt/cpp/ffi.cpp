@@ -1,12 +1,4 @@
 #include "qt/ffi.h"
-#if defined(__APPLE__)
-#include "qt/macos/event_buffer.h"
-#include "qt/macos/display_link.h"
-#include "qt/macos/cocoa_dispatcher_shim.h"
-#include <CoreFoundation/CoreFoundation.h>
-#elif defined(_WIN32)
-#include <windows.h>
-#endif
 #include "qt_wgpu_platform.h"
 #include "native/src/qt/ffi.rs.h"
 #include "qt/widget_host.h"
@@ -76,6 +68,8 @@
 
 #include <uv.h>
 
+// -- Platform-specific includes --
+
 #if defined(Q_OS_WIN)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -87,7 +81,11 @@
 #include <dlfcn.h>
 #endif
 
-#if defined(__APPLE__)
+#if defined(Q_OS_MACOS)
+#include "qt/macos/event_buffer.h"
+#include "qt/macos/display_link.h"
+#include "qt/macos/cocoa_dispatcher_shim.h"
+#include <CoreFoundation/CoreFoundation.h>
 #include <pthread.h>
 #endif
 
