@@ -33,7 +33,7 @@ impl WindowsWindowHost {
         // Manual-reset event, initially non-signaled.
         let handle =
             unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
-        if handle == INVALID_HANDLE_VALUE || handle == 0 {
+        if handle == INVALID_HANDLE_VALUE || handle.is_null() {
             return Err(WindowHostError::new(
                 "CreateEventW failed for wait bridge event",
             ));
@@ -71,13 +71,13 @@ impl WindowsWindowHost {
     /// Return the raw HANDLE for the wait bridge event.
     /// Valid for the lifetime of this host. Caller must not close it.
     pub(crate) fn bridge_event_handle(&self) -> u64 {
-        self.bridge_event as u64
+        self.bridge_event as usize as u64
     }
 }
 
 impl Drop for WindowsWindowHost {
     fn drop(&mut self) {
-        if self.bridge_event != INVALID_HANDLE_VALUE && self.bridge_event != 0 {
+        if self.bridge_event != INVALID_HANDLE_VALUE && !self.bridge_event.is_null() {
             unsafe { CloseHandle(self.bridge_event) };
         }
     }
