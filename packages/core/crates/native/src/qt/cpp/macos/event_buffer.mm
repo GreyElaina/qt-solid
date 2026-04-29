@@ -1,4 +1,4 @@
-#include "qt/macos_event_buffer_bridge.h"
+#include "qt/macos/event_buffer.h"
 
 #include <AppKit/AppKit.h>
 #include <ApplicationServices/ApplicationServices.h>

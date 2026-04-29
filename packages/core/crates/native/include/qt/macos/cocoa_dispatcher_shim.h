@@ -1,5 +1,5 @@
-#ifndef QT_SOLID_COCOA_DISPATCHER_PRIVATE_SHIM_H
-#define QT_SOLID_COCOA_DISPATCHER_PRIVATE_SHIM_H
+#ifndef QT_SOLID_COCOA_DISPATCHER_SHIM_H
+#define QT_SOLID_COCOA_DISPATCHER_SHIM_H
 
 #include <QtCore/private/qabstracteventdispatcher_p.h>
 #include <QtCore/private/qtimerinfo_unix_p.h>
@@ -23,4 +23,4 @@ struct QtSolidQCocoaEventDispatcherPrivatePrefix
 
 QT_END_NAMESPACE
 
-#endif  // QT_SOLID_COCOA_DISPATCHER_PRIVATE_SHIM_H
+#endif  // QT_SOLID_COCOA_DISPATCHER_SHIM_H

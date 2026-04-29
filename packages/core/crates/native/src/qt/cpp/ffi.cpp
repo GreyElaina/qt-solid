@@ -1,17 +1,15 @@
 #include "qt/ffi.h"
 #if defined(__APPLE__)
-#include "qt/macos_event_buffer_bridge.h"
-#include "qt/macos_display_link_bridge.h"
-#include "qt_cocoa_dispatcher_private_shim.h"
+#include "qt/macos/event_buffer.h"
+#include "qt/macos/display_link.h"
+#include "qt/macos/cocoa_dispatcher_shim.h"
 #include <CoreFoundation/CoreFoundation.h>
 #elif defined(_WIN32)
 #include <windows.h>
 #endif
 #include "qt_wgpu_platform.h"
 #include "native/src/qt/ffi.rs.h"
-#include "rust_widget_binding_host.h"
-#include "qt_widget_host_includes.inc"
-#include "qt_widget_overrides.inc"
+#include "qt/widget_host.h"
 
 #include <array>
 #include <cstring>
@@ -111,11 +109,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "qt_window_compositor_shaders.inc"
-
-#include "qt_bind_callables_decl.h"
-
-#include "qt_taffy_layout.h"
+#include "qt/layout.h"
 
 #include <private/qwidgetlinecontrol_p.h>
 

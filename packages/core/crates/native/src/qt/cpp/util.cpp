@@ -2,7 +2,7 @@ constexpr std::uint32_t kRootNodeId = 1;
 
 // Widget and layout enum definitions
 enum class WidgetKind : std::uint8_t {
-#include "qt_widget_kind_enum.inc"
+  Widget_Window = 1,
 };
 
 enum class FlexDirectionKind : std::uint8_t {
@@ -112,7 +112,8 @@ QString to_qstring(::rust::Str value) {
 
 WidgetKind widget_kind_from_tag(std::uint8_t kind_tag) {
   switch (kind_tag) {
-#include "qt_widget_kind_from_tag.inc"
+  case 1:
+    return WidgetKind::Widget_Window;
   default:
     throw_error("received unknown widget kind tag");
   }
@@ -120,7 +121,8 @@ WidgetKind widget_kind_from_tag(std::uint8_t kind_tag) {
 
 bool widget_kind_is_top_level(WidgetKind kind) {
   switch (kind) {
-#include "qt_widget_top_level_cases.inc"
+  case WidgetKind::Widget_Window:
+    return true;
   }
 
   throw_error("received unknown widget kind for top-level lookup");

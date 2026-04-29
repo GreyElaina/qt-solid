@@ -9,7 +9,16 @@ public:
     WidgetEntry entry{.node_id = id, .kind = kind};
 
     switch (kind) {
-#include "qt_widget_create_cases.inc"
+    case WidgetKind::Widget_Window: {
+      auto *widget = new HostWindowWidget();
+      auto *layout = new QBoxLayout(QBoxLayout::TopToBottom);
+      layout->setSizeConstraint(QLayout::SetNoConstraint);
+      widget->setLayout(layout);
+      entry.widget = widget;
+      entry.layout = layout;
+      apply_widget_style(entry);
+      break;
+    }
     }
 
     if (auto *callback_host = dynamic_cast<RustWidgetBindingHost *>(entry.widget)) {

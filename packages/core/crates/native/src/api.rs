@@ -583,10 +583,6 @@ impl QtNode {
     }
 }
 
-include!(concat!(env!("OUT_DIR"), "/qt_widget_entities.rs"));
-
-include!(concat!(env!("OUT_DIR"), "/qt_node_methods.rs"));
-
 #[napi_derive::napi(js_name = "scheduleTimerEvent")]
 pub fn qt_solid_schedule_timer_event(delay_ms: u32, event: String) -> Result<()> {
     runtime::schedule_debug_event(delay_ms, event)

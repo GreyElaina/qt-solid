@@ -1,6 +1,5 @@
 #include "qt_wgpu_platform.h"
 
-#include "texture_paint_host_widget.h"
 #include "native/src/qt/ffi.rs.h"
 
 #include <QtCore/QByteArray>
@@ -22,8 +21,8 @@
 #include <qpa/qplatformintegrationplugin.h>
 #include <qpa/qplatformnativeinterface.h>
 
-#include "qplatformintegrationfactory_p.h"
-#include "qplugin_p.h"
+#include <qpa/qplatformintegrationfactory_p.h>
+#include <QtCore/private/qplugin_p.h>
 
 #if defined(Q_OS_LINUX)
 #include "qplatformwindow_p.h"

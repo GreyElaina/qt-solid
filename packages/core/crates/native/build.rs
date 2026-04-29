@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    env,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -124,103 +124,6 @@ fn find_qt_gui_rhi_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
     include_dirs
 }
 
-fn find_local_qt_source_include_dirs() -> Vec<PathBuf> {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let candidate = manifest_dir.join("../../../../../qt-source/qtbase/src");
-    let mut include_dirs = Vec::new();
-
-    for relative in ["gui/kernel", "corelib/plugin"] {
-        let path = candidate.join(relative);
-        if path.exists() {
-            include_dirs.push(path);
-        }
-    }
-
-    include_dirs
-}
-
-fn qmake_query(key: &str) -> Option<String> {
-    let output = Command::new("qmake").args(["-query", key]).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let value = String::from_utf8(output.stdout).ok()?;
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_owned())
-    }
-}
-
-fn resolve_qsb_tool() -> PathBuf {
-    if let Ok(path) = env::var("QSB") {
-        let path = PathBuf::from(path);
-        if path.exists() {
-            return path;
-        }
-    }
-
-    if let Some(host_bins) = qmake_query("QT_HOST_BINS") {
-        let path = PathBuf::from(host_bins).join("qsb");
-        if path.exists() {
-            return path;
-        }
-    }
-
-    PathBuf::from("qsb")
-}
-
-fn compile_qsb_shader(qsb: &Path, input: &Path, output: &Path) {
-    let status = Command::new(qsb)
-        .args(["--qt6", "-s", "-o"])
-        .arg(output)
-        .arg(input)
-        .status()
-        .unwrap_or_else(|error| panic!("run {} for {}: {error}", qsb.display(), input.display()));
-    assert!(
-        status.success(),
-        "qsb failed for {} -> {}",
-        input.display(),
-        output.display()
-    );
-}
-
-fn render_embedded_cpp_bytes(symbol: &str, bytes: &[u8]) -> String {
-    let mut out = String::new();
-    out.push_str(&format!("static const unsigned char {symbol}[] = {{\n"));
-    for chunk in bytes.chunks(12) {
-        out.push_str("    ");
-        for (index, byte) in chunk.iter().enumerate() {
-            if index > 0 {
-                out.push_str(", ");
-            }
-            out.push_str(&format!("0x{byte:02x}"));
-        }
-        out.push_str(",\n");
-    }
-    out.push_str("};\n");
-    out.push_str(&format!(
-        "static constexpr std::size_t {symbol}Len = sizeof({symbol});\n"
-    ));
-    out
-}
-
-fn render_window_compositor_shader_header(vertex_qsb: &[u8], fragment_qsb: &[u8]) -> String {
-    let mut out = String::new();
-    out.push_str(&render_embedded_cpp_bytes(
-        "kWindowCompositorVertQsb",
-        vertex_qsb,
-    ));
-    out.push('\n');
-    out.push_str(&render_embedded_cpp_bytes(
-        "kWindowCompositorFragQsb",
-        fragment_qsb,
-    ));
-    out
-}
-
 fn assert_supported_macos_qt_version(qt_build: &QtBuild) {
     let version = qt_build.version();
     let supported = version.major == 6 && version.minor == 10;
@@ -231,15 +134,6 @@ fn assert_supported_macos_qt_version(qt_build: &QtBuild) {
     );
 }
 
-fn write_if_changed(path: &Path, content: &str) {
-    match fs::read_to_string(path) {
-        Ok(existing) if existing == content => {}
-        _ => fs::write(path, content).unwrap_or_else(|error| {
-            panic!("write {}: {error}", path.display());
-        }),
-    }
-}
-
 fn main() {
     let qt_wgpu_renderer = qt_wgpu_renderer::spec();
     let qt_taffy_layout = qt_taffy_layout::spec();
@@ -248,11 +142,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=NODE_INCLUDE_DIR");
     println!("cargo:rerun-if-env-changed=QSB");
     println!("cargo:rerun-if-changed=build/qt_wgpu_renderer.rs");
-    println!("cargo:rerun-if-changed=include/custom_paint_host_widget.h");
-    println!("cargo:rerun-if-changed=include/rust_widget_binding_host.h");
+    println!("cargo:rerun-if-changed=include/qt/widget_host.h");
     println!("cargo:rerun-if-changed=include/qt/ffi.h");
-    println!("cargo:rerun-if-changed=include/qt/macos_event_buffer_bridge.h");
-    println!("cargo:rerun-if-changed=include/qt_cocoa_dispatcher_private_shim.h");
+    println!("cargo:rerun-if-changed=include/qt/macos/event_buffer.h");
+    println!("cargo:rerun-if-changed=include/qt/macos/cocoa_dispatcher_shim.h");
     println!("cargo:rerun-if-changed=shaders/window_compositor.vert");
     println!("cargo:rerun-if-changed=shaders/window_compositor.frag");
     println!("cargo:rerun-if-changed=src/qt/cpp/ffi.cpp");
@@ -286,68 +179,6 @@ fn main() {
     napi_build::setup();
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
-    write_if_changed(&out_dir.join("qt_widget_entities.rs"), "");
-    write_if_changed(&out_dir.join("qt_node_methods.rs"), "");
-    write_if_changed(
-        &out_dir.join("qt_widget_host_includes.inc"),
-        "#include \"custom_paint_host_widget.h\"\n",
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_kind_enum.inc"),
-        "Widget_Window = 1,\n",
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_kind_from_tag.inc"),
-        "case 1:\n  return WidgetKind::Widget_Window;\n",
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_top_level_cases.inc"),
-        "case WidgetKind::Widget_Window:\n  return true;\n",
-    );
-    write_if_changed(
-        &out_dir.join("qt_widget_create_cases.inc"),
-        r#"case WidgetKind::Widget_Window: {
-  auto *widget = new HostWindowWidget();
-  auto *layout = new QBoxLayout(QBoxLayout::TopToBottom);
-  layout->setSizeConstraint(QLayout::SetNoConstraint);
-  widget->setLayout(layout);
-  entry.widget = widget;
-  entry.layout = layout;
-  apply_widget_style(entry);
-  break;
-}
-"#,
-    );
-    write_if_changed(&out_dir.join("qt_widget_overrides.inc"), "");
-    write_if_changed(&out_dir.join("qt_bind_callables.inc"), "");
-    write_if_changed(&out_dir.join("qt_bind_callables_decl.h"), "");
-    write_if_changed(&out_dir.join("bind_callables_bridge.rs"), "");
-    write_if_changed(&out_dir.join("bind_prop_dispatch.rs"), "");
-    let qsb = resolve_qsb_tool();
-    let window_compositor_vert_qsb = out_dir.join("window_compositor.vert.qsb");
-    let window_compositor_frag_qsb = out_dir.join("window_compositor.frag.qsb");
-    compile_qsb_shader(
-        &qsb,
-        Path::new("shaders/window_compositor.vert"),
-        &window_compositor_vert_qsb,
-    );
-    compile_qsb_shader(
-        &qsb,
-        Path::new("shaders/window_compositor.frag"),
-        &window_compositor_frag_qsb,
-    );
-    let window_compositor_shader_header = render_window_compositor_shader_header(
-        &fs::read(&window_compositor_vert_qsb).unwrap_or_else(|error| {
-            panic!("read {}: {error}", window_compositor_vert_qsb.display())
-        }),
-        &fs::read(&window_compositor_frag_qsb).unwrap_or_else(|error| {
-            panic!("read {}: {error}", window_compositor_frag_qsb.display())
-        }),
-    );
-    write_if_changed(
-        &out_dir.join("qt_window_compositor_shaders.inc"),
-        &window_compositor_shader_header,
-    );
 
     let qt_build = QtBuild::new(vec![
         "Core".to_owned(),
@@ -360,7 +191,6 @@ fn main() {
     let qt_include_dirs = qt_build.include_paths();
     let qt_private_include_dirs = find_qt_private_include_dirs(&qt_build);
     let qt_gui_rhi_include_dirs = find_qt_gui_rhi_include_dirs(&qt_build);
-    let qt_source_include_dirs = find_local_qt_source_include_dirs();
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         assert_supported_macos_qt_version(&qt_build);
@@ -403,10 +233,6 @@ fn main() {
     }
 
     for include_dir in qt_gui_rhi_include_dirs {
-        add_include_if_exists(&mut build, include_dir);
-    }
-
-    for include_dir in qt_source_include_dirs {
         add_include_if_exists(&mut build, include_dir);
     }
 
