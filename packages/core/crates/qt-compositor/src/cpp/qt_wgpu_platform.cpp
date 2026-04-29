@@ -720,6 +720,7 @@ void *unified_compositor_window_metal_layer(QWindow *window,
     return nullptr;
   }
 }
+#endif
 
 bool unified_compositor_window_request_frame(QWindow *window,
                                              double source_device_pixel_ratio) {
@@ -771,6 +772,7 @@ bool unified_compositor_window_display_link_should_run(
   }
 }
 
+#if defined(Q_OS_MACOS)
 bool unified_compositor_window_note_metal_display_link_drawable(
     QWindow *window, double source_device_pixel_ratio,
     std::uint64_t drawable_handle) {

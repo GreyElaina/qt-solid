@@ -76,7 +76,14 @@ std::optional<std::uint64_t> current_runtime_wait_bridge_timer_delay_ms()
 [[noreturn]] void throw_uv_error(const char *operation, int status) {
   std::string message(operation);
   message += ": ";
+#if defined(Q_OS_WIN)
+  // On Windows, uv symbols are resolved dynamically from the host process.
+  // Forward-declare the wrapper that wait_bridge.cpp defines via #define later.
+  const char *qt_solid_uv_strerror(int status);
+  message += qt_solid_uv_strerror(status);
+#else
   message += uv_strerror(status);
+#endif
   throw std::runtime_error(message);
 }
 
