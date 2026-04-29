@@ -6,7 +6,9 @@ public:
     }
 
     const auto kind = widget_kind_from_tag(kind_tag);
-    WidgetEntry entry{.node_id = id, .kind = kind};
+    WidgetEntry entry;
+    entry.node_id = id;
+    entry.kind = kind;
 
     switch (kind) {
     case WidgetKind::Widget_Window: {
