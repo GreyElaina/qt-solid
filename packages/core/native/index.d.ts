@@ -71,6 +71,8 @@ export declare function canvasFragmentSetF64Prop(canvasNodeId: number, fragmentI
 
 export declare function canvasFragmentSetLayoutFlip(canvasNodeId: number, fragmentId: number, dx: number, dy: number, sx: number, sy: number, transition: QtTransitionSpec): boolean
 
+export declare function canvasFragmentSetListener(canvasNodeId: number, fragmentId: number, listenerBit: number, enabled: boolean): void
+
 export declare function canvasFragmentSetMotionTarget(canvasNodeId: number, fragmentId: number, target: QtMotionTarget, transition: QtPerPropertyTransition, delay?: number | undefined | null): boolean
 
 export declare function canvasFragmentSetProp(canvasNodeId: number, fragmentId: number, key: string, value: FragmentValue): void
@@ -306,6 +308,7 @@ export type QtHostEvent =
   | { type: 'canvasmotioncomplete', canvasNodeId: number, fragmentId: number }
   | { type: 'canvasfocuschange', canvasNodeId: number, oldFragmentId: number, newFragmentId: number }
   | { type: 'canvastextinputchange', canvasNodeId: number, fragmentId: number, text: string, cursor: number, selStart: number, selEnd: number }
+  | { type: 'fragmentlayout', canvasNodeId: number, fragmentId: number, x: number, y: number, width: number, height: number }
   | { type: 'windowfocuschange', nodeId: number, gained: boolean }
   | { type: 'windowresize', nodeId: number, width: number, height: number }
   | { type: 'windowstatechange', nodeId: number, state: number }

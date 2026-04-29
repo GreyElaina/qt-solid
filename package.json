@@ -7,8 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build:native": "napi build --manifest-path packages/core-native/crates/native/Cargo.toml --platform --esm --output-dir packages/core/native --js index.js --dts index.d.ts",
-    "build:native:release": "napi build --manifest-path packages/core-native/crates/native/Cargo.toml --platform --esm --output-dir packages/core/native --js index.js --dts index.d.ts --release",
+    "build:native": "napi build --manifest-path packages/core/crates/native/Cargo.toml --platform --esm --output-dir packages/core/native --js index.js --dts index.d.ts",
+    "build:native:release": "napi build --manifest-path packages/core/crates/native/Cargo.toml --platform --esm --output-dir packages/core/native --js index.js --dts index.d.ts --release",
     "check:native": "cargo check -p native",
     "typecheck": "tsgo --noEmit",
     "pretypecheck": "npm run build:native",

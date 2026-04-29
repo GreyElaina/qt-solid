@@ -1,0 +1,13 @@
+{
+  "name": "@qt-solid/figma-plugin",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "build": "rolldown -c",
+    "watch": "rolldown -c --watch"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.100.0",
+    "rolldown": "^1.0.0-rc.17"
+  }
+}

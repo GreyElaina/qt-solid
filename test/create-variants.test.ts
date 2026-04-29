@@ -1,8 +1,8 @@
 import { createComponent, createEffect, createRoot, createSignal, type Component } from "solid-js"
 import { describe, expect, it } from "vitest"
 
-import { createVariants } from "../packages/solid/src/app/variants.ts"
-import type { MotionComponentProps } from "../packages/solid/src/app/types.ts"
+import { createVariants } from "../packages/solid/src/app/motion/variants.ts"
+import type { MotionComponentProps } from "../packages/solid/src/app/motion/types.ts"
 
 describe("createVariants", () => {
   it("keeps resolved animate target reactive across variant changes", async () => {

@@ -16,8 +16,8 @@ import {
 } from "@qt-solid/core/native"
 
 import type { QtMotionConfig } from "../qt-intrinsics.ts"
-import type { TransitionSpec } from "../app/types.ts"
-import { setLayoutId as registrySetLayoutId, unsetLayoutId as registryUnsetLayoutId } from "../app/layout-id.ts"
+import type { TransitionSpec } from "../app/motion/types.ts"
+import { setLayoutId as registrySetLayoutId, unsetLayoutId as registryUnsetLayoutId } from "../app/motion/layout-id.ts"
 import type { QtRendererNode } from "./renderer.ts"
 
 // ---------------------------------------------------------------------------

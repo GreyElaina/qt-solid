@@ -22,6 +22,7 @@ export const HANDLED_EVENT_NAMES = new Set([
   "onWheel",
   "onFocusIn", "onFocusOut",
   "onTextChange",
+  "onLayout",
 ])
 
 // Per-canvas flag: suppress the onClick that follows a double-click's trailing release.
@@ -281,4 +282,20 @@ export function dispatchCanvasWheelEvent(
   }
 
   bubbleEvent(node, "onWheel", payload)
+}
+
+export function dispatchFragmentLayout(
+  canvasNodeId: number,
+  fragmentId: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): void {
+  const binding = CANVAS_BINDINGS.get(canvasNodeId)
+  if (!binding) return
+  const node = findFragmentNode(binding.root, fragmentId)
+  if (!node) return
+  const handler = node.eventHandlers.get("onLayout")
+  if (handler) handler({ x, y, width, height })
 }

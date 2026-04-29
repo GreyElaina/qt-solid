@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { __testMotionInternals } from "../packages/solid/src/app/motion.ts"
+import { __testMotionInternals } from "../packages/solid/src/app/motion/motion.ts"
 
 describe("motion transition lowering", () => {
   it("keeps default spring when transition only specifies per-property overrides", () => {

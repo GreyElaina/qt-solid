@@ -7,8 +7,8 @@ import { readQtSourceMetadata } from "./source-meta.ts"
 import type {
   ViewProps,
   WidgetProps,
-  WindowProps,
 } from "./types.ts"
+import type { WindowProps } from "./windowing/types.ts"
 
 export function createRuntimeElement(type: string, props: Record<string, unknown>): JSX.Element {
   const node = createQtElement(type)

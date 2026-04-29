@@ -1,7 +1,7 @@
 import { createComponent, createRoot, createSignal } from "solid-js"
 import { describe, expect, it } from "vitest"
 
-import { AnimatePresence } from "../packages/solid/src/app/presence.ts"
+import { AnimatePresence } from "../packages/solid/src/app/motion/presence.ts"
 
 describe("AnimatePresence", () => {
   it("mounts children when `when` flips from false to true", async () => {

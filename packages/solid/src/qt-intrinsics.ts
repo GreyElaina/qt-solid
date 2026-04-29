@@ -166,6 +166,7 @@ export interface CanvasEventProps {
   onWheel?: (e: WheelEventPayload) => void
   onFocusIn?: () => void
   onFocusOut?: () => void
+  onLayout?: (e: { x: number; y: number; width: number; height: number }) => void
 }
 
 export interface CanvasNodeHandle {

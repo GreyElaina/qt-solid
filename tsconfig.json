@@ -20,6 +20,10 @@
       "@qt-solid/solid/compiler-rt": ["./packages/solid/src/compiler-rt.ts"],
       "@qt-solid/solid/jsx-runtime": ["./packages/solid/src/jsx-runtime.d.ts"],
       "@qt-solid/solid/jsx-dev-runtime": ["./packages/solid/src/jsx-runtime.d.ts"],
+      "@qt-solid/solid/preview": ["./packages/solid/src/preview/index.ts"],
+      "@qt-solid/solid/preview/config": ["./packages/solid/src/preview/config.ts"],
+      "@qt-solid/solid/preview/runtime": ["./packages/solid/src/preview/preview-runtime.ts"],
+      "@qt-solid/solid/preview/shell": ["./packages/solid/src/preview/preview-shell.tsx"],
       "@qt-solid/fluent": ["./packages/fluent/src/index.ts"]
     },
 
@@ -41,6 +45,7 @@
   "exclude": [
     "node_modules",
     "packages/figma-codegen",
+    "packages/figma-plugin",
     "**/dist",
     "**/dist-sea"
   ]

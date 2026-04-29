@@ -13,6 +13,7 @@ import {
   dispatchCanvasKeyboardEvent,
   dispatchCanvasTextInputChange,
   dispatchCanvasWheelEvent,
+  dispatchFragmentLayout,
 } from "./canvas/dispatch.ts"
 import { hoveredFragments } from "./canvas/registry.ts"
 
@@ -202,6 +203,9 @@ export function handleEvent(event: QtHostEvent): void {
   } else if (event.type === "canvastextinputchange") {
     const { canvasNodeId, fragmentId, text, cursor, selStart, selEnd } = event
     dispatchCanvasTextInputChange(canvasNodeId, fragmentId, text, cursor, selStart, selEnd)
+  } else if (event.type === "fragmentlayout") {
+    const { canvasNodeId, fragmentId, x, y, width, height } = event
+    dispatchFragmentLayout(canvasNodeId, fragmentId, x, y, width, height)
   } else if (event.type === "windowfocuschange") {
     emitNativeEvent(event.nodeId, "onWindowFocusChange", { gained: event.gained })
   } else if (event.type === "windowresize") {

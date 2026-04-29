@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "packages/core-native/crates/native",
-    "packages/core-native/crates/window-host",
+    "packages/core/crates/native",
+    "packages/core/crates/window-host",
 
-    "packages/core-native/crates/qt-compositor",
-    "packages/core-native/crates/motion",
-    "packages/core-native/macros/fragment-derive",
+    "packages/core/crates/qt-compositor",
+    "packages/core/crates/motion",
+    "packages/core/macros/fragment-derive",
 ]
 resolver = "2"
 

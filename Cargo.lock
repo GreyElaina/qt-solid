@@ -1175,6 +1175,7 @@ dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
  "anyrender_vello_hybrid",
+ "bitflags",
  "bytemuck",
  "cc",
  "cxx",

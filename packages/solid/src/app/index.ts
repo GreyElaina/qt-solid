@@ -1,28 +1,82 @@
 export { createRuntimeElement as createIntrinsicElement } from "./props.ts";
 export { defineIntrinsicComponent } from "./intrinsic.ts";
-export { ScrollView } from "./scroll-view.tsx";
-export type { ScrollViewProps } from "./scroll-view.tsx";
-export { Image } from "./image.tsx";
-export type { ImageProps } from "./image.tsx";
-export { motion } from "./motion.ts";
-export { useMotionValue } from "./use-motion-value.ts";
-export type { MotionValueConfig } from "./use-motion-value.ts";
-export { createVariants } from "./variants.ts";
-export { AnimatePresence } from "./presence.ts";
 export { createApp, renderQt } from "./app.ts";
 export { withQtSourceMeta } from "./source-meta.ts";
-export { createWindow } from "./window.ts";
-export { createPopup, usePopup } from "./popup.ts";
-export { useTooltip } from "./tooltip.ts";
-export type { UseTooltipOptions, UseTooltipResult } from "./tooltip.ts";
-export { useClipboard } from "./clipboard.ts";
-export type { ClipboardEntry, UseClipboardResult } from "./clipboard.ts";
-export { useColorScheme } from "./color-scheme.ts";
-export type { ColorScheme } from "./color-scheme.ts";
-export { useScreenDpi } from "./screen-dpi.ts";
-export type { ScreenDpi } from "./screen-dpi.ts";
-export { openFileDialog, saveFileDialog } from "./dialog.ts";
-export type { OpenFileDialogOptions, SaveFileDialogOptions } from "./dialog.ts";
+
+// motion
+export {
+  motion,
+  __testMotionInternals,
+  useMotionValue,
+  createVariants,
+  AnimatePresence,
+  setLayoutId,
+  unsetLayoutId,
+} from "./motion/index.ts";
+export type {
+  MotionValueConfig,
+  PresenceContextState,
+  OrchestrationConfig,
+  OrchestrationContextState,
+  OrchestrationParentControl,
+  MotionComponentProps,
+  MotionTarget,
+  MotionTransition,
+  MotionValue,
+  MotionProps,
+  NamedEasing,
+  BezierEasing,
+  TransitionSpec,
+  DragConstraints,
+} from "./motion/index.ts";
+
+// windowing
+export {
+  createWindow,
+  createPopup,
+  usePopup,
+  useTooltip,
+  openFileDialog,
+  saveFileDialog,
+} from "./windowing/index.ts";
+export type {
+  UseTooltipOptions,
+  UseTooltipResult,
+  OpenFileDialogOptions,
+  SaveFileDialogOptions,
+  WindowProps,
+  PopupDismissEvent,
+  PopupProps,
+  PopupSource,
+  TooltipProps,
+  WindowSource,
+  WindowComposable,
+  WindowConfig,
+  WindowConfigSource,
+} from "./windowing/index.ts";
+
+// components
+export { ScrollView, Image, Canvas } from "./components/index.ts";
+export type {
+  ScrollViewProps,
+  ImageProps,
+  CanvasProps,
+} from "./components/index.ts";
+
+// platform
+export {
+  useClipboard,
+  useColorScheme,
+  useScreenDpi,
+} from "./platform/index.ts";
+export type {
+  ClipboardEntry,
+  UseClipboardResult,
+  ColorScheme,
+  ScreenDpi,
+} from "./platform/index.ts";
+
+// app-level types
 export type {
   AppDefinition,
   AppFactory,
@@ -30,25 +84,12 @@ export type {
   AppMount,
   AppMountOptions,
   CreateAppOptions,
-  MotionComponentProps,
-  NamedEasing,
-  BezierEasing,
-  TransitionSpec,
-  MotionProps,
-  MotionTarget,
-  MotionTransition,
-  MotionValue,
-  PopupDismissEvent,
-  PopupProps,
-  PopupSource,
   RenderQtOptions,
-  TooltipProps,
   ViewProps,
   WidgetProps,
   WindowAllClosedContext,
-  WindowConfig,
-  WindowConfigSource,
   WindowHandle,
+  WindowFrameState,
 } from "./types.ts";
 
 export type {

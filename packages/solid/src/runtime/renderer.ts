@@ -9,6 +9,7 @@ import {
   canvasFragmentCreate,
   canvasFragmentRequestRepaint,
   canvasFragmentSetProp,
+  canvasFragmentSetListener,
 } from "@qt-solid/core/native"
 
 import { rendererInspectorStore } from "../devtools/inspector-store.ts"
@@ -25,6 +26,8 @@ import {
   forgetNativeEvents,
   traceJs,
 } from "./host-events.ts"
+
+const FRAGMENT_LISTENER_LAYOUT = 1
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -392,6 +395,14 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
     } else {
       node.eventHandlers.delete(key)
     }
+    if (key === "onLayout") {
+      canvasFragmentSetListener(
+        node.canvasNodeId,
+        node.fragmentId,
+        FRAGMENT_LISTENER_LAYOUT,
+        typeof next === "function",
+      )
+    }
     return
   }
 
@@ -435,5 +446,5 @@ export const createComponent = ((...args: Parameters<typeof createComponentBase>
 
 export { FragmentRendererNode, createCanvasFragmentBinding } from "./fragment.ts"
 export { registerCanvasBinding, unregisterCanvasBinding, destroyCanvasFragmentBinding } from "./canvas/registry.ts"
-export { dispatchCanvasPointerEvent, dispatchCanvasPointerMoveForHover, dispatchCanvasMotionComplete, dispatchCanvasFocusChange, dispatchCanvasTextInputChange, dispatchCanvasKeyboardEvent, dispatchCanvasWheelEvent, HANDLED_EVENT_NAMES } from "./canvas/dispatch.ts"
+export { dispatchCanvasPointerEvent, dispatchCanvasPointerMoveForHover, dispatchCanvasMotionComplete, dispatchCanvasFocusChange, dispatchCanvasTextInputChange, dispatchCanvasKeyboardEvent, dispatchCanvasWheelEvent, dispatchFragmentLayout, HANDLED_EVENT_NAMES } from "./canvas/dispatch.ts"
 export { handleEvent, fileDialogChannel, onColorSchemeChange, onScreenDpiChange } from "./host-events.ts"

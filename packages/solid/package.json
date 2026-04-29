@@ -41,7 +41,26 @@
     "./jsx-dev-runtime": {
       "types": "./src/jsx-runtime.d.ts",
       "import": "./src/jsx-runtime.ts"
+    },
+    "./preview": {
+      "types": "./src/preview/index.ts",
+      "import": "./src/preview/index.ts"
+    },
+    "./preview/config": {
+      "types": "./src/preview/config.ts",
+      "import": "./src/preview/config.ts"
+    },
+    "./preview/runtime": {
+      "types": "./src/preview/preview-runtime.ts",
+      "import": "./src/preview/preview-runtime.ts"
+    },
+    "./preview/shell": {
+      "types": "./src/preview/preview-shell.tsx",
+      "import": "./src/preview/preview-shell.tsx"
     }
+  },
+  "bin": {
+    "qt-solid-preview": "./src/preview/cli.ts"
   },
   "dependencies": {
     "@babel/core": "^7.29.0",

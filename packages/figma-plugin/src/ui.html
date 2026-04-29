@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Inter, system-ui, sans-serif; font-size: 12px; color: #333; padding: 12px; }
+  h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .section { margin-bottom: 16px; }
+  .node-item { padding: 4px 8px; border-radius: 4px; background: #f5f5f5; margin-bottom: 4px; font-size: 11px; }
+  .node-item .tag { color: #0d99ff; font-weight: 500; }
+  .token-item { padding: 4px 8px; font-size: 11px; display: flex; gap: 8px; }
+  .token-name { font-weight: 500; }
+  .token-value { color: #666; }
+  button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 11px; }
+  button:hover { background: #f0f0f0; }
+  button.primary { background: #0d99ff; color: #fff; border-color: #0d99ff; }
+  input { padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 11px; width: 100%; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .status { font-size: 11px; color: #666; padding: 4px 0; }
+  .status.connected { color: #0c0; }
+  .status.error { color: #c00; }
+  #log { font-family: monospace; font-size: 10px; color: #666; max-height: 120px; overflow-y: auto; white-space: pre-wrap; border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="section">
+  <h3>Preview Server</h3>
+  <div class="row">
+    <input id="ws-url" placeholder="ws://127.0.0.1:9230" value="ws://127.0.0.1:9230">
+    <button id="btn-connect" class="primary">Connect</button>
+  </div>
+  <div id="ws-status" class="status">Disconnected</div>
+</div>
+
+<div class="section">
+  <h3>Selection</h3>
+  <div id="selection-list"></div>
+</div>
+
+<div class="section">
+  <h3>Tag Component</h3>
+  <div class="row">
+    <input id="tag-export" placeholder="Export name (e.g. Button)">
+  </div>
+  <div class="row">
+    <input id="tag-file" placeholder="File path (e.g. src/Button.tsx)">
+  </div>
+  <button id="btn-tag">Tag Selected Node</button>
+</div>
+
+<div class="section">
+  <h3>Tokens</h3>
+  <div class="row">
+    <button id="btn-read-tokens">Read Tokens</button>
+    <button id="btn-sync-tokens">Sync to Preview</button>
+  </div>
+  <div id="token-list"></div>
+</div>
+
+<div id="log"></div>
+
+<script>
+let ws = null
+let currentSelection = []
+let currentTokens = []
+
+// --- Plugin message handling ---
+
+window.onmessage = (event) => {
+  const msg = event.data.pluginMessage
+  if (!msg) return
+
+  switch (msg.type) {
+    case 'selection':
+      currentSelection = msg.nodes
+      renderSelection()
+      // Forward to preview server
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'figma-selection', nodes: msg.nodes }))
+      }
+      break
+
+    case 'document-change':
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'figma-change', changes: msg.changes }))
+      }
+      break
+
+    case 'tokens':
+      currentTokens = msg.tokens
+      renderTokens()
+      break
+
+    case 'tag-result':
+      log(`Tagged ${msg.nodeId} → ${msg.exportName} (${msg.filePath})`)
+      break
+
+    case 'write-tokens-result':
+      log(`Tokens: ${msg.created} created, ${msg.updated} updated`)
+      break
+
+    case 'node-tree':
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'figma-node-tree', tree: msg.tree }))
+      }
+      break
+
+    case 'error':
+      log(`Error: ${msg.message}`)
+      break
+  }
+}
+
+// --- WebSocket ---
+
+document.getElementById('btn-connect').onclick = () => {
+  const url = document.getElementById('ws-url').value
+  if (ws) ws.close()
+
+  try {
+    ws = new WebSocket(url)
+  } catch (e) {
+    setStatus('error', `Failed: ${e.message}`)
+    return
+  }
+
+  ws.onopen = () => {
+    setStatus('connected', `Connected to ${url}`)
+    log(`Connected to ${url}`)
+  }
+
+  ws.onclose = () => {
+    setStatus('', 'Disconnected')
+    log('Disconnected')
+  }
+
+  ws.onerror = (e) => {
+    setStatus('error', 'Connection error')
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data)
+      handlePreviewMessage(msg)
+    } catch (e) {
+      log(`Bad message: ${event.data}`)
+    }
+  }
+}
+
+function handlePreviewMessage(msg) {
+  switch (msg.type) {
+    case 'preview-schema':
+      log(`Schema: ${msg.schema.componentName} (${msg.schema.props.length} props)`)
+      break
+    case 'preview-frame':
+      // Could display frame thumbnail
+      break
+    case 'request-tokens':
+      parent.postMessage({ pluginMessage: { type: 'read-tokens' } }, '*')
+      break
+    case 'write-tokens':
+      parent.postMessage({ pluginMessage: msg }, '*')
+      break
+    default:
+      log(`Preview: ${JSON.stringify(msg)}`)
+  }
+}
+
+// --- Tag component ---
+
+document.getElementById('btn-tag').onclick = () => {
+  if (currentSelection.length === 0) {
+    log('No node selected')
+    return
+  }
+  const exportName = document.getElementById('tag-export').value
+  const filePath = document.getElementById('tag-file').value
+  if (!exportName) { log('Export name required'); return }
+
+  parent.postMessage({
+    pluginMessage: {
+      type: 'tag-component',
+      nodeId: currentSelection[0].id,
+      exportName,
+      filePath,
+    }
+  }, '*')
+}
+
+// --- Tokens ---
+
+document.getElementById('btn-read-tokens').onclick = () => {
+  parent.postMessage({ pluginMessage: { type: 'read-tokens' } }, '*')
+}
+
+document.getElementById('btn-sync-tokens').onclick = () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    log('Not connected to preview server')
+    return
+  }
+  ws.send(JSON.stringify({ type: 'figma-tokens', tokens: currentTokens }))
+  log(`Sent ${currentTokens.length} tokens to preview`)
+}
+
+// --- Render ---
+
+function renderSelection() {
+  const el = document.getElementById('selection-list')
+  if (currentSelection.length === 0) {
+    el.innerHTML = '<div class="status">No selection</div>'
+    return
+  }
+  el.innerHTML = currentSelection.map(n => {
+    const tag = n.qtSolidComponent ? ` <span class="tag">${n.qtSolidComponent}</span>` : ''
+    return `<div class="node-item">${n.name} <small>(${n.type})</small>${tag}</div>`
+  }).join('')
+}
+
+function renderTokens() {
+  const el = document.getElementById('token-list')
+  if (currentTokens.length === 0) {
+    el.innerHTML = '<div class="status">No tokens</div>'
+    return
+  }
+  el.innerHTML = currentTokens.slice(0, 20).map(t => {
+    const vals = Object.entries(t.values).map(([m, v]) =>
+      typeof v === 'object' && v && 'r' in v
+        ? `${m}: rgb(${Math.round(v.r*255)},${Math.round(v.g*255)},${Math.round(v.b*255)})`
+        : `${m}: ${v}`
+    ).join(', ')
+    return `<div class="token-item"><span class="token-name">${t.name}</span><span class="token-value">${vals}</span></div>`
+  }).join('') + (currentTokens.length > 20 ? `<div class="status">...and ${currentTokens.length - 20} more</div>` : '')
+}
+
+function setStatus(cls, text) {
+  const el = document.getElementById('ws-status')
+  el.className = 'status ' + cls
+  el.textContent = text
+}
+
+function log(text) {
+  const el = document.getElementById('log')
+  el.textContent += text + '\n'
+  el.scrollTop = el.scrollHeight
+}
+
+renderSelection()
+</script>
+</body>
+</html>
