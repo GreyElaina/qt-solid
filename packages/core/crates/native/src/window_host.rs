@@ -157,32 +157,31 @@ pub(crate) fn wait_bridge_kind_tag() -> u8 {
 }
 
 pub(crate) fn wait_bridge_unix_fd() -> i32 {
-    match integration()
-        .unwrap_or_else(detected_integration)
-        .wait_bridge_kind
+    #[cfg(not(target_os = "windows"))]
     {
-        WaitBridgeKind::UnixFd => crate::qt::qt_runtime_wait_bridge_unix_fd(),
-        WaitBridgeKind::None | WaitBridgeKind::WindowsHandle => -1,
+        crate::qt::qt_runtime_wait_bridge_unix_fd()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        -1
     }
 }
 
 pub(crate) fn wait_bridge_windows_handle() -> u64 {
-    match integration()
-        .unwrap_or_else(detected_integration)
-        .wait_bridge_kind
+    #[cfg(target_os = "windows")]
     {
-        #[cfg(target_os = "windows")]
-        WaitBridgeKind::WindowsHandle => WINDOW_HOST.with(|slot| {
+        WINDOW_HOST.with(|slot| {
             let Ok(slot) = slot.try_borrow() else {
                 return 0;
             };
             slot.as_ref()
                 .map(|host| host.bridge_event_handle())
                 .unwrap_or(0)
-        }),
-        #[cfg(not(target_os = "windows"))]
-        WaitBridgeKind::WindowsHandle => 0,
-        WaitBridgeKind::None | WaitBridgeKind::UnixFd => 0,
+        })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        0
     }
 }
 
