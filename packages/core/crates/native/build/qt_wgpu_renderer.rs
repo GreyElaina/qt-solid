@@ -4,17 +4,22 @@ pub(crate) struct QtWgpuRendererBuildSpec {
     pub(crate) rerun_if_changed: &'static [&'static str],
     pub(crate) include_dirs: &'static [&'static str],
     pub(crate) cpp_sources: &'static [&'static str],
+    pub(crate) objc_sources: &'static [&'static str],
 }
 
 pub(crate) fn spec() -> QtWgpuRendererBuildSpec {
     QtWgpuRendererBuildSpec {
         rerun_if_changed: &[
             "../qt-compositor/include/qt_wgpu_platform.h",
-            "../qt-compositor/src/cpp/qt_wgpu_platform.mm",
+            "../qt-compositor/src/cpp/qt_wgpu_platform.cpp",
+            "../qt-compositor/src/cpp/qt_wgpu_platform_macos.mm",
         ],
         include_dirs: &["../qt-compositor/include"],
         cpp_sources: &[
-            "../qt-compositor/src/cpp/qt_wgpu_platform.mm",
+            "../qt-compositor/src/cpp/qt_wgpu_platform.cpp",
+        ],
+        objc_sources: &[
+            "../qt-compositor/src/cpp/qt_wgpu_platform_macos.mm",
         ],
     }
 }
@@ -37,6 +42,12 @@ impl QtWgpuRendererBuildSpec {
 
     pub(crate) fn add_cpp_sources(&self, build: &mut cc::Build) {
         for path in self.cpp_sources {
+            build.file(path);
+        }
+    }
+
+    pub(crate) fn add_objc_sources(&self, build: &mut cc::Build) {
+        for path in self.objc_sources {
             build.file(path);
         }
     }

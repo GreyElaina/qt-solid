@@ -199,6 +199,7 @@ fn main() {
     build.file("src/qt/cpp/ffi.cpp");
     qt_wgpu_renderer.add_cpp_sources(&mut build);
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        qt_wgpu_renderer.add_objc_sources(&mut build);
         build.file("src/qt/cpp/macos/event_buffer.mm");
         build.flag_if_supported("-fblocks");
     }

@@ -29,7 +29,8 @@
 #endif
 
 #if defined(Q_OS_MACOS)
-#import <QuartzCore/CAMetalLayer.h>
+extern "C" void qt_wgpu_platform_set_metal_layer_presents_with_transaction(
+    void *metal_layer, bool presents_with_transaction);
 #endif
 
 #include <memory>
@@ -897,10 +898,8 @@ bool unified_compositor_active() {
 void set_metal_layer_presents_with_transaction(void *metal_layer,
                                                bool presents_with_transaction) {
 #if defined(Q_OS_MACOS)
-  if (metal_layer != nullptr) {
-    id layer = (id)metal_layer;
-    [layer setPresentsWithTransaction:presents_with_transaction];
-  }
+  qt_wgpu_platform_set_metal_layer_presents_with_transaction(
+      metal_layer, presents_with_transaction);
 #else
   (void)metal_layer;
   (void)presents_with_transaction;
