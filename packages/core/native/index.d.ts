@@ -61,6 +61,10 @@ export declare function canvasFragmentInsertChild(canvasNodeId: number, parentFr
 
 export declare function canvasFragmentRequestRepaint(canvasNodeId: number): void
 
+export declare function canvasFragmentScrollDrive(canvasNodeId: number, fragmentId: number, x: number, y: number): void
+
+export declare function canvasFragmentScrollRelease(canvasNodeId: number, fragmentId: number, clampedX: number, clampedY: number, stiffness?: number | undefined | null, damping?: number | undefined | null): boolean
+
 export declare function canvasFragmentSetBoolProp(canvasNodeId: number, fragmentId: number, key: string, value: boolean): void
 
 export declare function canvasFragmentSetDebugHighlight(canvasNodeId: number, fragmentId?: number | undefined | null): void

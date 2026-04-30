@@ -64,6 +64,14 @@ interface GestureState {
   isHovered: Accessor<boolean>;
   isTapped: Accessor<boolean>;
   isFocused: Accessor<boolean>;
+  isDragging: Accessor<boolean>;
+}
+
+/** Mutable drag controller — HOC allocates, bindMotionNode populates methods. */
+interface DragController {
+  onDown(x: number, y: number): void;
+  onMove(x: number, y: number): void;
+  onUp(x: number, y: number): void;
 }
 
 const MOTION_PROP_KEYS = [
@@ -292,19 +300,19 @@ function sendTarget(
 // ---------------------------------------------------------------------------
 
 type EventHandler = ((...args: unknown[]) => void) | undefined;
+type GestureHandler = ((...args: unknown[]) => void) | undefined;
 
 /**
- * Chain two event handlers: call `before` first, then `original`.
- * If either is undefined, return the other.
+ * Chain two event handlers: call `before` first (forwarding args), then `original`.
  */
 function chainHandler(
-  before: (() => void) | undefined,
+  before: GestureHandler,
   original: EventHandler,
 ): EventHandler {
   if (!before) return original;
   if (!original) return before as EventHandler;
   return (...args: unknown[]) => {
-    before();
+    (before as (...a: unknown[]) => void)(...args);
     (original as (...a: unknown[]) => void)(...args);
   };
 }
@@ -316,31 +324,33 @@ function chainHandler(
 function injectGestureHandlers<Props extends object>(
   baseProps: Props,
   gestureHandlers: {
-    onPointerEnter: () => void;
-    onPointerLeave: () => void;
-    onPointerDown: () => void;
-    onPointerUp: () => void;
-    onFocusIn: () => void;
-    onFocusOut: () => void;
+    onPointerEnter?: GestureHandler;
+    onPointerLeave?: GestureHandler;
+    onPointerDown?: GestureHandler;
+    onPointerMove?: GestureHandler;
+    onPointerUp?: GestureHandler;
+    onFocusIn?: GestureHandler;
+    onFocusOut?: GestureHandler;
   },
 ): Props {
   const src = baseProps as Record<string, unknown>;
   const descriptors = Object.getOwnPropertyDescriptors(baseProps) as Record<string, PropertyDescriptor>;
 
-  const eventPairs: [string, () => void][] = [
+  const eventPairs: [string, GestureHandler][] = [
     ["onPointerEnter", gestureHandlers.onPointerEnter],
     ["onPointerLeave", gestureHandlers.onPointerLeave],
     ["onPointerDown", gestureHandlers.onPointerDown],
+    ["onPointerMove", gestureHandlers.onPointerMove],
     ["onPointerUp", gestureHandlers.onPointerUp],
     ["onFocusIn", gestureHandlers.onFocusIn],
     ["onFocusOut", gestureHandlers.onFocusOut],
   ];
 
   for (const [name, gestureHandler] of eventPairs) {
+    if (!gestureHandler) continue;
     const existingDescriptor = descriptors[name];
 
     if (existingDescriptor && "get" in existingDescriptor && existingDescriptor.get) {
-      // Reactive getter — wrap with lazy chaining
       const originalGet = existingDescriptor.get;
       descriptors[name] = {
         configurable: true,
@@ -350,7 +360,6 @@ function injectGestureHandlers<Props extends object>(
         },
       };
     } else {
-      // Static value or absent — chain with current value
       descriptors[name] = {
         configurable: true,
         enumerable: true,
@@ -364,12 +373,41 @@ function injectGestureHandlers<Props extends object>(
   return Object.defineProperties({}, descriptors) as Props;
 }
 
+// -- Drag helpers --
+
+function resolveMotionValue(v: MotionValue | undefined): number | undefined {
+  if (v == null) return undefined;
+  return Array.isArray(v) ? v[v.length - 1] : v;
+}
+
+function clamp(value: number, min: number | undefined, max: number | undefined): number {
+  if (min != null && value < min) return min;
+  if (max != null && value > max) return max;
+  return value;
+}
+
+function applyElastic(
+  value: number,
+  min: number | undefined,
+  max: number | undefined,
+  elastic: number,
+): number {
+  if (min != null && value < min) {
+    return min + (value - min) * elastic;
+  }
+  if (max != null && value > max) {
+    return max + (value - max) * elastic;
+  }
+  return value;
+}
+
 // -- Binding --
 
 function bindMotionNode(
   node: MotionNodeHandle,
   readMotion: () => MotionComponentProps<object>,
   gesture: GestureState,
+  dragCtrl: DragController,
 ): void {
   let started = false;
   const presence = usePresence();
@@ -407,6 +445,91 @@ function bindMotionNode(
   createEffect(() => {
     writeConfig();
   });
+
+  // ---------------------------------------------------------------------------
+  // Drag gesture binding
+  // ---------------------------------------------------------------------------
+  {
+    let dragStartPointerX = 0;
+    let dragStartPointerY = 0;
+    let dragOriginX = 0;
+    let dragOriginY = 0;
+
+    const [isDragging, setIsDragging] = createSignal(false);
+    // Expose isDragging to gesture state (replaces the HOC-level placeholder)
+    (gesture as { isDragging: Accessor<boolean> }).isDragging = isDragging;
+
+    dragCtrl.onDown = (px: number, py: number) => {
+      const props = readMotion();
+      if (!props.drag) return;
+
+      dragStartPointerX = px;
+      dragStartPointerY = py;
+
+      // Read current target x/y from the animate prop (last commanded position)
+      const anim = props.animate;
+      dragOriginX = resolveMotionValue(anim?.x) ?? 0;
+      dragOriginY = resolveMotionValue(anim?.y) ?? 0;
+
+      setIsDragging(true);
+      props.onDragStart?.(px, py);
+    };
+
+    dragCtrl.onMove = (px: number, py: number) => {
+      if (!isDragging()) return;
+      const props = readMotion();
+      const axis = props.drag;
+      const elastic = props.dragElastic ?? 0.35;
+      const constraints = props.dragConstraints;
+
+      let dx = px - dragStartPointerX;
+      let dy = py - dragStartPointerY;
+      if (axis === "x") dy = 0;
+      if (axis === "y") dx = 0;
+
+      let targetX = dragOriginX + dx;
+      let targetY = dragOriginY + dy;
+
+      // Apply elastic overshoot past constraints
+      if (constraints) {
+        targetX = applyElastic(targetX, constraints.left, constraints.right, elastic);
+        targetY = applyElastic(targetY, constraints.top, constraints.bottom, elastic);
+      }
+
+      node.setMotionTarget(
+        { x: targetX, y: targetY },
+        { default: INSTANT_DEFAULT },
+      );
+      props.onDrag?.(px, py);
+    };
+
+    dragCtrl.onUp = (px: number, py: number) => {
+      if (!isDragging()) return;
+      const props = readMotion();
+      setIsDragging(false);
+
+      // Compute clamped final position within constraints
+      const axis = props.drag;
+      const constraints = props.dragConstraints;
+      let dx = px - dragStartPointerX;
+      let dy = py - dragStartPointerY;
+      if (axis === "x") dy = 0;
+      if (axis === "y") dx = 0;
+
+      let finalX = dragOriginX + dx;
+      let finalY = dragOriginY + dy;
+
+      if (constraints) {
+        finalX = clamp(finalX, constraints.left, constraints.right);
+        finalY = clamp(finalY, constraints.top, constraints.bottom);
+      }
+
+      // Release with spring — velocity inferred automatically by motion crate
+      const releaseTransition = lowerTransition(props.transition) ?? { default: SPRING_DEFAULT };
+      node.setMotionTarget({ x: finalX, y: finalY }, releaseTransition);
+      props.onDragEnd?.(px, py);
+    };
+  }
 
   // layoutId: register for shared layout animation
   createEffect(() => {
@@ -450,13 +573,13 @@ function bindMotionNode(
   });
 
   // Track animate prop changes + gesture overlays
-  // Priority: tap > hover > focus > animate
-  // Gesture state is driven by the HOC's event handler wiring,
-  // not by the presence of props.
+  // Priority: drag > tap > hover > focus > animate
   createEffect(() => {
     const props = readMotion();
     const mounted = presence?.mount() ?? true;
     if (!started || !mounted) return;
+    // While dragging, drag controller drives x/y directly — suppress animate
+    if (gesture.isDragging()) return;
 
     const base = props.animate;
 
@@ -515,13 +638,22 @@ export function motion<Props extends object>(
     const [isHovered, setIsHovered] = createSignal(false);
     const [isTapped, setIsTapped] = createSignal(false);
     const [isFocused, setIsFocused] = createSignal(false);
+    // isDragging is populated by bindMotionNode's drag binding
+    const [isDragging] = createSignal(false);
 
-    const gestureState: GestureState = { isHovered, isTapped, isFocused };
+    const gestureState: GestureState = { isHovered, isTapped, isFocused, isDragging };
 
-    // Determine if any gesture props are present (static check)
+    // Drag controller — methods populated by bindMotionNode
+    const dragCtrl: DragController = {
+      onDown: () => {},
+      onMove: () => {},
+      onUp: () => {},
+    };
+
+    // Determine if any gesture/drag props are present
     const hasGestureProps = createMemo(() => {
       const m = split().motionProps;
-      return m.whileHover != null || m.whileTap != null || m.whileFocus != null;
+      return m.whileHover != null || m.whileTap != null || m.whileFocus != null || m.drag != null;
     });
 
     // Wrap base props with gesture event handlers when gesture props exist
@@ -532,8 +664,20 @@ export function motion<Props extends object>(
       return injectGestureHandlers(base, {
         onPointerEnter: () => setIsHovered(true),
         onPointerLeave: () => { setIsHovered(false); setIsTapped(false); },
-        onPointerDown: () => setIsTapped(true),
-        onPointerUp: () => setIsTapped(false),
+        onPointerDown: (ev: unknown) => {
+          setIsTapped(true);
+          const { x, y } = ev as { x: number; y: number };
+          dragCtrl.onDown(x, y);
+        },
+        onPointerMove: (ev: unknown) => {
+          const { x, y } = ev as { x: number; y: number };
+          dragCtrl.onMove(x, y);
+        },
+        onPointerUp: (ev: unknown) => {
+          setIsTapped(false);
+          const { x, y } = ev as { x: number; y: number };
+          dragCtrl.onUp(x, y);
+        },
         onFocusIn: () => setIsFocused(true),
         onFocusOut: () => setIsFocused(false),
       });
@@ -551,6 +695,7 @@ export function motion<Props extends object>(
       element,
       () => split().motionProps,
       gestureState,
+      dragCtrl,
     );
 
     // Provide orchestration context to children if transition has stagger/when
@@ -587,7 +732,7 @@ export function motion<Props extends object>(
       return OrchestrationContext.Provider({
         value: orch,
         get children() { return element; },
-      }) as unknown as JSX.Element; // Provider returns JSX.Element but wrapped type
+      }) as unknown as JSX.Element;
     }
 
     return element;

@@ -672,6 +672,32 @@ pub fn fragment_store_set_scroll_offset(
     });
 }
 
+pub fn fragment_store_drive_scroll_motion(
+    canvas_node_id: u32,
+    fragment_id: FragmentId,
+    x: f64,
+    y: f64,
+    now: f64,
+) {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.drive_scroll_motion(fragment_id, x, y, now);
+    });
+}
+
+pub fn fragment_store_release_scroll_motion(
+    canvas_node_id: u32,
+    fragment_id: FragmentId,
+    clamped_x: f64,
+    clamped_y: f64,
+    spring: motion::TransitionSpec,
+    now: f64,
+) -> bool {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.release_scroll_motion(fragment_id, clamped_x, clamped_y, spring, now)
+    })
+    .unwrap_or(false)
+}
+
 pub fn fragment_store_get_content_size(
     canvas_node_id: u32,
     fragment_id: FragmentId,

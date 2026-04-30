@@ -34,6 +34,9 @@ pub enum PropertyKey {
     ShadowG,
     ShadowB,
     ShadowA,
+    // Scroll channels
+    ScrollX,
+    ScrollY,
 }
 
 impl PropertyKey {
@@ -53,6 +56,7 @@ impl PropertyKey {
             Self::ShadowOffsetX | Self::ShadowOffsetY | Self::ShadowBlurRadius => 0.0,
             Self::ShadowR | Self::ShadowG | Self::ShadowB => 0.0,
             Self::ShadowA => 0.0,
+            Self::ScrollX | Self::ScrollY => 0.0,
         }
     }
 
@@ -71,6 +75,7 @@ impl PropertyKey {
             Self::ShadowBlurRadius => "shadowBlurRadius",
             Self::ShadowR => "shadowR", Self::ShadowG => "shadowG",
             Self::ShadowB => "shadowB", Self::ShadowA => "shadowA",
+            Self::ScrollX => "scrollX", Self::ScrollY => "scrollY",
         }
     }
 
@@ -125,6 +130,9 @@ pub struct SampledPose {
     pub shadow_g: f64,
     pub shadow_b: f64,
     pub shadow_a: f64,
+    // Scroll
+    pub scroll_x: f64,
+    pub scroll_y: f64,
 }
 
 impl Default for SampledPose {
@@ -155,6 +163,8 @@ impl Default for SampledPose {
             shadow_g: 0.0,
             shadow_b: 0.0,
             shadow_a: 0.0,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
         }
     }
 }
@@ -380,6 +390,8 @@ fn apply_to_pose(pose: &mut SampledPose, key: PropertyKey, value: f64) {
         PropertyKey::ShadowG => pose.shadow_g = value,
         PropertyKey::ShadowB => pose.shadow_b = value,
         PropertyKey::ShadowA => pose.shadow_a = value,
+        PropertyKey::ScrollX => pose.scroll_x = value,
+        PropertyKey::ScrollY => pose.scroll_y = value,
     }
 }
 

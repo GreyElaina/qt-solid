@@ -1518,6 +1518,60 @@ pub fn canvas_fragment_set_scroll_offset(
     runtime::request_repaint_with_compositor_frame(&node)
 }
 
+#[napi_derive::napi(js_name = "canvasFragmentScrollDrive")]
+pub fn canvas_fragment_scroll_drive(
+    canvas_node_id: u32,
+    fragment_id: u32,
+    x: f64,
+    y: f64,
+) -> Result<()> {
+    let now = crate::qt::trace_now_ns() as f64 / 1_000_000_000.0;
+    fragment_store::fragment_store_drive_scroll_motion(
+        canvas_node_id,
+        FragmentId(fragment_id),
+        x,
+        y,
+        now,
+    );
+    let generation = runtime::current_app_generation()?;
+    let node = runtime::node_by_id(generation, canvas_node_id)?;
+    runtime::request_repaint_with_compositor_frame(&node)
+}
+
+#[napi_derive::napi(js_name = "canvasFragmentScrollRelease")]
+pub fn canvas_fragment_scroll_release(
+    canvas_node_id: u32,
+    fragment_id: u32,
+    clamped_x: f64,
+    clamped_y: f64,
+    stiffness: Option<f64>,
+    damping: Option<f64>,
+) -> Result<bool> {
+    let now = crate::qt::trace_now_ns() as f64 / 1_000_000_000.0;
+    let spring = motion::TransitionSpec::Spring(motion::SpringParams {
+        stiffness: stiffness.unwrap_or(170.0),
+        damping: damping.unwrap_or(26.0),
+        mass: 1.0,
+        initial_velocity: 0.0,
+        rest_delta: 0.5,
+        rest_speed: 0.5,
+    });
+    let animating = fragment_store::fragment_store_release_scroll_motion(
+        canvas_node_id,
+        FragmentId(fragment_id),
+        clamped_x,
+        clamped_y,
+        spring,
+        now,
+    );
+    let generation = runtime::current_app_generation()?;
+    let node = runtime::node_by_id(generation, canvas_node_id)?;
+    if animating {
+        runtime::request_repaint_with_compositor_frame(&node)?;
+    }
+    Ok(animating)
+}
+
 #[napi_derive::napi(js_name = "canvasFragmentGetContentSize")]
 pub fn canvas_fragment_get_content_size(
     canvas_node_id: u32,

@@ -651,6 +651,7 @@ impl FragmentTree {
         let mut any_animating = false;
         let mut completed = Vec::new();
         let mut any_non_promoted_sampled = false;
+        let mut scroll_updates: Vec<(FragmentId, Vec2)> = Vec::new();
         for id in ids {
             let Some(node) = self.nodes.get_mut(&id) else {
                 continue;
@@ -665,6 +666,10 @@ impl FragmentTree {
             let is_promoted = node.promoted;
             let (sampled, animating) = timeline.sample_pose(now);
             apply_sampled_pose_to_fragment(node, &sampled);
+            // Collect scroll offset updates from motion channels
+            if sampled.scroll_x.abs() > 0.01 || sampled.scroll_y.abs() > 0.01 {
+                scroll_updates.push((id, Vec2::new(sampled.scroll_x, sampled.scroll_y)));
+            }
             if !is_promoted {
                 any_non_promoted_sampled = true;
             }
@@ -674,6 +679,14 @@ impl FragmentTree {
             }
             any_animating |= animating;
             node.timeline = Some(timeline);
+        }
+        // Apply scroll offset updates
+        for (id, offset) in scroll_updates {
+            if offset.x.abs() < 0.01 && offset.y.abs() < 0.01 {
+                self.scroll_offsets.remove(&id);
+            } else {
+                self.scroll_offsets.insert(id, offset);
+            }
         }
         if any_non_promoted_sampled {
             self.invalidate();
@@ -710,6 +723,71 @@ impl FragmentTree {
             }
             self.invalidate();
         }
+    }
+
+    /// Drive scroll offset through the motion timeline (instant transition).
+    /// This accumulates velocity via prev_target for later spring release.
+    pub fn drive_scroll_motion(&mut self, id: FragmentId, x: f64, y: f64, now: f64) {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
+        let instant = motion::TransitionSpec::Instant;
+        let targets: Vec<(motion::PropertyKey, f64)> = vec![
+            (motion::PropertyKey::ScrollX, x),
+            (motion::PropertyKey::ScrollY, y),
+        ];
+        let empty: HashMap<motion::PropertyKey, motion::TransitionSpec> = HashMap::new();
+        timeline.set_targets(&targets, &instant, &empty, now, 0.0);
+        // Immediately sample to update scroll_offsets
+        let (sampled, _) = timeline.sample_pose(now);
+        apply_sampled_pose_to_fragment(node, &sampled);
+        node.timeline = Some(timeline);
+        // Write scroll offset directly
+        let offset = Vec2::new(sampled.scroll_x, sampled.scroll_y);
+        if offset.x.abs() < 0.01 && offset.y.abs() < 0.01 {
+            self.scroll_offsets.remove(&id);
+        } else {
+            self.scroll_offsets.insert(id, offset);
+        }
+        self.invalidate();
+    }
+
+    /// Release scroll: retarget ScrollX/Y to clamped values using spring transition.
+    /// Velocity is auto-inferred from preceding instant drives.
+    pub fn release_scroll_motion(
+        &mut self,
+        id: FragmentId,
+        clamped_x: f64,
+        clamped_y: f64,
+        spring: motion::TransitionSpec,
+        now: f64,
+    ) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
+        let targets: Vec<(motion::PropertyKey, f64)> = vec![
+            (motion::PropertyKey::ScrollX, clamped_x),
+            (motion::PropertyKey::ScrollY, clamped_y),
+        ];
+        let empty: HashMap<motion::PropertyKey, motion::TransitionSpec> = HashMap::new();
+        timeline.set_targets(&targets, &spring, &empty, now, 0.0);
+        let (sampled, animating) = timeline.sample_pose(now);
+        apply_sampled_pose_to_fragment(node, &sampled);
+        if !animating {
+            timeline.gc_completed();
+        }
+        node.timeline = Some(timeline);
+        // Write scroll offset
+        let offset = Vec2::new(sampled.scroll_x, sampled.scroll_y);
+        if offset.x.abs() < 0.01 && offset.y.abs() < 0.01 {
+            self.scroll_offsets.remove(&id);
+        } else {
+            self.scroll_offsets.insert(id, offset);
+        }
+        self.invalidate();
+        animating
     }
 
     /// Get the content size of a fragment node from its taffy layout.
