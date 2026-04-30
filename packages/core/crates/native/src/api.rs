@@ -865,7 +865,7 @@ use crate::canvas::fragment::{
     self as fragment_store, FragmentId,
     ShapedTextCache, ShapedTextLayout, ShapedRun, ShapedTextLine, RasterizedGlyph,
 };
-use crate::canvas::fragment_decl::FragmentValue;
+use crate::canvas::fragment::decl::FragmentValue;
 use crate::canvas::vello::peniko::kurbo::{BezPath, PathEl, Point};
 use crate::canvas::vello::peniko as peniko_crate;
 

@@ -37,7 +37,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     // from_tag arms.
     let from_tag_arms: Vec<TokenStream> = variant_info.iter().map(|(var_ident, inner_ty)| {
         quote! {
-            <#inner_ty as crate::fragment_decl::FragmentDecl>::TAG => {
+            <#inner_ty as crate::fragment::decl::FragmentDecl>::TAG => {
                 Some(Self::#var_ident(<#inner_ty as Default>::default()))
             }
         }
@@ -62,7 +62,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let encode_arms: Vec<TokenStream> = variant_info.iter().map(|(var_ident, _)| {
         quote! {
             Self::#var_ident(inner) => {
-                crate::fragment_decl::FragmentEncode::encode(inner, scene, transform);
+                crate::fragment::decl::FragmentEncode::encode(inner, scene, transform);
             }
         }
     }).collect();
@@ -70,16 +70,16 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     // tag forwarding.
     let tag_arms: Vec<TokenStream> = variant_info.iter().map(|(var_ident, inner_ty)| {
         quote! {
-            Self::#var_ident(_) => <#inner_ty as crate::fragment_decl::FragmentDecl>::TAG,
+            Self::#var_ident(_) => <#inner_ty as crate::fragment::decl::FragmentDecl>::TAG,
         }
     }).collect();
 
     // all_schemas.
     let schema_entries: Vec<TokenStream> = variant_info.iter().map(|(_, inner_ty)| {
         quote! {
-            crate::fragment_decl::FragmentSchemaEntry {
-                tag: <#inner_ty as crate::fragment_decl::FragmentDecl>::TAG,
-                props: <#inner_ty as crate::fragment_decl::FragmentDecl>::PROPS,
+            crate::fragment::decl::FragmentSchemaEntry {
+                tag: <#inner_ty as crate::fragment::decl::FragmentDecl>::TAG,
+                props: <#inner_ty as crate::fragment::decl::FragmentDecl>::PROPS,
             }
         }
     }).collect();
@@ -88,7 +88,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let expanded = quote! {
         impl #ident {
             pub fn from_tag(tag: &str) -> Option<Self> {
-                use crate::fragment_decl::FragmentDecl;
+                use crate::fragment::decl::FragmentDecl;
                 match tag {
                     #(#from_tag_arms)*
                     _ => None,
@@ -98,9 +98,9 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub fn apply_prop(
                 &mut self,
                 key: &str,
-                value: crate::fragment_decl::FragmentValue,
-            ) -> crate::fragment_decl::FragmentMutation {
-                use crate::fragment_decl::FragmentDecl;
+                value: crate::fragment::decl::FragmentValue,
+            ) -> crate::fragment::decl::FragmentMutation {
+                use crate::fragment::decl::FragmentDecl;
                 match self {
                     #(#apply_prop_arms)*
                 }
@@ -109,15 +109,15 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub fn reset_prop(
                 &mut self,
                 key: &str,
-            ) -> crate::fragment_decl::FragmentMutation {
-                use crate::fragment_decl::FragmentDecl;
+            ) -> crate::fragment::decl::FragmentMutation {
+                use crate::fragment::decl::FragmentDecl;
                 match self {
                     #(#reset_prop_arms)*
                 }
             }
 
             pub fn local_bounds(&self) -> Option<crate::vello::peniko::kurbo::Rect> {
-                use crate::fragment_decl::FragmentDecl;
+                use crate::fragment::decl::FragmentDecl;
                 match self {
                     #(#local_bounds_arms)*
                 }
@@ -128,21 +128,21 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 scene: &mut crate::vello::Scene,
                 transform: crate::vello::peniko::kurbo::Affine,
             ) {
-                use crate::fragment_decl::FragmentEncode;
+                use crate::fragment::decl::FragmentEncode;
                 match self {
                     #(#encode_arms)*
                 }
             }
 
             pub fn tag(&self) -> &'static str {
-                use crate::fragment_decl::FragmentDecl;
+                use crate::fragment::decl::FragmentDecl;
                 match self {
                     #(#tag_arms)*
                 }
             }
 
-            pub fn all_schemas() -> &'static [crate::fragment_decl::FragmentSchemaEntry] {
-                static SCHEMAS: [crate::fragment_decl::FragmentSchemaEntry; #schema_count] = [
+            pub fn all_schemas() -> &'static [crate::fragment::decl::FragmentSchemaEntry] {
+                static SCHEMAS: [crate::fragment::decl::FragmentSchemaEntry; #schema_count] = [
                     #(#schema_entries),*
                 ];
                 &SCHEMAS

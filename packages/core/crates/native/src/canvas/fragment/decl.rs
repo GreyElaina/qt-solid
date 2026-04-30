@@ -1,4 +1,4 @@
-use super::vello::{
+use super::super::vello::{
     peniko::kurbo::{Affine, Rect},
     Scene,
 };

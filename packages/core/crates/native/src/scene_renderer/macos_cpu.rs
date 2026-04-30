@@ -1,6 +1,5 @@
 use crate::canvas::vello::Scene;
 use crate::runtime::capture::WidgetCapture;
-use vello_cpu::Pixmap;
 
 use crate::runtime::qt_error;
 

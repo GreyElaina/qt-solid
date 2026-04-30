@@ -298,18 +298,18 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let expanded = quote! {
-        impl crate::fragment_decl::FragmentDecl for #ident {
+        impl crate::fragment::decl::FragmentDecl for #ident {
             const TAG: &'static str = #tag;
-            const PROPS: &'static [crate::fragment_decl::FragmentPropDecl] = &[
+            const PROPS: &'static [crate::fragment::decl::FragmentPropDecl] = &[
                 #(#prop_decls),*
             ];
 
             fn apply_prop(
                 &mut self,
                 key: &str,
-                value: crate::fragment_decl::FragmentValue,
-            ) -> crate::fragment_decl::FragmentMutation {
-                use crate::fragment_decl::{FragmentValue, FragmentMutation, FragmentPropDecl};
+                value: crate::fragment::decl::FragmentValue,
+            ) -> crate::fragment::decl::FragmentMutation {
+                use crate::fragment::decl::{FragmentValue, FragmentMutation, FragmentPropDecl};
                 match key {
                     #(#apply_arms)*
                     _ => FragmentMutation::NONE,
@@ -319,8 +319,8 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             fn reset_prop(
                 &mut self,
                 key: &str,
-            ) -> crate::fragment_decl::FragmentMutation {
-                use crate::fragment_decl::FragmentMutation;
+            ) -> crate::fragment::decl::FragmentMutation {
+                use crate::fragment::decl::FragmentMutation;
                 match key {
                     #(#reset_arms)*
                     _ => FragmentMutation::NONE,
