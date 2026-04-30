@@ -404,10 +404,15 @@ pub(crate) fn metal_layer_ptr(node_id: u32) -> u64 {
 fn create_window_surface(
     target: qt_compositor::QtCompositorTarget,
 ) -> Result<WindowSurface, SurfaceCreationError> {
-    // Try GL first (lower memory overhead, no DXGI swap chain conflict).
-    // Fall back to DX12 (DComp visual) if GL is unavailable.
-    create_window_surface_with_backends(target, wgpu::Backends::GL)
-        .or_else(|_| create_window_surface_with_backends(target, wgpu::Backends::default()))
+    if cfg!(target_os = "windows") {
+        // Vulkan has lower per-device memory overhead than GL or DX12 on
+        // Windows (explicit API = less driver-side implicit state).
+        // Fallback to DX12 if Vulkan is unavailable.
+        create_window_surface_with_backends(target, wgpu::Backends::VULKAN)
+            .or_else(|_| create_window_surface_with_backends(target, wgpu::Backends::DX12))
+    } else {
+        create_window_surface_with_backends(target, wgpu::Backends::default())
+    }
 }
 
 fn create_window_surface_with_backends(

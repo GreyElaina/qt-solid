@@ -865,7 +865,15 @@ fn should_prefer_immediate_present_mode() -> bool {
 
 impl WindowCompositorContext {
     fn new(target: QtCompositorTarget) -> Result<Self> {
-        let instance = wgpu::Instance::default();
+        let backends = if cfg!(target_os = "windows") {
+            wgpu::Backends::VULKAN
+        } else {
+            wgpu::Backends::default()
+        };
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
         let surface = unsafe {
             instance
                 .create_surface_unsafe(compositor_surface_target(target)?)
