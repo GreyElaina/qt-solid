@@ -182,6 +182,7 @@ export interface CanvasCommonProps extends CanvasEventProps {
   opacity?: number
   backdropBlur?: number
   clip?: boolean
+  clipPath?: string
   visible?: boolean
   pointerEvents?: boolean
   cursor?: number

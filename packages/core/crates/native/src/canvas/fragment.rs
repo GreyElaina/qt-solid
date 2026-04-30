@@ -21,9 +21,19 @@ use super::vello::{
 /// is not actually desired.
 const FALLBACK_CLIP: Rect = Rect::new(-1e9, -1e9, 1e9, 1e9);
 
-fn push_fragment_layer(scene: &mut Scene, transform: Affine, clip_rect: Option<Rect>, opacity: f32, blend_mode: BlendMode) {
-    let clip = clip_rect.unwrap_or(FALLBACK_CLIP);
-    scene.push_layer(blend_mode, opacity, transform, &clip);
+/// Clip shape resolved for a fragment layer — either a rect or an arbitrary path.
+#[derive(Debug, Clone)]
+pub enum FragmentClipShape {
+    Rect(Rect),
+    Path(BezPath),
+}
+
+fn push_fragment_layer(scene: &mut Scene, transform: Affine, clip: Option<&FragmentClipShape>, opacity: f32, blend_mode: BlendMode) {
+    match clip {
+        Some(FragmentClipShape::Rect(r)) => scene.push_layer(blend_mode, opacity, transform, r),
+        Some(FragmentClipShape::Path(p)) => scene.push_layer(blend_mode, opacity, transform, p),
+        None => scene.push_layer(blend_mode, opacity, transform, &FALLBACK_CLIP),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -56,7 +66,7 @@ pub struct PromotedLayer {
     pub scene: Scene,
     pub bounds: Rect,
     pub transform: Affine,
-    pub clip_rect: Option<Rect>,
+    pub clip: Option<FragmentClipShape>,
     pub opacity: f32,
     pub blend_mode: BlendMode,
 }
@@ -977,7 +987,10 @@ impl FragmentNode {
     }
 
     fn needs_layer(&self) -> bool {
-        self.props.opacity < 1.0 - f32::EPSILON || self.props.clip || self.props.blend_mode != BlendMode::default()
+        self.props.opacity < 1.0 - f32::EPSILON
+            || self.props.clip
+            || self.props.clip_path.is_some()
+            || self.props.blend_mode != BlendMode::default()
     }
 
     /// Kind-level paint bounds, falling back to layout-computed bounds.
@@ -985,11 +998,14 @@ impl FragmentNode {
         self.kind.local_bounds().or_else(|| self.layout.bounds())
     }
 
-    fn clip_rect(&self) -> Option<Rect> {
-        if !self.props.clip {
-            return None;
+    fn clip_shape(&self) -> Option<FragmentClipShape> {
+        if let Some(path) = &self.props.clip_path {
+            return Some(FragmentClipShape::Path(path.clone()));
         }
-        self.effective_bounds()
+        if self.props.clip {
+            return self.effective_bounds().map(FragmentClipShape::Rect);
+        }
+        None
     }
 }
 
@@ -1892,10 +1908,10 @@ impl FragmentTree {
 
         if needs_layer {
             // Scroll containers need clip even without opacity/clip props.
-            let clip_rect = node.clip_rect().or_else(|| {
-                scroll.and_then(|_| node.effective_bounds())
+            let clip = node.clip_shape().or_else(|| {
+                scroll.and_then(|_| node.effective_bounds().map(FragmentClipShape::Rect))
             });
-            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
+            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -1924,8 +1940,8 @@ impl FragmentTree {
         let needs_layer = node.needs_layer();
 
         if needs_layer {
-            let clip_rect = node.clip_rect();
-            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
+            let clip = node.clip_shape();
+            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -1945,8 +1961,8 @@ impl FragmentTree {
 
         let needs_layer = node.needs_layer();
         if needs_layer {
-            let clip_rect = node.clip_rect();
-            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
+            let clip = node.clip_shape();
+            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -2148,7 +2164,7 @@ impl FragmentTree {
                 scene: subtree_scene,
                 bounds,
                 transform,
-                clip_rect,
+                clip: clip_rect.map(FragmentClipShape::Rect),
                 opacity: node.props.opacity,
                 blend_mode: node.props.blend_mode,
             }));
@@ -2161,10 +2177,10 @@ impl FragmentTree {
         let scroll = scroll_offsets.get(&id).copied();
         let needs_layer = node.needs_layer() || scroll.is_some();
         if needs_layer {
-            let clip_rect = node.clip_rect().or_else(|| {
-                scroll.and_then(|_| node.effective_bounds())
+            let clip = node.clip_shape().or_else(|| {
+                scroll.and_then(|_| node.effective_bounds().map(FragmentClipShape::Rect))
             });
-            collector.push_layer(transform, clip_rect, node.props.opacity, node.props.blend_mode);
+            collector.push_layer(transform, clip, node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(&mut collector.current_inline, transform);
@@ -2202,10 +2218,10 @@ impl FragmentTree {
         let needs_layer = node.needs_layer() || scroll.is_some();
 
         if needs_layer {
-            let clip_rect = node.clip_rect().or_else(|| {
-                scroll.and_then(|_| node.effective_bounds())
+            let clip = node.clip_shape().or_else(|| {
+                scroll.and_then(|_| node.effective_bounds().map(FragmentClipShape::Rect))
             });
-            push_fragment_layer(scene, transform, clip_rect, node.props.opacity, node.props.blend_mode);
+            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
         }
 
         node.kind.encode(scene, transform);
@@ -2317,7 +2333,7 @@ impl FragmentTree {
 
 struct LayerEntry {
     transform: Affine,
-    clip_rect: Option<Rect>,
+    clip: Option<FragmentClipShape>,
     opacity: f32,
     blend_mode: BlendMode,
 }
@@ -2329,9 +2345,9 @@ struct PaintCollector {
 }
 
 impl PaintCollector {
-    fn push_layer(&mut self, transform: Affine, clip_rect: Option<Rect>, opacity: f32, blend_mode: BlendMode) {
-        push_fragment_layer(&mut self.current_inline, transform, clip_rect, opacity, blend_mode);
-        self.layer_stack.push(LayerEntry { transform, clip_rect, opacity, blend_mode });
+    fn push_layer(&mut self, transform: Affine, clip: Option<FragmentClipShape>, opacity: f32, blend_mode: BlendMode) {
+        push_fragment_layer(&mut self.current_inline, transform, clip.as_ref(), opacity, blend_mode);
+        self.layer_stack.push(LayerEntry { transform, clip, opacity, blend_mode });
     }
 
     fn pop_layer(&mut self) {
@@ -2360,7 +2376,7 @@ impl PaintCollector {
     fn resume_inline_after_split(&mut self) {
         self.current_inline = Scene::new();
         for entry in &self.layer_stack {
-            push_fragment_layer(&mut self.current_inline, entry.transform, entry.clip_rect, entry.opacity, entry.blend_mode);
+            push_fragment_layer(&mut self.current_inline, entry.transform, entry.clip.as_ref(), entry.opacity, entry.blend_mode);
         }
     }
 
@@ -2368,8 +2384,13 @@ impl PaintCollector {
     fn accumulated_clip_rect(&self) -> Option<Rect> {
         let mut result: Option<Rect> = None;
         for entry in &self.layer_stack {
-            if let Some(clip) = &entry.clip_rect {
-                let world_clip = transform_local_bounds_to_world(*clip, entry.transform);
+            let bounds = match &entry.clip {
+                Some(FragmentClipShape::Rect(r)) => Some(*r),
+                Some(FragmentClipShape::Path(p)) => Some(p.bounding_box()),
+                None => None,
+            };
+            if let Some(b) = bounds {
+                let world_clip = transform_local_bounds_to_world(b, entry.transform);
                 result = Some(match result {
                     Some(r) => r.intersect(world_clip),
                     None => world_clip,
@@ -3603,6 +3624,20 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
         }
         "clip" => {
             if let FragmentValue::Bool { value } = value { node.props.clip = value; }
+            return;
+        }
+        "clipPath" => {
+            match value {
+                FragmentValue::Str { ref value } => {
+                    node.props.clip_path = if value.is_empty() {
+                        None
+                    } else {
+                        BezPath::from_svg(value).ok()
+                    };
+                }
+                FragmentValue::Unset => { node.props.clip_path = None; }
+                _ => {}
+            }
             return;
         }
         "visible" => {
