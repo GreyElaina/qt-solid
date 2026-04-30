@@ -883,12 +883,14 @@ pub struct FragmentProps {
     pub opacity: f32,
     pub blend_mode: BlendMode,
     pub clip: bool,
+    pub clip_path: Option<BezPath>,
     pub visible: bool,
     pub pointer_events: bool,
     pub cursor: u8,
     pub focusable: bool,
     pub transform: Affine,
     pub backdrop_blur: Option<f64>,
+    pub z_index: i32,
 }
 
 impl Default for FragmentProps {
@@ -901,12 +903,14 @@ impl Default for FragmentProps {
             opacity: 1.0,
             blend_mode: BlendMode::default(),
             clip: false,
+            clip_path: None,
             visible: true,
             pointer_events: true,
             cursor: 0,
             focusable: false,
             transform: Affine::IDENTITY,
             backdrop_blur: None,
+            z_index: 0,
         }
     }
 }
@@ -1788,6 +1792,37 @@ impl FragmentTree {
     }
 
     // -----------------------------------------------------------------------
+    // z-index ordering helper
+    // -----------------------------------------------------------------------
+
+    /// Return children sorted by z_index (stable, preserving insertion order for equal z).
+    /// Returns the input unchanged if all children have z_index == 0.
+    fn sorted_children_by_z(&self, children: &[FragmentId]) -> Vec<FragmentId> {
+        let needs_sort = children.iter().any(|id| {
+            self.nodes.get(id).map_or(false, |n| n.props.z_index != 0)
+        });
+        if !needs_sort {
+            return children.to_vec();
+        }
+        let mut sorted: Vec<FragmentId> = children.to_vec();
+        sorted.sort_by_key(|id| self.nodes.get(id).map_or(0, |n| n.props.z_index));
+        sorted
+    }
+
+    /// Static version for use in methods that borrow `nodes` directly.
+    fn sorted_children_by_z_static(nodes: &HashMap<FragmentId, FragmentNode>, children: &[FragmentId]) -> Vec<FragmentId> {
+        let needs_sort = children.iter().any(|id| {
+            nodes.get(id).map_or(false, |n| n.props.z_index != 0)
+        });
+        if !needs_sort {
+            return children.to_vec();
+        }
+        let mut sorted: Vec<FragmentId> = children.to_vec();
+        sorted.sort_by_key(|id| nodes.get(id).map_or(0, |n| n.props.z_index));
+        sorted
+    }
+
+    // -----------------------------------------------------------------------
     // Recursive paint with tree-level scene cache
     // -----------------------------------------------------------------------
 
@@ -1803,7 +1838,7 @@ impl FragmentTree {
             }
 
             // Level-1 cache: per-root-child subtree caching.
-            let root_children = self.root_children.clone();
+            let root_children = self.sorted_children_by_z(&self.root_children.clone());
             let mut fresh = Scene::new();
             for &child_id in &root_children {
                 if let Some(cached) = self.subtree_scene_cache.get(&child_id) {
@@ -1870,7 +1905,7 @@ impl FragmentTree {
             None => transform,
         };
 
-        let children = node.children.clone();
+        let children = self.sorted_children_by_z(&node.children.clone());
         for child_id in children {
             self.paint_node(scene, child_id, child_transform);
         }
@@ -1950,7 +1985,7 @@ impl FragmentTree {
             current_inline: Scene::new(),
             layer_stack: Vec::new(),
         };
-        let root_children = self.root_children.clone();
+        let root_children = Self::sorted_children_by_z_static(&self.nodes, &self.root_children.clone());
         for &child_id in &root_children {
             Self::paint_node_collecting_cached(
                 &self.nodes,
@@ -2139,7 +2174,7 @@ impl FragmentTree {
             None => transform,
         };
 
-        let children = node.children.clone();
+        let children = Self::sorted_children_by_z_static(nodes, &node.children.clone());
         for child_id in children {
             Self::paint_node_collecting_cached(
                 nodes, scroll_offsets, collector, child_id, child_transform,
@@ -2180,7 +2215,7 @@ impl FragmentTree {
             None => transform,
         };
 
-        let children = node.children.clone();
+        let children = Self::sorted_children_by_z_static(nodes, &node.children.clone());
         for child_id in children {
             Self::paint_node_static(nodes, scroll_offsets, scene, child_id, child_transform);
         }
@@ -2206,7 +2241,8 @@ impl FragmentTree {
         node.kind.encode(scene, Affine::IDENTITY);
 
         // Children are painted relative to the root's local space.
-        for &child_id in &node.children {
+        let children = Self::sorted_children_by_z_static(nodes, &node.children);
+        for &child_id in &children {
             Self::paint_node_static(nodes, scroll_offsets, scene, child_id, Affine::IDENTITY);
         }
     }
@@ -2439,7 +2475,8 @@ impl FragmentTree {
         point: (f64, f64),
         world_point: Point,
     ) -> Option<FragmentId> {
-        for &child_id in children.iter().rev() {
+        let sorted = self.sorted_children_by_z(children);
+        for &child_id in sorted.iter().rev() {
             if let Some(hit) = self.hit_test_node(child_id, parent_transform, point, world_point) {
                 return Some(hit);
             }
@@ -3612,6 +3649,14 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
                     node.props.backdrop_blur = if value > 0.0 { Some(value) } else { None };
                 }
                 FragmentValue::Unset => { node.props.backdrop_blur = None; }
+                _ => {}
+            }
+            return;
+        }
+        "zIndex" => {
+            match value {
+                FragmentValue::F64 { value } => { node.props.z_index = value as i32; }
+                FragmentValue::Unset => { node.props.z_index = 0; }
                 _ => {}
             }
             return;
