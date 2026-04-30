@@ -315,7 +315,7 @@ fn drive_fragment_surface_frame(
         node_id, layout.scale_factor,
     );
 
-    crate::surface_renderer::render_and_present(
+    let presented = crate::surface_renderer::render_and_present(
         node_id,
         compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
         layout.scale_factor,
@@ -323,6 +323,11 @@ fn drive_fragment_surface_frame(
         &backdrop_blurs,
         &inner_shadows,
     )?;
+
+    if !presented {
+        // Surface not ready — preserve dirty state so next frame drive retries.
+        return Ok(QtWindowCompositorDriveStatus::Busy);
+    }
 
     if still_animating {
         crate::runtime::request_overlay_next_frame_exact(&node, node_id)?;

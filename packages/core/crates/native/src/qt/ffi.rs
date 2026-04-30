@@ -403,6 +403,13 @@ pub(crate) mod bridge {
             window_id: u32,
             local_x: f64,
         ) -> Result<()>;
+        fn qt_window_present_cpu_frame(
+            node_id: u32,
+            pixels: &[u8],
+            width: u32,
+            height: u32,
+            stride: u32,
+        ) -> Result<()>;
         fn qt_window_minimize(id: u32) -> Result<()>;
         fn qt_window_maximize(id: u32) -> Result<()>;
         fn qt_window_restore(id: u32) -> Result<()>;

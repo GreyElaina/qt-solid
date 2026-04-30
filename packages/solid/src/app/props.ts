@@ -77,6 +77,7 @@ export function windowPropsFrom(
     frameless: getter(() => read().frameless),
     transparentBackground: getter(() => read().transparentBackground),
     alwaysOnTop: getter(() => read().alwaysOnTop),
+    gpu: getter(() => read().gpu),
     onCloseRequested: getter(() => read().onCloseRequested),
     [QT_SOLID_SOURCE_META_PROP]: getter(() => readQtSourceMetadata(read())),
   })

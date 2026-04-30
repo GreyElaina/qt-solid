@@ -429,9 +429,21 @@ public:
     return delegate_->scroll(area, dx, dy);
   }
 
-  void beginPaint(const QRegion &region) override { delegate_->beginPaint(region); }
+  void beginPaint(const QRegion &region) override {
+    if (unified_compositor_active() && window() &&
+        window()->property(kRootNodeIdProperty).isValid()) {
+      return;
+    }
+    delegate_->beginPaint(region);
+  }
 
-  void endPaint() override { delegate_->endPaint(); }
+  void endPaint() override {
+    if (unified_compositor_active() && window() &&
+        window()->property(kRootNodeIdProperty).isValid()) {
+      return;
+    }
+    delegate_->endPaint();
+  }
 
 private:
   std::unique_ptr<QPlatformBackingStore> delegate_;
@@ -443,6 +455,12 @@ public:
       : delegate_(std::move(delegate)) {}
 
   bool hasCapability(Capability cap) const override {
+    // qt-solid drives all GPU rendering through wgpu, not Qt's RHI.
+    // Suppress RhiBasedRendering to prevent Qt from creating a D3D11 RHI
+    // instance per-window backing store (~80MB overhead in CPU-only mode).
+    if (cap == RhiBasedRendering) {
+      return false;
+    }
     return delegate_->hasCapability(cap);
   }
 
@@ -861,7 +879,7 @@ void register_static_platform_plugins() {
 }
 
 bool unified_compositor_requested() {
-#if defined(Q_OS_MACOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
   return true;
 #else
   return qEnvironmentVariableIntValue("QT_SOLID_WGPU_COMPOSITOR") != 0;
@@ -886,8 +904,9 @@ void sync_unified_compositor_active_state() {
     return;
   }
 
-  qApp->setProperty(kUnifiedCompositorActiveProperty,
-                    is_unified_platform_name(QGuiApplication::platformName()));
+  const QString platform_name = QGuiApplication::platformName();
+  const bool is_unified = is_unified_platform_name(platform_name);
+  qApp->setProperty(kUnifiedCompositorActiveProperty, is_unified);
 }
 
 bool unified_compositor_active() {

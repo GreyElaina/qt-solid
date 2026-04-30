@@ -121,4 +121,10 @@ bool qt_window_is_fullscreen(std::uint32_t id);
 std::uint32_t qt_show_open_file_dialog(std::uint32_t window_id, rust::Str title, rust::Str filter, bool multiple);
 std::uint32_t qt_show_save_file_dialog(std::uint32_t window_id, rust::Str title, rust::Str filter, rust::Str default_name);
 
+void qt_window_present_cpu_frame(std::uint32_t node_id,
+                                  rust::Slice<const std::uint8_t> pixels,
+                                  std::uint32_t width,
+                                  std::uint32_t height,
+                                  std::uint32_t stride);
+
 } // namespace qt_solid_spike::qt

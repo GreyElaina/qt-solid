@@ -349,7 +349,9 @@ public:
     record_libuv_pump_events(zero_timeout_pumped);
 
 #if defined(Q_OS_WIN)
-    rearm_win32_wait_bridge();
+    if (!shutdown_requested_.load()) {
+      rearm_win32_wait_bridge();
+    }
 #endif
     reschedule_timer();
   }
@@ -674,6 +676,9 @@ private:
 
   void rearm_win32_wait_bridge() {
     if (!win32_wait_registered_ || wait_bridge_windows_handle_ == 0) {
+      return;
+    }
+    if (shutdown_requested_.load()) {
       return;
     }
     // Unregister previous one-shot wait, then re-register.

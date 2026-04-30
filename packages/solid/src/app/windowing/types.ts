@@ -11,6 +11,7 @@ export interface WindowProps extends ViewProps {
   frameless?: WindowIntrinsicProps["frameless"];
   transparentBackground?: WindowIntrinsicProps["transparentBackground"];
   alwaysOnTop?: WindowIntrinsicProps["alwaysOnTop"];
+  gpu?: WindowIntrinsicProps["gpu"];
   onCloseRequested?: WindowIntrinsicProps["onCloseRequested"];
 }
 

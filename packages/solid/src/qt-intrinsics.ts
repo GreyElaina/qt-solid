@@ -7,6 +7,7 @@ export interface WindowIntrinsicProps {
   frameless?: boolean
   transparentBackground?: boolean
   alwaysOnTop?: boolean
+  gpu?: boolean
   width?: number
   height?: number
   minWidth?: number

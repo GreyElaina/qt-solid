@@ -93,6 +93,7 @@ pub enum WindowPropUpdate {
     Frameless { value: bool },
     TransparentBackground { value: bool },
     AlwaysOnTop { value: bool },
+    Gpu { value: bool },
     WindowKind { value: i32 },
     ScreenX { value: i32 },
     ScreenY { value: i32 },

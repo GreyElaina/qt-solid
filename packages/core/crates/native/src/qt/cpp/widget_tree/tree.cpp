@@ -128,6 +128,12 @@ public:
     auto *owning_host = dynamic_cast<HostWindowWidget *>(widget->window());
     const bool defer_top_level_delete = widget->parentWidget() == nullptr;
 
+    if (defer_top_level_delete) {
+      if (auto *host = dynamic_cast<HostWindowWidget *>(widget)) {
+        host->begin_teardown();
+      }
+    }
+
     if (!defer_top_level_delete) {
       detach_widget(widget);
     }

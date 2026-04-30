@@ -1010,6 +1010,17 @@ bool qt_window_is_fullscreen(std::uint32_t id) {
   return host->isFullScreen();
 }
 
+void qt_window_present_cpu_frame(std::uint32_t node_id,
+                                  rust::Slice<const std::uint8_t> pixels,
+                                  std::uint32_t width,
+                                  std::uint32_t height,
+                                  std::uint32_t stride) {
+    auto *host = require_host_window(node_id);
+    host->present_cpu_frame(pixels.data(),
+                            static_cast<int>(width),
+                            static_cast<int>(height), static_cast<int>(stride));
+}
+
 // ---------------------------------------------------------------------------
 // File dialogs
 // ---------------------------------------------------------------------------

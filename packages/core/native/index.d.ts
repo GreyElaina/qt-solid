@@ -533,6 +533,7 @@ export type WindowPropUpdate =
   | { prop: 'frameless', value: boolean }
   | { prop: 'transparentBackground', value: boolean }
   | { prop: 'alwaysOnTop', value: boolean }
+  | { prop: 'gpu', value: boolean }
   | { prop: 'windowKind', value: number }
   | { prop: 'screenX', value: number }
   | { prop: 'screenY', value: number }

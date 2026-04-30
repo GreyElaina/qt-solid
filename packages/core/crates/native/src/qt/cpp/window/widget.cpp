@@ -27,7 +27,7 @@ public:
     autonomous_repaint_timer_.setInterval(
         std::max(120, QApplication::cursorFlashTime() / 2));
     QObject::connect(&autonomous_repaint_timer_, &QTimer::timeout, this, [this]() {
-      if (!isVisible()) {
+      if (render_suppressed() || !isVisible()) {
         return;
       }
 
@@ -45,14 +45,7 @@ public:
   }
 
   ~HostWindowWidget() override {
-#if defined(Q_OS_MACOS)
-    shutdown_compositor_display_link();
-#else
-    if (windowHandle() != nullptr) {
-      qt_wgpu_renderer::destroy_unified_compositor_window(
-          windowHandle(), capture_device_pixel_ratio());
-    }
-#endif
+    begin_teardown();
   }
 
   void add_close_requested_handler(CloseRequestedHandler handler) {
@@ -146,7 +139,7 @@ public:
   }
 
   void tick_frame() {
-    if (rust_node_id_ == 0) {
+    if (render_suppressed()) {
       return;
     }
 
@@ -156,6 +149,50 @@ public:
       qWarning() << "failed to tick host window frame for node" << rust_node_id_
                  << ":" << error.what();
     }
+  }
+
+  bool render_suppressed() const {
+    return tearing_down_ || close_pending_ || rust_node_id_ == 0;
+  }
+
+  void begin_teardown() {
+    if (tearing_down_) {
+      return;
+    }
+    tearing_down_ = true;
+    close_pending_ = false;
+    autonomous_repaint_timer_.stop();
+    compositor_frame_requested_ = false;
+    compositor_drive_posted_ = false;
+    cpu_frame_ = QImage();
+    rust_node_id_ = 0;
+#if defined(Q_OS_MACOS)
+    shutdown_compositor_display_link();
+#else
+    destroy_compositor_window_once();
+#endif
+  }
+
+  void destroy_compositor_window_once() {
+#if !defined(Q_OS_MACOS)
+    if (compositor_window_destroyed_) {
+      return;
+    }
+    if (windowHandle() == nullptr) {
+      return;
+    }
+    compositor_window_destroyed_ = true;
+    qt_wgpu_renderer::destroy_unified_compositor_window(
+        windowHandle(), capture_device_pixel_ratio());
+#endif
+  }
+
+  void present_cpu_frame(const unsigned char *data, int width, int height, int stride) {
+    if (render_suppressed()) {
+      return;
+    }
+    cpu_frame_ = QImage(data, width, height, stride, QImage::Format_RGBA8888_Premultiplied).copy();
+    update();
   }
 
   QWidget *widget_at_screen_point(const QPoint &screen_pos) const {
@@ -188,8 +225,15 @@ public:
 protected:
   void paintEvent(QPaintEvent *event) override {
 #if !defined(Q_OS_MACOS)
-    tick_frame();
+    if (!render_suppressed()) {
+      tick_frame();
+    }
 #endif
+    if (!cpu_frame_.isNull()) {
+      QPainter painter(this);
+      painter.setRenderHint(QPainter::SmoothPixmapTransform);
+      painter.drawImage(rect(), cpu_frame_);
+    }
     QWidget::paintEvent(event);
   }
 
@@ -200,6 +244,11 @@ protected:
     }
 
     event->ignore();
+    close_pending_ = true;
+    autonomous_repaint_timer_.stop();
+    compositor_frame_requested_ = false;
+    compositor_drive_posted_ = false;
+
     auto handlers = close_requested_handlers_;
     QPointer<HostWindowWidget> guard(this);
     QTimer::singleShot(0, this, [guard, handlers = std::move(handlers)]() {
@@ -208,6 +257,15 @@ protected:
       }
       for (const auto &handler : handlers) {
         handler();
+      }
+      // If close was cancelled (widget still visible and not tearing down), resume.
+      if (guard != nullptr && !guard->tearing_down_ && guard->isVisible()) {
+        guard->close_pending_ = false;
+#if !defined(Q_OS_MACOS)
+        if (!guard->autonomous_repaint_timer_.isActive()) {
+          guard->autonomous_repaint_timer_.start();
+        }
+#endif
       }
     });
   }
@@ -227,6 +285,7 @@ protected:
   }
 
   void hideEvent(QHideEvent *event) override {
+    cpu_frame_ = QImage();
     autonomous_repaint_timer_.stop();
     compositor_frame_requested_ = false;
     compositor_drive_posted_ = false;
@@ -237,26 +296,30 @@ protected:
   }
 
   bool event(QEvent *event) override {
-    const bool handled = QWidget::event(event);
-    if (event != nullptr &&
-        (event->type() == QEvent::WinIdChange ||
-         event->type() == QEvent::PlatformSurface ||
-         event->type() == QEvent::Show)) {
-      sync_window_metadata();
-    }
-    if (event != nullptr &&
-        event->type() == QEvent::PlatformSurface) {
+    // Handle SurfaceAboutToBeDestroyed before base class to ensure native
+    // handle is still valid for compositor teardown.
+    if (event != nullptr && event->type() == QEvent::PlatformSurface) {
       auto *surface_event = static_cast<QPlatformSurfaceEvent *>(event);
       if (surface_event->surfaceEventType() ==
           QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed) {
 #if defined(Q_OS_MACOS)
         shutdown_compositor_display_link();
 #else
-        if (windowHandle() != nullptr) {
-          qt_wgpu_renderer::destroy_unified_compositor_window(
-              windowHandle(), capture_device_pixel_ratio());
-        }
+        destroy_compositor_window_once();
 #endif
+        return QWidget::event(event);
+      }
+    }
+
+    const bool handled = QWidget::event(event);
+    if (!render_suppressed() &&
+        event != nullptr &&
+        (event->type() == QEvent::WinIdChange ||
+         event->type() == QEvent::PlatformSurface ||
+         event->type() == QEvent::Show)) {
+      sync_window_metadata();
+      if (windowHandle() != nullptr) {
+        request_compositor_frame();
       }
     }
     return handled;
@@ -329,6 +392,11 @@ protected:
     void *wgpu_layer = reinterpret_cast<void *>(static_cast<quintptr>(
         qt_solid_spike::qt::qt_surface_renderer_metal_layer_ptr(rust_node_id_)));
     qt_wgpu_renderer::set_metal_layer_presents_with_transaction(wgpu_layer, true);
+#else
+    // Force a compositor frame on resize — drive_compositor_frame() on Windows
+    // early-returns when compositor_frame_requested_ is false, but resize must
+    // unconditionally produce a new frame at the updated dimensions.
+    compositor_frame_requested_ = true;
 #endif
     drive_compositor_frame();
 #if defined(Q_OS_MACOS)
@@ -404,8 +472,12 @@ private:
   bool compositor_display_link_running_ = false;
   std::atomic_bool compositor_display_link_tick_posted_ = false;
 #endif
+  bool close_pending_ = false;
+  bool tearing_down_ = false;
+  bool compositor_window_destroyed_ = false;
   QTimer autonomous_repaint_timer_;
   std::vector<CloseRequestedHandler> close_requested_handlers_;
   TextEditSession text_edit_session_;
+  QImage cpu_frame_;
 
 };

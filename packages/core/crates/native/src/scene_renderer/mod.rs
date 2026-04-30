@@ -2,6 +2,7 @@ use napi::Result;
 use crate::canvas::vello::Scene;
 use crate::runtime::capture::WidgetCapture;
 
+pub(crate) mod cpu;
 #[cfg(target_os = "macos")]
 mod macos_cpu;
 pub(crate) mod effect_pass;

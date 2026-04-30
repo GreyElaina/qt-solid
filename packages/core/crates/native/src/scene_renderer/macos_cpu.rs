@@ -1,7 +1,6 @@
-use crate::canvas::vello::{Scene, peniko::kurbo::Affine};
+use crate::canvas::vello::Scene;
 use crate::runtime::capture::WidgetCapture;
-use anyrender::PaintScene;
-use vello_cpu::{Pixmap, RenderContext};
+use vello_cpu::Pixmap;
 
 use crate::runtime::qt_error;
 
@@ -42,30 +41,6 @@ fn alpha_stats(bytes: &[u8]) -> (usize, usize, usize) {
     (zero, opaque, partial)
 }
 
-fn logical_scene_to_cpu_pixmap(
-    _target: qt_compositor::QtCompositorTarget,
-    _node_id: u32,
-    width_px: u32,
-    height_px: u32,
-    scale_factor: f64,
-    scene: &Scene,
-) -> qt_compositor::Result<Pixmap> {
-    let width_u16 = u16::try_from(width_px)
-        .map_err(|_| qt_compositor::QtCompositorError::new("scene width exceeds vello_cpu range"))?;
-    let height_u16 = u16::try_from(height_px)
-        .map_err(|_| qt_compositor::QtCompositorError::new("scene height exceeds vello_cpu range"))?;
-
-    let mut painter = anyrender_vello_cpu::VelloCpuScenePainter(
-        RenderContext::new(width_u16, height_u16),
-    );
-    painter.append_scene(scene.clone(), Affine::scale(scale_factor));
-
-    let mut pixmap = Pixmap::new(width_u16, height_u16);
-    painter.0.flush();
-    painter.0.render_to_pixmap(&mut pixmap);
-    Ok(pixmap)
-}
-
 pub(crate) fn render_scene_to_capture(
     target: qt_compositor::QtCompositorTarget,
     node_id: u32,
@@ -74,7 +49,7 @@ pub(crate) fn render_scene_to_capture(
     scale_factor: f64,
     scene: &Scene,
 ) -> napi::Result<WidgetCapture> {
-    let pixmap = logical_scene_to_cpu_pixmap(target, node_id, width_px, height_px, scale_factor, scene)
+    let pixmap = super::cpu::logical_scene_to_cpu_pixmap(target, node_id, width_px, height_px, scale_factor, scene)
         .map_err(|error| qt_error(error.to_string()))?;
     let bytes = pixmap.data_as_u8_slice();
     let non_zero_bytes = bytes

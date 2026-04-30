@@ -240,6 +240,24 @@ impl RuntimeState {
 static JS_CALLBACK: Lazy<Mutex<Option<Arc<EventCallback>>>> = Lazy::new(|| Mutex::new(None));
 static CLEANUP_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 static RUNTIME_STATE: Lazy<Mutex<RuntimeState>> = Lazy::new(|| Mutex::new(RuntimeState::new()));
+static WINDOW_GPU_MODE: Lazy<Mutex<HashMap<u32, bool>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub(crate) fn set_window_gpu_mode(node_id: u32, gpu: bool) {
+    WINDOW_GPU_MODE
+        .lock()
+        .expect("window gpu mode mutex poisoned")
+        .insert(node_id, gpu);
+}
+
+pub(crate) fn window_gpu_enabled(node_id: u32) -> bool {
+    WINDOW_GPU_MODE
+        .lock()
+        .expect("window gpu mode mutex poisoned")
+        .get(&node_id)
+        .copied()
+        .unwrap_or(false)
+}
 
 fn with_runtime_state<T>(run: impl FnOnce(&RuntimeState) -> T) -> T {
     let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
@@ -840,6 +858,11 @@ pub(crate) fn destroy_node(node: &impl NodeHandle) -> Result<()> {
     qt::qt_destroy_widget(node.inner().id, &removed_ids)
         .map_err(|error| qt_error(error.what().to_owned()))?;
 
+    // Clean up renderer state (CPU pixmap buffer + GPU surface) for this node.
+    // No-op for non-window nodes since they have no entries in the maps.
+    crate::surface_renderer::destroy_window_renderer_state(node.inner().id);
+    WINDOW_GPU_MODE.lock().expect("window gpu mode mutex poisoned").remove(&node.inner().id);
+
     {
         let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
         state.ensure_generation(node.inner().generation)?;
@@ -979,6 +1002,9 @@ pub(crate) fn apply_prop(node: &impl NodeHandle, update: WindowPropUpdate) -> Re
         WindowPropUpdate::AlwaysOnTop { value } => {
             qt::qt_window_set_always_on_top(id, value)
                 .map_err(|e| qt_error(e.what().to_owned()))?;
+        }
+        WindowPropUpdate::Gpu { value } => {
+            set_window_gpu_mode(id, value);
         }
         WindowPropUpdate::WindowKind { value } => {
             let tag = u8::try_from(value).map_err(|_| invalid_arg("windowKind out of range"))?;

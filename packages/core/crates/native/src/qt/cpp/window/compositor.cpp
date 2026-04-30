@@ -1,4 +1,7 @@
 bool HostWindowWidget::request_compositor_frame() {
+  if (render_suppressed()) {
+    return false;
+  }
   if (!qt_wgpu_renderer::unified_compositor_active()) {
     return false;
   }
@@ -11,7 +14,9 @@ bool HostWindowWidget::request_compositor_frame() {
       || compositor_display_link_running_
 #endif
       ;
-#if defined(Q_OS_MACOS)
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+  // macOS / Windows: always consider frame ready. The wgpu compositor
+  // initializes the surface lazily on first drive_compositor_frame.
   const bool frame_ready = true;
 #else
   const bool frame_ready = qt_wgpu_renderer::unified_compositor_window_frame_ready(
@@ -83,6 +88,9 @@ void HostWindowWidget::drive_compositor_frame_from_signal() {
 }
 
 void HostWindowWidget::post_compositor_frame_drive() {
+  if (render_suppressed()) {
+    return;
+  }
   if (compositor_drive_posted_ || driving_compositor_frame_ || !isVisible() ||
       rust_node_id_ == 0 || windowHandle() == nullptr) {
     return;
@@ -101,10 +109,32 @@ void HostWindowWidget::post_compositor_frame_drive() {
 }
 
 void HostWindowWidget::drive_compositor_frame() {
-  if (!isVisible() || rust_node_id_ == 0 || windowHandle() == nullptr) {
+  if (render_suppressed()) {
 #if !defined(Q_OS_MACOS)
     compositor_frame_requested_ = false;
 #endif
+    return;
+  }
+  if (rust_node_id_ == 0 || windowHandle() == nullptr) {
+#if !defined(Q_OS_MACOS)
+    compositor_frame_requested_ = false;
+#endif
+    return;
+  }
+#if !defined(Q_OS_MACOS)
+  // Window not yet exposed — DWM has not acknowledged the surface yet, so
+  // DX12 swap chain creation will fail. Defer; the PlatformSurface/Show event
+  // handler will re-trigger request_compositor_frame() when ready.
+  if (!windowHandle()->isExposed()) {
+    post_compositor_frame_drive();
+    return;
+  }
+#endif
+  if (!isVisible()) {
+    // Window not yet visible — defer until next event loop turn.
+    // This happens when WinIdChange/PlatformSurface fires before show completes.
+    compositor_drive_posted_ = false;
+    post_compositor_frame_drive();
     return;
   }
 #if !defined(Q_OS_MACOS)

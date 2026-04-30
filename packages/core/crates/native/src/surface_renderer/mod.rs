@@ -8,7 +8,7 @@ use std::{ffi::c_void, ptr::NonNull};
 use once_cell::sync::Lazy;
 use crate::hybrid_image_cache::{HybridImageCache, sweep_stale_images};
 use vello::wgpu;
-use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene};
+use vello_hybrid::{AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene};
 
 use crate::canvas::vello::Scene;
 use crate::canvas::vello::peniko::kurbo::Affine;
@@ -45,11 +45,35 @@ struct SendPtr(*mut c_void);
 #[cfg(target_os = "macos")]
 unsafe impl Send for SendPtr {}
 
-static WINDOW_SURFACES: Lazy<Mutex<HashMap<u32, WindowSurface>>> =
+/// Cached CPU render state to avoid per-frame allocation of RenderContext + Pixmap.
+struct CpuRenderState {
+    context: vello_cpu::RenderContext,
+    pixmap: vello_cpu::Pixmap,
+}
+
+enum WindowRenderMode {
+    Gpu(WindowSurface),
+    Cpu(Option<CpuRenderState>),
+    /// Window has been destroyed; pending frame drives should no-op.
+    Destroyed,
+}
+
+/// Distinguishes hard GPU failures (no adapter/device — fallback to CPU) from
+/// transient surface readiness issues (HWND not ready — skip frame, retry later).
+enum SurfaceCreationError {
+    /// GPU hardware is not available or incompatible. Permanent; use CPU fallback.
+    NoGpu(String),
+    /// Surface exists but is not ready yet (e.g. configure failed). Retry next frame.
+    NotReady(String),
+}
+
+static WINDOW_SURFACES: Lazy<Mutex<HashMap<u32, WindowRenderMode>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 const BLIT_SHADER: &str = include_str!("../../shaders/blit_shader.wgsl");
 
+/// Returns `Ok(true)` if frame was presented, `Ok(false)` if surface is not
+/// ready yet (caller should preserve dirty state and retry later).
 pub(crate) fn render_and_present(
     node_id: u32,
     target: qt_compositor::QtCompositorTarget,
@@ -57,7 +81,7 @@ pub(crate) fn render_and_present(
     scene: &Scene,
     backdrop_blurs: &[crate::scene_renderer::effect_pass::BackdropBlurEffect],
     inner_shadows: &[crate::scene_renderer::effect_pass::InnerShadowEffect],
-) -> napi::Result<()> {
+) -> napi::Result<bool> {
     let width_px = target.width_px.max(1);
     let height_px = target.height_px.max(1);
 
@@ -65,22 +89,122 @@ pub(crate) fn render_and_present(
         .lock()
         .expect("surface_renderer mutex poisoned");
 
-    let ws = if let Some(ws) = surfaces.get_mut(&node_id) {
-        if ws.config.width != width_px || ws.config.height != height_px {
-            ws.config.width = width_px;
-            ws.config.height = height_px;
-            ws.surface.configure(&ws.device, &ws.config);
-            recreate_render_texture(ws, width_px, height_px);
+    // Already destroyed — late frame drive, silently ignore.
+    if matches!(surfaces.get(&node_id), Some(WindowRenderMode::Destroyed)) {
+        return Ok(true);
+    }
+
+    // Ensure an entry exists. On first call, try GPU if enabled; otherwise CPU.
+    if !surfaces.contains_key(&node_id) {
+        if crate::runtime::window_gpu_enabled(node_id) {
+            eprintln!("[qt-solid] node {node_id}: GPU mode requested");
+            match create_window_surface(target) {
+                Ok(ws) => {
+                    surfaces.insert(node_id, WindowRenderMode::Gpu(ws));
+                }
+                Err(SurfaceCreationError::NotReady(e)) => {
+                    eprintln!("[qt-solid] surface not ready, will retry next frame: {e}");
+                    return Ok(false);
+                }
+                Err(SurfaceCreationError::NoGpu(e)) => {
+                    eprintln!("[qt-solid] GPU not available, using CPU fallback: {e}");
+                    surfaces.insert(node_id, WindowRenderMode::Cpu(None));
+                }
+            }
+        } else {
+            eprintln!("[qt-solid] node {node_id}: CPU mode (default)");
+            surfaces.insert(node_id, WindowRenderMode::Cpu(None));
         }
-        ws
-    } else {
-        let ws = create_window_surface(target)
-            .map_err(|e| qt_error(e.to_string()))?;
-        surfaces.insert(node_id, ws);
-        surfaces.get_mut(&node_id).unwrap()
+    }
+
+    let is_cpu = matches!(surfaces.get(&node_id), Some(WindowRenderMode::Cpu(_)));
+    if is_cpu {
+        // Take cached state out of the map so we don't hold the lock during render.
+        let cached = match surfaces.get_mut(&node_id) {
+            Some(WindowRenderMode::Cpu(state)) => state.take(),
+            _ => None,
+        };
+        drop(surfaces);
+
+        let cached = render_cpu_and_present(node_id, target, scale_factor, scene, cached)?;
+
+        // Put the state back.
+        let mut surfaces = WINDOW_SURFACES.lock().expect("surface_renderer mutex poisoned");
+        if let Some(WindowRenderMode::Cpu(slot)) = surfaces.get_mut(&node_id) {
+            *slot = Some(cached);
+        }
+        return Ok(true);
+    }
+
+    let Some(WindowRenderMode::Gpu(ws)) = surfaces.get_mut(&node_id) else {
+        unreachable!()
+    };
+    if ws.config.width != width_px || ws.config.height != height_px {
+        ws.config.width = width_px;
+        ws.config.height = height_px;
+        ws.surface.configure(&ws.device, &ws.config);
+        recreate_render_texture(ws, width_px, height_px);
+    }
+    render_gpu_and_present(ws, width_px, height_px, scale_factor, scene, backdrop_blurs, inner_shadows)?;
+    Ok(true)
+}
+
+fn render_cpu_and_present(
+    node_id: u32,
+    target: qt_compositor::QtCompositorTarget,
+    scale_factor: f64,
+    scene: &Scene,
+    cached: Option<CpuRenderState>,
+) -> napi::Result<CpuRenderState> {
+    let width_px = target.width_px.max(1);
+    let height_px = target.height_px.max(1);
+    let width_u16 = u16::try_from(width_px)
+        .map_err(|_| qt_error("scene width exceeds vello_cpu range".to_owned()))?;
+    let height_u16 = u16::try_from(height_px)
+        .map_err(|_| qt_error("scene height exceeds vello_cpu range".to_owned()))?;
+
+    // Reuse or recreate RenderContext + Pixmap based on size match.
+    let mut state = match cached {
+        Some(mut s) if s.context.width() == width_u16 && s.context.height() == height_u16 => {
+            s.context.reset();
+            s.pixmap.resize(width_u16, height_u16);
+            s
+        }
+        _ => CpuRenderState {
+            context: vello_cpu::RenderContext::new(width_u16, height_u16),
+            pixmap: vello_cpu::Pixmap::new(width_u16, height_u16),
+        },
     };
 
-    // Render vello into intermediate Rgba8Unorm texture.
+    let mut painter = anyrender_vello_cpu::VelloCpuScenePainter(state.context);
+    painter.append_scene(scene.clone(), Affine::scale(scale_factor));
+    painter.0.flush();
+    painter.0.render_to_pixmap(&mut state.pixmap);
+    state.context = painter.0;
+
+    let pixels = state.pixmap.data_as_u8_slice();
+    let stride = width_px * 4;
+    crate::qt::ffi::bridge::qt_window_present_cpu_frame(node_id, pixels, width_px, height_px, stride)
+        .map_err(|e| qt_error(e.to_string()))?;
+    Ok(state)
+}
+
+pub(crate) fn destroy_window_renderer_state(node_id: u32) {
+    WINDOW_SURFACES
+        .lock()
+        .expect("surface renderer mutex poisoned")
+        .insert(node_id, WindowRenderMode::Destroyed);
+}
+
+fn render_gpu_and_present(
+    ws: &mut WindowSurface,
+    width_px: u32,
+    height_px: u32,
+    scale_factor: f64,
+    scene: &Scene,
+    backdrop_blurs: &[crate::scene_renderer::effect_pass::BackdropBlurEffect],
+    inner_shadows: &[crate::scene_renderer::effect_pass::InnerShadowEffect],
+) -> napi::Result<()> {
     let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("qt-solid-surface-renderer-encoder"),
     });
@@ -200,7 +324,7 @@ pub(crate) fn resize_surface(node_id: u32, width_px: u32, height_px: u32) {
     let mut surfaces = WINDOW_SURFACES
         .lock()
         .expect("surface_renderer mutex poisoned");
-    let Some(ws) = surfaces.get_mut(&node_id) else {
+    let Some(WindowRenderMode::Gpu(ws)) = surfaces.get_mut(&node_id) else {
         return;
     };
     if ws.config.width != width_px || ws.config.height != height_px {
@@ -218,7 +342,7 @@ pub(crate) fn blit_and_present(node_id: u32) -> napi::Result<()> {
     let mut surfaces = WINDOW_SURFACES
         .lock()
         .expect("surface_renderer mutex poisoned");
-    let Some(ws) = surfaces.get_mut(&node_id) else {
+    let Some(WindowRenderMode::Gpu(ws)) = surfaces.get_mut(&node_id) else {
         return Ok(());
     };
 
@@ -270,19 +394,42 @@ pub(crate) fn metal_layer_ptr(node_id: u32) -> u64 {
         .expect("surface_renderer mutex poisoned");
     surfaces
         .get(&node_id)
-        .map(|ws| ws.metal_layer_ptr.0 as u64)
+        .and_then(|mode| match mode {
+            WindowRenderMode::Gpu(ws) => Some(ws.metal_layer_ptr.0 as u64),
+            _ => None,
+        })
         .unwrap_or(0)
 }
 
 fn create_window_surface(
     target: qt_compositor::QtCompositorTarget,
-) -> Result<WindowSurface, String> {
-    let instance = wgpu::Instance::default();
+) -> Result<WindowSurface, SurfaceCreationError> {
+    // Try GL first (lower memory overhead, no DXGI swap chain conflict).
+    // Fall back to DX12 (DComp visual) if GL is unavailable.
+    create_window_surface_with_backends(target, wgpu::Backends::GL)
+        .or_else(|_| create_window_surface_with_backends(target, wgpu::Backends::default()))
+}
+
+fn create_window_surface_with_backends(
+    target: qt_compositor::QtCompositorTarget,
+    backends: wgpu::Backends,
+) -> Result<WindowSurface, SurfaceCreationError> {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends,
+        backend_options: wgpu::BackendOptions {
+            dx12: wgpu::Dx12BackendOptions {
+                presentation_system: wgpu::Dx12SwapchainKind::DxgiFromVisual,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 
     #[cfg(target_os = "macos")]
     let (surface, metal_layer_ptr) = {
         let ns_view = NonNull::new(target.primary_handle as *mut c_void)
-            .ok_or("NSView handle is null")?;
+            .ok_or_else(|| SurfaceCreationError::NoGpu("NSView handle is null".into()))?;
         let layer = unsafe { raw_window_metal::Layer::from_ns_view(ns_view) };
         let layer_ptr = layer.as_ptr().as_ptr() as *mut c_void;
         let surface = unsafe {
@@ -290,7 +437,7 @@ fn create_window_surface(
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
                     layer_ptr,
                 ))
-                .map_err(|e| format!("create surface: {e}"))?
+                .map_err(|e| SurfaceCreationError::NoGpu(format!("create surface: {e}")))?
         };
         // Leak the Layer so the CAMetalLayer stays alive for the surface lifetime.
         std::mem::forget(layer);
@@ -300,11 +447,11 @@ fn create_window_surface(
     #[cfg(not(target_os = "macos"))]
     let surface = {
         let surface_target = unsafe { qt_compositor::compositor_surface_target(target) }
-            .map_err(|e| format!("resolve surface target: {e}"))?;
+            .map_err(|e| SurfaceCreationError::NoGpu(format!("resolve surface target: {e}")))?;
         unsafe {
             instance
                 .create_surface_unsafe(surface_target)
-                .map_err(|e| format!("create surface: {e}"))?
+                .map_err(|e| SurfaceCreationError::NoGpu(format!("create surface: {e}")))?
         }
     };
     let adapter = pollster::block_on(
@@ -314,45 +461,82 @@ fn create_window_surface(
             compatible_surface: Some(&surface),
         }),
     )
-    .map_err(|e| format!("request adapter: {e}"))?;
+    .map_err(|e| SurfaceCreationError::NoGpu(format!("request adapter: {e}")))?;
+
     let (device, queue) = pollster::block_on(
         adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("qt-solid-surface-renderer-device"),
             ..Default::default()
         }),
     )
-    .map_err(|e| format!("request device: {e}"))?;
+    .map_err(|e| SurfaceCreationError::NoGpu(format!("request device: {e}")))?;
 
     let capabilities = surface.get_capabilities(&adapter);
-    // vello outputs sRGB-encoded values into Rgba8Unorm. Use a non-sRGB
-    // surface format so the blit pass copies the values verbatim without an
-    // additional linear→sRGB conversion (which would double-gamma the output).
+    if capabilities.formats.is_empty() {
+        return Err(SurfaceCreationError::NotReady(
+            "surface has no supported formats (adapter may not be compatible yet)".into(),
+        ));
+    }
+
+    let width_px = target.width_px.max(1);
+    let height_px = target.height_px.max(1);
+
+    let config = surface
+        .get_default_config(&adapter, width_px, height_px)
+        .ok_or_else(|| SurfaceCreationError::NotReady(
+            "surface.get_default_config returned None".into(),
+        ))?;
+
+    // Override format: vello outputs sRGB-encoded values into Rgba8Unorm.
+    // Use a non-sRGB surface format so the blit pass copies verbatim without
+    // an additional linear→sRGB conversion (double-gamma).
     let surface_format = capabilities
         .formats
         .iter()
         .find(|f| !f.is_srgb())
         .copied()
         .unwrap_or(capabilities.formats[0]);
-    let width_px = target.width_px.max(1);
-    let height_px = target.height_px.max(1);
     let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
-        width: width_px,
-        height: height_px,
         present_mode: wgpu::PresentMode::AutoVsync,
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        view_formats: vec![],
+        ..config
     };
+    // Set a non-panicking error handler so surface.configure failures are
+    // recoverable (default handler panics on validation errors).
+    let configure_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let configure_failed_clone = configure_failed.clone();
+    device.on_uncaptured_error(std::sync::Arc::new(move |error: wgpu::Error| {
+        eprintln!("[qt-solid] wgpu uncaptured error: {error}");
+        configure_failed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+    }));
+    device.set_device_lost_callback(|_reason, _message| {});
+
     surface.configure(&device, &config);
 
-    let renderer = Renderer::new(
+    if configure_failed.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(SurfaceCreationError::NotReady(format!(
+            "surface.configure failed for hwnd=0x{:x} adapter={:?}",
+            target.primary_handle, adapter.get_info().name,
+        )));
+    }
+
+    let renderer = Renderer::new_with(
         &device,
         &RenderTargetConfig {
             format: wgpu::TextureFormat::Rgba8Unorm,
             width: width_px,
             height: height_px,
+        },
+        RenderSettings {
+            atlas_config: AtlasConfig {
+                initial_atlas_count: 1,
+                max_atlases: 4,
+                atlas_size: (2048, 2048),
+                ..Default::default()
+            },
+            ..Default::default()
         },
     );
     // Blit pipeline: Rgba8Unorm → surface format (sRGB).
