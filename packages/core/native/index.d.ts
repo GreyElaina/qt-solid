@@ -184,6 +184,8 @@ export type FragmentValue =
   | { type: 'boxshadow', offsetX: number, offsetY: number, blur: number, color: string, inset: boolean }
   | { type: 'textruns', runs: Array<FragmentTextRunWire> }
   | { type: 'radii', topLeft: number, topRight: number, bottomRight: number, bottomLeft: number }
+  | { type: 'gridtracks', tracks: Array<string> }
+  | { type: 'border', width: number, color: string }
   | { type: 'blendmode', value: FragmentBlendMode }
   | { type: 'unset' }
 

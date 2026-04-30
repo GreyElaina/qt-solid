@@ -1,6 +1,6 @@
 mod api;
 mod canvas;
-mod hybrid_image_cache;
+mod image;
 // Re-export for fragment-derive proc macro which generates `crate::fragment::decl::*`
 // and `crate::fragment::*` paths.
 pub use canvas::{fragment, vello};

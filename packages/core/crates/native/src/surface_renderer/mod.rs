@@ -6,7 +6,7 @@ use std::{
 use std::{ffi::c_void, ptr::NonNull};
 
 use once_cell::sync::Lazy;
-use crate::hybrid_image_cache::{HybridImageCache, sweep_stale_images};
+use crate::image::{HybridImageCache, sweep_stale_images};
 use vello::wgpu;
 use vello_hybrid::{AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene};
 

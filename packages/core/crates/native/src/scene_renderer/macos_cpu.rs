@@ -3,16 +3,16 @@ use crate::runtime::capture::WidgetCapture;
 
 use crate::runtime::qt_error;
 
-fn renderer_trace_enabled() -> bool {
-    std::env::var_os("QT_SOLID_WGPU_TRACE").is_some()
-}
+// fn renderer_trace_enabled() -> bool {
+//     std::env::var_os("QT_SOLID_WGPU_TRACE").is_some()
+// }
 
-fn renderer_trace(args: std::fmt::Arguments<'_>) {
-    if !renderer_trace_enabled() {
-        return;
-    }
-    println!("[qt-vello-cpu] {args}");
-}
+// fn renderer_trace(args: std::fmt::Arguments<'_>) {
+//     if !renderer_trace_enabled() {
+//         return;
+//     }
+//     println!("[qt-vello-cpu] {args}");
+// }
 
 fn capture_checksum(bytes: &[u8]) -> (u64, u64) {
     let mut sum = 0_u64;
@@ -57,20 +57,20 @@ pub(crate) fn render_scene_to_capture(
         .count();
     let (sum, xor) = capture_checksum(bytes);
     let (alpha_zero, alpha_opaque, alpha_partial) = alpha_stats(bytes);
-    renderer_trace(format_args!(
-        "capture node={} size={}x{} scale={:.3} bytes={} non_zero_bytes={} checksum_sum={} checksum_xor=0x{:016x} alpha_zero={} alpha_opaque={} alpha_partial={}",
-        node_id,
-        width_px,
-        height_px,
-        scale_factor,
-        bytes.len(),
-        non_zero_bytes,
-        sum,
-        xor,
-        alpha_zero,
-        alpha_opaque,
-        alpha_partial
-    ));
+    // renderer_trace(format_args!(
+    //     "capture node={} size={}x{} scale={:.3} bytes={} non_zero_bytes={} checksum_sum={} checksum_xor=0x{:016x} alpha_zero={} alpha_opaque={} alpha_partial={}",
+    //     node_id,
+    //     width_px,
+    //     height_px,
+    //     scale_factor,
+    //     bytes.len(),
+    //     non_zero_bytes,
+    //     sum,
+    //     xor,
+    //     alpha_zero,
+    //     alpha_opaque,
+    //     alpha_partial
+    // ));
     WidgetCapture::from_premul_rgba_pixels(
         width_px,
         height_px,

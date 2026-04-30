@@ -1,11 +1,11 @@
 mod host;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux"))]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod wake_flag;
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 mod windows;
 
 use std::{error::Error, fmt};
