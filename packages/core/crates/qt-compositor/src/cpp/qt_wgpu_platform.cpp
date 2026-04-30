@@ -387,6 +387,10 @@ public:
 
   void flush(QWindow *window, const QRegion &region,
              const QPoint &offset) override {
+    if (unified_compositor_active() && this->window() &&
+        this->window()->property(kRootNodeIdProperty).isValid()) {
+      return;
+    }
     delegate_->flush(window, region, offset);
   }
 
