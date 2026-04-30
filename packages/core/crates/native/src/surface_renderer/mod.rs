@@ -95,8 +95,9 @@ pub(crate) fn render_and_present(
     }
 
     // Ensure an entry exists. On first call, try GPU if enabled; otherwise CPU.
+    // macOS always has Metal — ignore the gpu prop and go GPU unconditionally.
     if !surfaces.contains_key(&node_id) {
-        if crate::runtime::window_gpu_enabled(node_id) {
+        if cfg!(target_os = "macos") || crate::runtime::window_gpu_enabled(node_id) {
             eprintln!("[qt-solid] node {node_id}: GPU mode requested");
             match create_window_surface(target) {
                 Ok(ws) => {
