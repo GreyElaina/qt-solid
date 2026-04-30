@@ -247,6 +247,32 @@ function lowerObjectProp(key: string, value: Record<string, unknown>): unknown {
     }
   }
 
+  // Per-side border — { width, color } → Border wire variant
+  if (
+    (key === "borderTop" || key === "borderRight" || key === "borderBottom" || key === "borderLeft") &&
+    "width" in value &&
+    "color" in value
+  ) {
+    return {
+      type: "border",
+      width: value.width as number,
+      color: value.color as string,
+    }
+  }
+
+  // Grid template tracks — convert array of track sizes to napi wire format
+  if (
+    (key === "gridTemplateRows" || key === "gridTemplateColumns") &&
+    Array.isArray(value)
+  ) {
+    return {
+      type: "gridtracks",
+      tracks: (value as Array<number | string>).map((t) =>
+        typeof t === "number" ? String(t) : t,
+      ),
+    }
+  }
+
   return value
 }
 

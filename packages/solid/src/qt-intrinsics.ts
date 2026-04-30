@@ -276,6 +276,10 @@ export interface CanvasRectProps extends CanvasCommonProps {
   shadow?: { offsetX: number; offsetY: number; blur: number; color: string; inset?: boolean }
   stroke?: string
   strokeWidth?: number
+  borderTop?: { width: number; color: string }
+  borderRight?: { width: number; color: string }
+  borderBottom?: { width: number; color: string }
+  borderLeft?: { width: number; color: string }
 }
 
 export interface CanvasCircleProps extends CanvasCommonProps {

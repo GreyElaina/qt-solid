@@ -8,7 +8,7 @@ use crate::parse::{BoundsKind, FieldMode, FragmentFieldAttrs, FragmentStructAttr
 enum DirectVariant { F64, Str, Bool }
 
 #[derive(Clone, PartialEq)]
-enum ParseMode { Direct, Color, StrokeColor, PlainColor, Brush, Shadow, Radii }
+enum ParseMode { Direct, Color, StrokeColor, PlainColor, Brush, Shadow, Radii, Border }
 
 #[derive(Clone)]
 enum ClearMode { Default, None_ }
@@ -57,6 +57,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             Some("brush") => ParseMode::Brush,
             Some("shadow") => ParseMode::Shadow,
             Some("radii") => ParseMode::Radii,
+            Some("border") => ParseMode::Border,
             _ => ParseMode::Direct,
         };
 
@@ -201,6 +202,17 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     #js => {
                         if let Some(radii) = crate::fragment::parse_radii_from_wire(&value) {
                             self.#rust = radii;
+                            return #mutation;
+                        }
+                        FragmentMutation::NONE
+                    }
+                }
+            }
+            ParseMode::Border => {
+                quote! {
+                    #js => {
+                        if let Some(border) = crate::fragment::parse_border_from_wire(&value) {
+                            self.#rust = Some(border);
                             return #mutation;
                         }
                         FragmentMutation::NONE

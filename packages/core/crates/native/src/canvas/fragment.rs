@@ -10,7 +10,7 @@ use crate::scene_renderer::effect_pass::{BackdropBlurEffect, InnerShadowEffect};
 use super::vello::{
     peniko::{
         color::palette,
-        kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, RoundedRectRadii, Shape, Stroke, Vec2},
+        kurbo::{Affine, BezPath, Circle, PathEl, Point, Rect, RoundedRect, RoundedRectRadii, Shape, Stroke, Vec2},
         BlendMode, Color, Fill, ImageBrushRef, ImageData,
     },
     PaintScene, Scene,
@@ -159,6 +159,12 @@ impl Default for FillPaint {
 pub struct StrokePaint {
     pub color: Color,
     pub width: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BorderSide {
+    pub width: f64,
+    pub color: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -337,6 +343,15 @@ pub fn parse_shadow_from_wire(value: &FragmentValue) -> Option<FragmentBoxShadow
     }
 }
 
+pub fn parse_border_from_wire(value: &FragmentValue) -> Option<BorderSide> {
+    match value {
+        FragmentValue::Border { width, color } => {
+            parse_css_hex_color(color).map(|c| BorderSide { width: *width, color: c })
+        }
+        _ => None,
+    }
+}
+
 impl From<FragmentBlendMode> for BlendMode {
     fn from(mode: FragmentBlendMode) -> Self {
         use super::vello::peniko::{Mix, Compose};
@@ -398,6 +413,14 @@ pub struct RectFragment {
     pub stroke: Option<StrokePaint>,
     #[fragment(prop(js = "strokeWidth"))]
     pub stroke_width: f64,
+    #[fragment(prop(js = "borderTop"), parse = border, clear = none)]
+    pub border_top: Option<BorderSide>,
+    #[fragment(prop(js = "borderRight"), parse = border, clear = none)]
+    pub border_right: Option<BorderSide>,
+    #[fragment(prop(js = "borderBottom"), parse = border, clear = none)]
+    pub border_bottom: Option<BorderSide>,
+    #[fragment(prop(js = "borderLeft"), parse = border, clear = none)]
+    pub border_left: Option<BorderSide>,
 }
 
 #[derive(Fragment, Debug, Clone, Default)]
@@ -701,6 +724,44 @@ impl FragmentEncode for RectFragment {
         // Stroke.
         if let Some(stroke) = &self.stroke {
             scene.stroke(&Stroke::new(self.stroke_width.max(stroke.width)), transform, stroke.color, None, &path);
+        }
+
+        // Per-side borders — drawn as inset strokes along each edge.
+        if self.border_top.is_some() || self.border_right.is_some() || self.border_bottom.is_some() || self.border_left.is_some() {
+            let w = self.width;
+            let h = self.height;
+            if let Some(b) = &self.border_top {
+                let half = b.width / 2.0;
+                let seg = BezPath::from_vec(vec![
+                    PathEl::MoveTo(Point::new(0.0, half)),
+                    PathEl::LineTo(Point::new(w, half)),
+                ]);
+                scene.stroke(&Stroke::new(b.width), transform, b.color, None, &seg);
+            }
+            if let Some(b) = &self.border_right {
+                let half = b.width / 2.0;
+                let seg = BezPath::from_vec(vec![
+                    PathEl::MoveTo(Point::new(w - half, 0.0)),
+                    PathEl::LineTo(Point::new(w - half, h)),
+                ]);
+                scene.stroke(&Stroke::new(b.width), transform, b.color, None, &seg);
+            }
+            if let Some(b) = &self.border_bottom {
+                let half = b.width / 2.0;
+                let seg = BezPath::from_vec(vec![
+                    PathEl::MoveTo(Point::new(0.0, h - half)),
+                    PathEl::LineTo(Point::new(w, h - half)),
+                ]);
+                scene.stroke(&Stroke::new(b.width), transform, b.color, None, &seg);
+            }
+            if let Some(b) = &self.border_left {
+                let half = b.width / 2.0;
+                let seg = BezPath::from_vec(vec![
+                    PathEl::MoveTo(Point::new(half, 0.0)),
+                    PathEl::LineTo(Point::new(half, h)),
+                ]);
+                scene.stroke(&Stroke::new(b.width), transform, b.color, None, &seg);
+            }
         }
     }
 }
