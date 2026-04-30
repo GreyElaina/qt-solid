@@ -432,6 +432,8 @@ pub struct TextFragment {
     pub font_style: String,
     #[fragment(prop(js = "textMaxWidth"))]
     pub text_max_width: f64,
+    #[fragment(prop(js = "textOverflow"))]
+    pub text_overflow: String,
     #[fragment(prop, parse = plain_color, default = Color::from_rgba8(255, 255, 255, 255))]
     pub color: Color,
     #[fragment(skip)]
@@ -447,6 +449,7 @@ impl Default for TextFragment {
             font_weight: 0.0,
             font_style: String::new(),
             text_max_width: 0.0,
+            text_overflow: String::new(),
             color: Color::from_rgba8(255, 255, 255, 255),
             shaped: None,
         }
@@ -3024,7 +3027,7 @@ pub fn fragment_store_set_caret_visible(
 pub fn fragment_store_read_text_props(
     canvas_node_id: u32,
     fragment_id: FragmentId,
-) -> Option<(String, f64, String, i32, bool, f64)> {
+) -> Option<(String, f64, String, i32, bool, f64, String)> {
     runtime::with_fragment_tree(canvas_node_id, |tree| {
         let node = tree.node(fragment_id)?;
         if let FragmentData::Text(ref text) = node.kind {
@@ -3033,7 +3036,7 @@ pub fn fragment_store_read_text_props(
             }
             let weight = text.font_weight as i32;
             let italic = text.font_style == "italic";
-            Some((text.text.clone(), text.font_size, text.font_family.clone(), weight, italic, text.text_max_width))
+            Some((text.text.clone(), text.font_size, text.font_family.clone(), weight, italic, text.text_max_width, text.text_overflow.clone()))
         } else {
             None
         }
@@ -3045,7 +3048,7 @@ pub fn fragment_store_read_text_props(
 pub fn fragment_store_read_text_style_runs(
     canvas_node_id: u32,
     fragment_id: FragmentId,
-) -> Option<(Vec<TextStyleRun>, f64, String, f64)> {
+) -> Option<(Vec<TextStyleRun>, f64, String, f64, String)> {
     runtime::with_fragment_tree(canvas_node_id, |tree| {
         let node = tree.node(fragment_id)?;
         let text_frag = match &node.kind {
@@ -3076,7 +3079,7 @@ pub fn fragment_store_read_text_style_runs(
         if runs.is_empty() {
             None
         } else {
-            Some((runs, text_frag.font_size, text_frag.font_family.clone(), text_frag.text_max_width))
+            Some((runs, text_frag.font_size, text_frag.font_family.clone(), text_frag.text_max_width, text_frag.text_overflow.clone()))
         }
     })?
 }
@@ -3529,7 +3532,7 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
     node.kind.apply_prop(key, value);
     // Invalidate shaped-text cache when text content or font size changes,
     // so the next reshape pass picks up the new value.
-    if matches!(key, "text" | "fontSize" | "fontFamily" | "fontWeight" | "fontStyle" | "textMaxWidth") {
+    if matches!(key, "text" | "fontSize" | "fontFamily" | "fontWeight" | "fontStyle" | "textMaxWidth" | "textOverflow") {
         match &mut node.kind {
             FragmentData::Text(t) => { t.shaped = None; }
             FragmentData::TextInput(ti) => { ti.layout = None; }

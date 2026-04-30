@@ -353,13 +353,14 @@ pub(crate) mod bridge {
         fn qt_clipboard_get(mime: &str) -> Vec<u8>;
         fn qt_clipboard_clear();
         fn qt_clipboard_set(entries: Vec<QtClipboardEntry>);
-        fn qt_shape_text_to_path(text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool, max_width: f64) -> QtShapedTextResult;
+        fn qt_shape_text_to_path(text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool, max_width: f64, elide_mode: u8) -> QtShapedTextResult;
         fn qt_shape_text_with_cursors(text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool) -> QtShapedTextWithCursorsResult;
         fn qt_shape_styled_text_to_path(
             text: &str,
             default_font_size: f64,
             default_font_family: &str,
             max_width: f64,
+            elide_mode: u8,
             style_runs: &[QtTextStyleRun],
         ) -> QtStyledShapedTextResult;
         fn qt_measure_text(text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool, max_width: f64) -> QtTextMeasurement;

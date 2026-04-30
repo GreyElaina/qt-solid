@@ -72,12 +72,12 @@ rust::Vec<rust::String> qt_clipboard_formats();
 rust::Vec<std::uint8_t> qt_clipboard_get(rust::Str mime);
 void qt_clipboard_clear();
 void qt_clipboard_set(rust::Vec<QtClipboardEntry> entries);
-QtShapedTextResult qt_shape_text_to_path(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic, double max_width);
+QtShapedTextResult qt_shape_text_to_path(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic, double max_width, std::uint8_t elide_mode);
 QtShapedTextWithCursorsResult qt_shape_text_with_cursors(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic);
 struct QtTextStyleRun;
 struct QtStyledShapedRun;
 struct QtStyledShapedTextResult;
-QtStyledShapedTextResult qt_shape_styled_text_to_path(rust::Str text, double default_font_size, rust::Str default_font_family, double max_width, rust::Slice<const QtTextStyleRun> style_runs);
+QtStyledShapedTextResult qt_shape_styled_text_to_path(rust::Str text, double default_font_size, rust::Str default_font_family, double max_width, std::uint8_t elide_mode, rust::Slice<const QtTextStyleRun> style_runs);
 std::uint8_t qt_system_color_scheme();
 
 // Direct typed Window FFI — bypasses generic prop dispatch.

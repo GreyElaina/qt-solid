@@ -904,7 +904,7 @@ fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
         return;
     }
 
-    let Some((text, font_size, font_family, font_weight, font_italic, text_max_width)) =
+    let Some((text, font_size, font_family, font_weight, font_italic, text_max_width, text_overflow)) =
         fragment_store::fragment_store_read_text_props(canvas_node_id, FragmentId(fragment_id))
     else {
         return;
@@ -913,7 +913,12 @@ fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
         return;
     }
 
-    let result = crate::qt::qt_shape_text_to_path(&text, font_size, &font_family, font_weight, font_italic, text_max_width);
+    let elide_mode: u8 = match text_overflow.as_str() {
+        "clip" => 1,
+        "ellipsis" => 2,
+        _ => 0,
+    };
+    let result = crate::qt::qt_shape_text_to_path(&text, font_size, &font_family, font_weight, font_italic, text_max_width, elide_mode);
 
     let mut path = BezPath::new();
     for el in &result.elements {
@@ -977,7 +982,7 @@ fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
 }
 
 fn reshape_styled_text_fragment(canvas_node_id: u32, fragment_id: u32) {
-    let Some((text_runs, default_font_size, default_font_family, text_max_width)) =
+    let Some((text_runs, default_font_size, default_font_family, text_max_width, text_overflow)) =
         fragment_store::fragment_store_read_text_style_runs(canvas_node_id, FragmentId(fragment_id))
     else {
         return;
@@ -1009,11 +1014,17 @@ fn reshape_styled_text_fragment(canvas_node_id: u32, fragment_id: u32) {
         return;
     }
 
+    let elide_mode: u8 = match text_overflow.as_str() {
+        "clip" => 1,
+        "ellipsis" => 2,
+        _ => 0,
+    };
     let result = crate::qt::qt_shape_styled_text_to_path(
         &full_text,
         default_font_size,
         &default_font_family,
         text_max_width,
+        elide_mode,
         &wire_runs,
     );
 

@@ -282,6 +282,7 @@ export interface CanvasTextProps extends CanvasCommonProps {
   fontWeight?: number
   fontStyle?: string
   textMaxWidth?: number
+  textOverflow?: "clip" | "ellipsis"
   color?: string
 }
 

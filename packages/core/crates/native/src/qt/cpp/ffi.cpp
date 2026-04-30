@@ -479,9 +479,15 @@ std::uint64_t trace_now_ns() { return uv_hrtime(); }
 // Text shaping FFI functions
 // ---------------------------------------------------------------------------
 
-QtShapedTextResult qt_shape_text_to_path(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic, double max_width) {
+QtShapedTextResult qt_shape_text_to_path(rust::Str text, double font_size, rust::Str font_family, std::int32_t font_weight, bool font_italic, double max_width, std::uint8_t elide_mode) {
   QFont font = make_qfont(font_family, font_size, font_weight, font_italic);
   QString qtext = QString::fromUtf8(text.data(), static_cast<int>(text.size()));
+
+  // Elide text if requested: 1=clip (just no-wrap), 2=ellipsis (elide right).
+  if (elide_mode == 2 && max_width > 0.0) {
+    QFontMetricsF fm(font);
+    qtext = fm.elidedText(qtext, Qt::ElideRight, max_width);
+  }
 
   QTextLayout layout(qtext, font);
   layout.beginLayout();
@@ -496,6 +502,8 @@ QtShapedTextResult qt_shape_text_to_path(rust::Str text, double font_size, rust:
     }
     line.setPosition(QPointF(0.0, y_offset));
     y_offset += line.height();
+    // Single-line mode for clip/ellipsis: stop after first line.
+    if (elide_mode > 0) break;
   }
   layout.endLayout();
 
@@ -583,6 +591,7 @@ QtStyledShapedTextResult qt_shape_styled_text_to_path(
     double default_font_size,
     rust::Str default_font_family,
     double max_width,
+    std::uint8_t elide_mode,
     rust::Slice<const QtTextStyleRun> style_runs) {
 
   QFont default_font = make_qfont(default_font_family, default_font_size, 0, false);
@@ -620,6 +629,7 @@ QtStyledShapedTextResult qt_shape_styled_text_to_path(
     }
     line.setPosition(QPointF(0.0, y_offset));
     y_offset += line.height();
+    if (elide_mode > 0) break;
   }
   layout.endLayout();
 
