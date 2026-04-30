@@ -86,6 +86,11 @@ pub struct AnimationChannel {
     delay_secs: f64,
     state: ChannelState,
     last_velocity: f64,
+    /// Previous target value — used to infer implicit velocity when an instant
+    /// (completed) channel is retargeted into a spring. This enables "driven"
+    /// mode: rapid instant setTarget calls accumulate velocity that a subsequent
+    /// spring transition can pick up (e.g. drag release, scroll fling).
+    pub(crate) prev_target: Option<(f64, f64)>, // (value, timestamp)
 }
 
 impl AnimationChannel {
@@ -121,6 +126,7 @@ impl AnimationChannel {
             delay_secs,
             state,
             last_velocity: 0.0,
+            prev_target: None,
         }
     }
 
@@ -138,6 +144,10 @@ impl AnimationChannel {
 
     pub fn last_velocity(&self) -> f64 {
         self.last_velocity
+    }
+
+    pub fn started_at(&self) -> f64 {
+        self.started_at
     }
 
     /// The value the channel rests at after all iterations complete.
@@ -280,12 +290,36 @@ impl AnimationChannel {
     /// Interrupt this channel: snapshot current value/velocity, retarget.
     ///
     /// For keyframe channels, creates a simple A→B from current to new_target.
+    ///
+    /// When the current channel was instant (Completed), velocity is inferred
+    /// from the previous target and elapsed time — enabling "driven" semantics
+    /// where rapid instant writes accumulate velocity for a subsequent spring.
     pub fn retarget(&mut self, new_target: f64, new_transition: TransitionSpec, now: f64) -> Self {
         let (current_value, current_velocity) = self.sample(now);
 
+        // Infer velocity from prev_target when channel is completed (instant snap).
+        // This is the "driven mode" velocity: Δvalue / Δtime between consecutive
+        // instant setTarget calls.
+        let effective_velocity = if self.state == ChannelState::Completed && current_velocity == 0.0 {
+            if let Some((prev_val, prev_time)) = self.prev_target {
+                let dt = now - prev_time;
+                if dt > 0.0 && dt < 0.5 {
+                    // Only infer velocity if the previous write was recent enough
+                    // to be considered part of a continuous gesture.
+                    (current_value - prev_val) / dt
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            }
+        } else {
+            current_velocity
+        };
+
         let transition = match &new_transition {
             TransitionSpec::Spring(params) => TransitionSpec::Spring(SpringParams {
-                initial_velocity: current_velocity,
+                initial_velocity: effective_velocity,
                 ..*params
             }),
             other => other.clone(),

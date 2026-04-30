@@ -2,14 +2,20 @@ import {
   createApp,
   createWindow,
   ScrollView,
+  motion,
+  AnimatePresence,
+  defineIntrinsicComponent,
   type AppHandle,
   type WindowHandle,
+  type CanvasRectProps,
+  type CanvasGroupProps,
 } from "@qt-solid/solid"
 import {
   createSignal,
   createMemo,
   For,
   Show,
+  Index,
   type Component,
   type JSX,
   type Accessor,
@@ -105,6 +111,477 @@ function axisLabel(combo: Record<string, unknown>, axes: Record<string, unknown[
   return Object.keys(axes)
     .map((k) => `${k}=${String(combo[k])}`)
     .join("  ")
+}
+
+// ---------------------------------------------------------------------------
+// Motion primitives for demos
+// ---------------------------------------------------------------------------
+
+const MotionRect = motion(defineIntrinsicComponent<CanvasRectProps>("rect"))
+const MotionGroup = motion(defineIntrinsicComponent<CanvasGroupProps>("group"))
+
+// ---------------------------------------------------------------------------
+// Motion · Basics — spring/tween, scale/rotate/opacity
+// ---------------------------------------------------------------------------
+
+const MotionBasicsDemo: Component = () => {
+  const [toggled, setToggled] = createSignal(false)
+
+  return (
+    <group flexDirection="column" gap={16}>
+      <Button onClick={() => setToggled(v => !v)}>Toggle</Button>
+      <group flexDirection="row" gap={16} alignItems="center">
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={60} height={60} cornerRadius={8}
+            fill="#0078d4"
+            initial={{ scale: 1, rotate: 0 }}
+            animate={{ scale: toggled() ? 1.3 : 1, rotate: toggled() ? 45 : 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          />
+          <CaptionLabel text="Spring" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={60} height={60} cornerRadius={30}
+            fill="#e74856"
+            initial={{ opacity: 1, y: 0 }}
+            animate={{ opacity: toggled() ? 0.3 : 1, y: toggled() ? -20 : 0 }}
+            transition={{ type: "tween", duration: 0.4, ease: "ease-in-out" }}
+          />
+          <CaptionLabel text="Tween" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={60} height={60} cornerRadius={8}
+            fill="#00cc6a"
+            initial={{ scaleX: 1, scaleY: 1 }}
+            animate={{ scaleX: toggled() ? 1.4 : 1, scaleY: toggled() ? 0.6 : 1 }}
+            transition={{ type: "spring", stiffness: 400, damping: 15 }}
+          />
+          <CaptionLabel text="Squash" />
+        </group>
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Gestures — whileHover / whileTap
+// ---------------------------------------------------------------------------
+
+const MotionGesturesDemo: Component = () => {
+  return (
+    <group flexDirection="row" gap={16} alignItems="center">
+      <group flexDirection="column" gap={4} alignItems="center">
+        <MotionRect
+          width={80} height={80} cornerRadius={12}
+          fill="#744da9"
+          animate={{ scale: 1 }}
+          whileHover={{ scale: 1.1, rotate: 5 }}
+          whileTap={{ scale: 0.9 }}
+          transition={{ type: "spring", stiffness: 400, damping: 20 }}
+          hitTest
+        />
+        <CaptionLabel text="Hover + Tap" />
+      </group>
+      <group flexDirection="column" gap={4} alignItems="center">
+        <MotionRect
+          width={80} height={80} cornerRadius={40}
+          fill="#f7630c"
+          animate={{ scale: 1, opacity: 1 }}
+          whileHover={{ scale: 1.15, opacity: 0.8 }}
+          whileTap={{ scale: 0.85 }}
+          transition={{ type: "spring", stiffness: 500, damping: 25 }}
+          hitTest
+        />
+        <CaptionLabel text="Circle" />
+      </group>
+      <group flexDirection="column" gap={4} alignItems="center">
+        <MotionRect
+          width={100} height={50} cornerRadius={25}
+          fill="#0099bc"
+          animate={{ scaleX: 1 }}
+          whileHover={{ scaleX: 1.2 }}
+          whileTap={{ scaleX: 0.8, scaleY: 1.2 }}
+          transition={{ type: "spring", stiffness: 350, damping: 18 }}
+          hitTest
+        />
+        <CaptionLabel text="Stretch" />
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Presence — enter/exit lifecycle
+// ---------------------------------------------------------------------------
+
+const MotionPresenceDemo: Component = () => {
+  const [show, setShow] = createSignal(true)
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <Button onClick={() => setShow(v => !v)}>
+        {show() ? "Remove" : "Add"}
+      </Button>
+      <AnimatePresence when={show()}>
+        {() => (
+          <MotionRect
+            width={120} height={80} cornerRadius={12}
+            fill="#0078d4"
+            initial={{ opacity: 0, scale: 0.8, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.6, y: -20 }}
+            transition={{ type: "spring", stiffness: 300, damping: 22 }}
+          />
+        )}
+      </AnimatePresence>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Stagger — orchestrated children
+// ---------------------------------------------------------------------------
+
+const MotionStaggerDemo: Component = () => {
+  const [visible, setVisible] = createSignal(true)
+  const items = [0, 1, 2, 3, 4]
+
+  const replay = () => {
+    setVisible(false)
+    setTimeout(() => setVisible(true), 50)
+  }
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <Button onClick={replay}>Replay</Button>
+      <AnimatePresence when={visible()}>
+        {() => (
+          <MotionGroup
+            flexDirection="row" gap={8}
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 1 }}
+            transition={{ staggerChildren: 0.08, delayChildren: 0.1 }}
+          >
+            <Index each={items}>
+              {(_, i) => (
+                <MotionRect
+                  width={40} height={40} cornerRadius={6}
+                  fill={["#0078d4", "#e74856", "#00cc6a", "#f7630c", "#744da9"][i % 5]!}
+                  initial={{ opacity: 0, y: 30, scale: 0.5 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 20 }}
+                />
+              )}
+            </Index>
+          </MotionGroup>
+        )}
+      </AnimatePresence>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Keyframes — multi-step animations
+// ---------------------------------------------------------------------------
+
+const MotionKeyframesDemo: Component = () => {
+  const [playing, setPlaying] = createSignal(false)
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <Button onClick={() => setPlaying(v => !v)}>
+        {playing() ? "Reset" : "Play"}
+      </Button>
+      <group flexDirection="row" gap={16} alignItems="center">
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={50} height={50} cornerRadius={8}
+            fill="#0078d4"
+            animate={{
+              rotate: playing() ? [0, 90, 180, 270, 360] : 0,
+              scale: playing() ? [1, 1.2, 1, 0.8, 1] : 1,
+            }}
+            transition={{
+              type: "tween",
+              duration: 2,
+              ease: "ease-in-out",
+              times: [0, 0.25, 0.5, 0.75, 1],
+            }}
+          />
+          <CaptionLabel text="Spin + pulse" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={50} height={50} cornerRadius={25}
+            fill="#e74856"
+            animate={{
+              x: playing() ? [0, 40, 0, -40, 0] : 0,
+              y: playing() ? [0, -20, 0, -20, 0] : 0,
+            }}
+            transition={{
+              type: "tween",
+              duration: 1.5,
+              ease: "ease-in-out",
+              times: [0, 0.25, 0.5, 0.75, 1],
+            }}
+          />
+          <CaptionLabel text="Figure-8" />
+        </group>
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Drag — constrained draggable elements
+// ---------------------------------------------------------------------------
+
+const MotionDragDemo: Component = () => {
+  return (
+    <group flexDirection="column" gap={8}>
+      <group flexDirection="row" gap={24} alignItems="center">
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect width={200} height={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
+            <MotionRect
+              width={50} height={50} cornerRadius={8}
+              fill="#0078d4"
+              animate={{ x: 0, y: 0 }}
+              drag
+              dragConstraints={{ left: 0, right: 140, top: 0, bottom: 60 }}
+              dragElastic={0.2}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              hitTest
+            />
+          </rect>
+          <CaptionLabel text="Drag (constrained)" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect width={200} height={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
+            <MotionRect
+              width={50} height={50} cornerRadius={25}
+              fill="#f7630c"
+              animate={{ x: 0, y: 0 }}
+              drag="x"
+              dragConstraints={{ left: -60, right: 60 }}
+              dragElastic={0.5}
+              transition={{ type: "spring", stiffness: 500, damping: 25 }}
+              hitTest
+            />
+          </rect>
+          <CaptionLabel text="Drag X only (elastic)" />
+        </group>
+      </group>
+      <CaptionLabel text="⚠ Drag API declared but not yet wired in runtime" />
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Loop — repeating animations
+// ---------------------------------------------------------------------------
+
+const MotionLoopDemo: Component = () => {
+  return (
+    <group flexDirection="row" gap={24} alignItems="center">
+      <group flexDirection="column" gap={4} alignItems="center">
+        <MotionRect
+          width={50} height={50} cornerRadius={25}
+          fill="#0078d4"
+          initial={{ scale: 1 }}
+          animate={{ scale: [1, 1.3, 1] }}
+          transition={{
+            type: "tween",
+            duration: 1.2,
+            ease: "ease-in-out",
+            times: [0, 0.5, 1],
+            repeat: Infinity,
+            repeatType: "loop",
+          }}
+        />
+        <CaptionLabel text="Pulse (loop)" />
+      </group>
+      <group flexDirection="column" gap={4} alignItems="center">
+        <MotionRect
+          width={50} height={50} cornerRadius={8}
+          fill="#e74856"
+          initial={{ rotate: 0 }}
+          animate={{ rotate: 360 }}
+          transition={{
+            type: "tween",
+            duration: 2,
+            ease: "linear",
+            repeat: Infinity,
+            repeatType: "loop",
+          }}
+        />
+        <CaptionLabel text="Spin (∞)" />
+      </group>
+      <group flexDirection="column" gap={4} alignItems="center">
+        <MotionRect
+          width={50} height={50} cornerRadius={8}
+          fill="#00cc6a"
+          initial={{ y: 0 }}
+          animate={{ y: -20 }}
+          transition={{
+            type: "tween",
+            duration: 0.6,
+            ease: "ease-in-out",
+            repeat: Infinity,
+            repeatType: "reverse",
+          }}
+        />
+        <CaptionLabel text="Bounce (reverse)" />
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Colors — background color & blur transitions
+// ---------------------------------------------------------------------------
+
+const MotionColorsDemo: Component = () => {
+  const [index, setIndex] = createSignal(0)
+  const colors = ["#0078d4", "#e74856", "#00cc6a", "#f7630c", "#744da9"]
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <Button onClick={() => setIndex(i => (i + 1) % colors.length)}>Next Color</Button>
+      <group flexDirection="row" gap={16} alignItems="center">
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={80} height={80} cornerRadius={12}
+            fill="#333"
+            initial={{ opacity: 1 }}
+            animate={{ backgroundColor: colors[index()]!, opacity: 1 }}
+            transition={{ type: "tween", duration: 0.5, ease: "ease-in-out" }}
+          />
+          <CaptionLabel text="Color shift" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={80} height={80} cornerRadius={12}
+            fill="#0078d4"
+            initial={{ blur: 0, borderRadius: 12 }}
+            animate={{
+              blur: index() % 2 === 0 ? 0 : 8,
+              borderRadius: index() % 2 === 0 ? 12 : 40,
+            }}
+            transition={{ type: "tween", duration: 0.6, ease: "ease-in-out" }}
+          />
+          <CaptionLabel text="Blur + radius" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <MotionRect
+            width={80} height={80} cornerRadius={12}
+            fill="#744da9"
+            initial={{ shadowBlur: 0, shadowOffsetY: 0 }}
+            animate={{
+              shadowBlur: index() % 2 === 0 ? 0 : 16,
+              shadowOffsetY: index() % 2 === 0 ? 0 : 6,
+              shadowColor: "#00000066",
+            }}
+            transition={{ type: "tween", duration: 0.5, ease: "ease-out" }}
+          />
+          <CaptionLabel text="Shadow" />
+        </group>
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Layout — layoutId shared element transition
+// ---------------------------------------------------------------------------
+
+const MotionLayoutDemo: Component = () => {
+  const [selected, setSelected] = createSignal(0)
+  const tabs = ["Home", "Search", "Profile"]
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <group flexDirection="row" gap={0}>
+        <Index each={tabs}>
+          {(tab, i) => (
+            <rect
+              width={80} height={36}
+              flexDirection="column"
+              alignItems="center"
+              justifyContent="center"
+              onPointerUp={() => setSelected(i)}
+              onClick={() => {}}
+            >
+              <text text={tab()} fontSize={13} color={selected() === i ? "#0078d4" : "#888"} />
+              <Show when={selected() === i}>
+                <MotionRect
+                  width={40} height={3} cornerRadius={2}
+                  fill="#0078d4"
+                  layoutId="tab-indicator"
+                  layout="position"
+                  layoutTransition={{ type: "spring", stiffness: 500, damping: 30 }}
+                />
+              </Show>
+            </rect>
+          )}
+        </Index>
+      </group>
+      <CaptionLabel text="Click tabs — indicator animates between positions" />
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Motion · Compound — combining multiple techniques
+// ---------------------------------------------------------------------------
+
+const MotionCompoundDemo: Component = () => {
+  const [expanded, setExpanded] = createSignal(false)
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <Button onClick={() => setExpanded(v => !v)}>
+        {expanded() ? "Collapse" : "Expand"}
+      </Button>
+      <group flexDirection="row" gap={12} alignItems="flex-start">
+        <MotionRect
+          width={expanded() ? 200 : 80}
+          height={expanded() ? 120 : 80}
+          cornerRadius={expanded() ? 16 : 40}
+          fill="#0078d4"
+          layout
+          animate={{
+            scale: 1,
+            rotate: expanded() ? 0 : 0,
+          }}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          transition={{ type: "spring", stiffness: 300, damping: 25 }}
+          layoutTransition={{ type: "spring", stiffness: 400, damping: 28 }}
+          hitTest
+        >
+          <text
+            text={expanded() ? "I'm expanded!" : "Hi"}
+            fontSize={expanded() ? 16 : 12}
+            color="#ffffff"
+          />
+        </MotionRect>
+        <MotionRect
+          width={80} height={80} cornerRadius={8}
+          fill="#e74856"
+          animate={{
+            x: expanded() ? 20 : 0,
+            opacity: expanded() ? 0.5 : 1,
+          }}
+          whileHover={{ rotate: 10 }}
+          transition={{ type: "spring", stiffness: 250, damping: 20 }}
+          hitTest
+        />
+      </group>
+    </group>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +712,66 @@ const STORIES: StoryDef[] = [
         <BodyLabel text="Right" />
       </group>
     ),
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Basics",
+    render: () => <MotionBasicsDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Gestures",
+    render: () => <MotionGesturesDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Presence",
+    render: () => <MotionPresenceDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Stagger",
+    render: () => <MotionStaggerDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Keyframes",
+    render: () => <MotionKeyframesDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Drag",
+    render: () => <MotionDragDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Loop",
+    render: () => <MotionLoopDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Colors",
+    render: () => <MotionColorsDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Layout",
+    render: () => <MotionLayoutDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Motion · Compound",
+    render: () => <MotionCompoundDemo />,
     axes: {},
     defaults: {},
   },
@@ -483,7 +1020,7 @@ const StoryboardChrome: Component<{
         <rect height={1} fill={chrome.border()} />
 
         {/* Story list */}
-        <ScrollView flexGrow={1}>
+        <ScrollView flexGrow={1} flexShrink={1}>
           <group flexDirection="column" gap={2} padding={6}>
             <For each={STORIES}>
               {(story, index) => (

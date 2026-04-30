@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::channel::{AnimationChannel, ChannelState};
+use crate::spring::SpringParams;
 use crate::transition::TransitionSpec;
 
 /// Property keys for motion animation channels.
@@ -210,8 +211,33 @@ impl NodeTimeline {
             }
         }
 
+        // Capture prev_target from the old channel (if any) so we can infer
+        // implicit velocity for a spring transition (driven mode).
+        // Velocity = (current_target - prev_target) / (current_time - prev_time)
+        let inferred_velocity: Option<f64> = self.channels.get(&key).and_then(|old| {
+            let (prev_val, prev_time) = old.prev_target?;
+            let dt = old.started_at() - prev_time;
+            if dt > 0.0 && dt < 0.5 {
+                Some((old.target() - prev_val) / dt)
+            } else {
+                None
+            }
+        });
+        let prev_target_for_chain = self.channels.get(&key).map(|old| (old.target(), old.started_at()));
+
         // For simple 2-value case, use current resting as origin if values[0] matches default
-        let channel = AnimationChannel::new_keyframes(values, times, transition, now, delay_secs);
+        let transition = match (inferred_velocity, transition) {
+            (Some(vel), TransitionSpec::Spring(params)) if params.initial_velocity == 0.0 => {
+                TransitionSpec::Spring(SpringParams {
+                    initial_velocity: vel,
+                    ..params
+                })
+            }
+            (_, t) => t,
+        };
+
+        let mut channel = AnimationChannel::new_keyframes(values, times, transition, now, delay_secs);
+        channel.prev_target = prev_target_for_chain;
         self.channels.insert(key, channel);
     }
 
@@ -361,6 +387,7 @@ fn apply_to_pose(pose: &mut SampledPose, key: PropertyKey, value: f64) {
 mod tests {
     use super::*;
     use crate::easing::Easing;
+    use crate::spring::SpringParams;
     use crate::transition::TransitionSpec;
 
     #[test]
@@ -437,5 +464,40 @@ mod tests {
         let (pose, animating) = tl.sample_pose(1.5);
         assert!(animating);
         assert!((pose.opacity - 0.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn driven_instant_to_spring_carries_velocity() {
+        // Simulate drag: rapid instant writes at ~60fps, then release to spring.
+        let mut tl = NodeTimeline::new();
+        let instant = TransitionSpec::Instant;
+
+        // Simulate 3 frames of drag at 60fps (16.67ms intervals)
+        // Moving X from 0 → 100 → 200 → 300
+        tl.set_target(PropertyKey::X, 100.0, instant.clone(), 0.000, 0.0);
+        tl.set_target(PropertyKey::X, 200.0, instant.clone(), 0.016, 0.0);
+        tl.set_target(PropertyKey::X, 300.0, instant.clone(), 0.032, 0.0);
+
+        // Now release: retarget to 250 with spring (e.g. drag constraint)
+        let spring = TransitionSpec::Spring(SpringParams {
+            stiffness: 300.0,
+            damping: 20.0,
+            mass: 1.0,
+            initial_velocity: 0.0, // Will be overridden by inferred velocity
+            rest_delta: 0.01,
+            rest_speed: 0.01,
+        });
+        tl.set_target(PropertyKey::X, 250.0, spring, 0.048, 0.0);
+
+        // The spring should have picked up velocity from the instant writes.
+        // Velocity ≈ (300 - 200) / 0.016 = 6250 px/s
+        // So at t=0.049 (1ms after release), X should overshoot past 300
+        // because the spring has high initial velocity toward positive direction
+        // but target is 250 (behind current position).
+        let (pose, animating) = tl.sample_pose(0.049);
+        assert!(animating, "spring should be running");
+        // With velocity ~6250 px/s, even 1ms later the value should have moved
+        // past 300 (started at 300, velocity pushes further before spring pulls back)
+        assert!(pose.x > 300.0, "expected overshoot from inferred velocity, got {}", pose.x);
     }
 }
