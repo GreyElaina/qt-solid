@@ -2741,6 +2741,10 @@ pub fn fragment_store_set_prop(
                 tree.with_taffy_style_mut(fragment_id, |style| {
                     apply_layout_string_prop_to_style(style, key, value);
                 });
+            } else if let FragmentValue::GridTracks { ref tracks } = value {
+                tree.with_taffy_style_mut(fragment_id, |style| {
+                    apply_grid_tracks_to_style(style, key, tracks);
+                });
             }
             tree.invalidate();
             return;
@@ -3299,12 +3303,15 @@ pub fn fragment_store_set_layout_flip(
 // ---------------------------------------------------------------------------
 
 const LAYOUT_PROPS: &[&str] = &[
+    "display",
     "flexDirection", "flexGrow", "flexShrink", "flexBasis",
     "flexWrap", "alignItems", "alignSelf", "justifyContent",
     "gap", "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
     "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
     "minWidth", "minHeight", "maxWidth", "maxHeight",
     "position", "overflow", "overflowX", "overflowY",
+    "gridTemplateRows", "gridTemplateColumns",
+    "gridAutoFlow", "gridRow", "gridColumn", "gridRowSpan", "gridColSpan",
 ];
 
 fn is_layout_prop(key: &str) -> bool {
@@ -3356,12 +3363,57 @@ fn apply_layout_prop_to_style(style: &mut taffy::Style, key: &str, v: f32) {
         "minHeight" => style.min_size.height = taffy::style::Dimension::length(v),
         "maxWidth" => style.max_size.width = taffy::style::Dimension::length(v),
         "maxHeight" => style.max_size.height = taffy::style::Dimension::length(v),
+        "gridRow" => {
+            let idx = v as i16;
+            style.grid_row = taffy::geometry::Line {
+                start: GridPlacement::from_line_index(idx),
+                end: GridPlacement::Auto,
+            };
+        }
+        "gridColumn" => {
+            let idx = v as i16;
+            style.grid_column = taffy::geometry::Line {
+                start: GridPlacement::from_line_index(idx),
+                end: GridPlacement::Auto,
+            };
+        }
+        "gridRowSpan" => {
+            let s = (v as u16).max(1);
+            style.grid_row = taffy::geometry::Line {
+                start: style.grid_row.start.clone(),
+                end: GridPlacement::Span(s),
+            };
+        }
+        "gridColSpan" => {
+            let s = (v as u16).max(1);
+            style.grid_column = taffy::geometry::Line {
+                start: style.grid_column.start.clone(),
+                end: GridPlacement::Span(s),
+            };
+        }
         _ => {}
     }
 }
 
 fn apply_layout_string_prop_to_style(style: &mut taffy::Style, key: &str, v: &str) {
     match key {
+        "display" => {
+            style.display = match v {
+                "flex" => taffy::style::Display::Flex,
+                "grid" => taffy::style::Display::Grid,
+                "none" => taffy::style::Display::None,
+                _ => taffy::style::Display::Flex,
+            };
+        }
+        "gridAutoFlow" => {
+            style.grid_auto_flow = match v {
+                "row" => GridAutoFlow::Row,
+                "column" => GridAutoFlow::Column,
+                "row-dense" => GridAutoFlow::RowDense,
+                "column-dense" => GridAutoFlow::ColumnDense,
+                _ => GridAutoFlow::Row,
+            };
+        }
         "flexDirection" => {
             style.flex_direction = match v {
                 "row" => taffy::style::FlexDirection::Row,
@@ -3443,6 +3495,48 @@ fn apply_layout_string_prop_to_style(style: &mut taffy::Style, key: &str, v: &st
                 "scroll" => taffy::style::Overflow::Scroll,
                 _ => taffy::style::Overflow::Visible,
             };
+        }
+        _ => {}
+    }
+}
+
+fn parse_track_size(s: &str) -> GridTemplateComponent<String> {
+    let s = s.trim();
+    if s == "auto" {
+        return GridTemplateComponent::AUTO;
+    }
+    if s == "min-content" {
+        return GridTemplateComponent::MIN_CONTENT;
+    }
+    if s == "max-content" {
+        return GridTemplateComponent::MAX_CONTENT;
+    }
+    if let Some(fr_str) = s.strip_suffix("fr") {
+        if let Ok(v) = fr_str.trim().parse::<f32>() {
+            return GridTemplateComponent::from_fr(v);
+        }
+    }
+    if let Some(pct_str) = s.strip_suffix('%') {
+        if let Ok(v) = pct_str.trim().parse::<f32>() {
+            return GridTemplateComponent::from_percent(v / 100.0);
+        }
+    }
+    if let Ok(v) = s.parse::<f32>() {
+        return GridTemplateComponent::from_length(v);
+    }
+    GridTemplateComponent::AUTO
+}
+
+fn apply_grid_tracks_to_style(style: &mut taffy::Style, key: &str, tracks: &[String]) {
+    let parsed: Vec<GridTemplateComponent<String>> = tracks.iter().map(|t| parse_track_size(t)).collect();
+    match key {
+        "gridTemplateRows" => {
+            style.display = taffy::style::Display::Grid;
+            style.grid_template_rows = parsed;
+        }
+        "gridTemplateColumns" => {
+            style.display = taffy::style::Display::Grid;
+            style.grid_template_columns = parsed;
         }
         _ => {}
     }

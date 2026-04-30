@@ -104,6 +104,13 @@ pub enum FragmentValue {
         bottom_right: f64,
         bottom_left: f64,
     },
+    GridTracks {
+        tracks: Vec<String>,
+    },
+    Border {
+        width: f64,
+        color: String,
+    },
     BlendMode {
         value: FragmentBlendMode,
     },

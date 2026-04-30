@@ -218,6 +218,17 @@ export interface CanvasCommonProps extends CanvasEventProps {
   overflow?: "visible" | "clip" | "hidden" | "scroll"
   overflowX?: "visible" | "clip" | "hidden" | "scroll"
   overflowY?: "visible" | "clip" | "hidden" | "scroll"
+  // CSS Grid container props
+  display?: "flex" | "grid"
+  gridTemplateRows?: Array<number | string>
+  gridTemplateColumns?: Array<number | string>
+  gridAutoFlow?: "row" | "column" | "row-dense" | "column-dense"
+  // CSS Grid item props
+  gridRow?: number
+  gridColumn?: number
+  gridRowSpan?: number
+  gridColSpan?: number
+  zIndex?: number
 }
 
 // ---------------------------------------------------------------------------
