@@ -261,13 +261,17 @@ export function dispatchCanvasWheelEvent(
   const node = fragmentId >= 0 ? findFragmentNode(binding.root, fragmentId) : null
   if (!node) return
 
-  const hasPixelDelta = pixelDeltaX !== 0 || pixelDeltaY !== 0
-
   // Qt deltas are content-on-screen movement; scroll offsets are the inverse.
   // Negate so that deltaY>0 means "increase scrollY / reveal content below".
+  // Per-axis: prefer pixelDelta (trackpad), fall back to angleDelta (mouse wheel)
+  // normalized from 1/8-degree units to ~40px per notch.
+  const WHEEL_STEP_PX = 40
+  const rawX = pixelDeltaX !== 0 ? pixelDeltaX : (deltaX / 120) * WHEEL_STEP_PX
+  const rawY = pixelDeltaY !== 0 ? pixelDeltaY : (deltaY / 120) * WHEEL_STEP_PX
+
   const payload: WheelEventPayload = {
-    deltaX: -(hasPixelDelta ? pixelDeltaX : deltaX),
-    deltaY: -(hasPixelDelta ? pixelDeltaY : deltaY),
+    deltaX: -rawX,
+    deltaY: -rawY,
     angleDeltaX: deltaX,
     angleDeltaY: deltaY,
     pixelDeltaX,

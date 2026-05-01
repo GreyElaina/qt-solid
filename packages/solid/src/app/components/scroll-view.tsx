@@ -16,21 +16,23 @@ export interface ScrollViewProps {
   flexGrow?: number
   flexShrink?: number
   direction?: "vertical" | "horizontal" | "both"
-  /** Spring stiffness for momentum deceleration (default: 170) */
+  /** Spring stiffness for overscroll return-to-bounds (default: 170) */
   springStiffness?: number
-  /** Spring damping for momentum deceleration (default: 26) */
+  /** Spring damping for overscroll return-to-bounds (default: 26) */
   springDamping?: number
 }
 
 export const ScrollView: Component<ScrollViewProps> = (props) => {
   let containerRef: CanvasNodeHandle | undefined
 
-  // Track current accumulated scroll offset (driven value)
+  // Current accumulated scroll offset (driven value, may exceed bounds)
   const [scrollX, setScrollX] = createSignal(0)
   const [scrollY, setScrollY] = createSignal(0)
 
-  // Idle timeout for discrete wheel (phase=0) release
+  // Idle timer for release after discrete wheel or momentum end
   let idleTimer: ReturnType<typeof setTimeout> | undefined
+  // Whether we are in the middle of a trackpad gesture (phase 1..4)
+  let gestureActive = false
 
   const direction = () => props.direction ?? "vertical"
 
@@ -62,29 +64,51 @@ export const ScrollView: Component<ScrollViewProps> = (props) => {
     return Math.max(0, Math.min(value, getMaxScroll(axis)))
   }
 
-  const releaseScroll = () => {
+  const releaseToClamp = () => {
     if (!containerRef) return
-    const clampedX = clampScroll(scrollX(), "x")
-    const clampedY = clampScroll(scrollY(), "y")
-    canvasFragmentScrollRelease(
-      containerRef.canvasNodeId,
-      containerRef.fragmentId,
-      clampedX,
-      clampedY,
-      props.springStiffness,
-      props.springDamping,
-    )
+    const x = scrollX()
+    const y = scrollY()
+    const clampedX = clampScroll(x, "x")
+    const clampedY = clampScroll(y, "y")
+
+    // Sync JS state to the target so the next gesture starts from the right place.
+    setScrollX(clampedX)
+    setScrollY(clampedY)
+
+    // Only animate if actually out of bounds.
+    if (Math.abs(x - clampedX) > 0.5 || Math.abs(y - clampedY) > 0.5) {
+      canvasFragmentScrollRelease(
+        containerRef.canvasNodeId,
+        containerRef.fragmentId,
+        clampedX,
+        clampedY,
+        props.springStiffness,
+        props.springDamping,
+      )
+    }
+  }
+
+  const scheduleIdleRelease = () => {
+    if (idleTimer != null) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      idleTimer = undefined
+      gestureActive = false
+      releaseToClamp()
+    }, 120)
   }
 
   const driveScroll = (x: number, y: number) => {
     if (!containerRef) return
-    setScrollX(x)
-    setScrollY(y)
+    // Clamp to bounds — no rubber-band for now.
+    const cx = clampScroll(x, "x")
+    const cy = clampScroll(y, "y")
+    setScrollX(cx)
+    setScrollY(cy)
     canvasFragmentScrollDrive(
       containerRef.canvasNodeId,
       containerRef.fragmentId,
-      x,
-      y,
+      cx,
+      cy,
     )
   }
 
@@ -101,27 +125,29 @@ export const ScrollView: Component<ScrollViewProps> = (props) => {
       newX += e.deltaX
     }
 
-    // Drive without clamping (allows overscroll for rubber-band)
     driveScroll(newX, newY)
 
-    // Handle release based on phase
-    if (e.phase === 3) {
-      // Phase 3 = gesture end — release immediately
+    if (e.phase === 1) {
+      // Trackpad begin — clear any pending release, mark gesture active
+      gestureActive = true
       if (idleTimer != null) {
         clearTimeout(idleTimer)
         idleTimer = undefined
       }
-      releaseScroll()
-    } else if (e.phase === 0) {
-      // Discrete wheel (no phase info) — use idle timeout
-      if (idleTimer != null) clearTimeout(idleTimer)
-      idleTimer = setTimeout(() => {
-        idleTimer = undefined
-        releaseScroll()
-      }, 150)
+    } else if (e.phase === 2) {
+      // Trackpad update — finger is on pad, keep driving
+    } else if (e.phase === 3) {
+      // Trackpad end — finger lifted. If OS sends momentum (phase 4) it will
+      // arrive shortly; schedule a deferred release that momentum events cancel.
+      scheduleIdleRelease()
+    } else if (e.phase === 4) {
+      // OS momentum — apply the delta (already done above) and reschedule idle.
+      // The OS provides decelerated deltas; we just follow them.
+      scheduleIdleRelease()
+    } else {
+      // Discrete mouse wheel (phase=0) — clamp after idle
+      scheduleIdleRelease()
     }
-    // Phase 1 (begin), 2 (update) — keep driving, don't release
-    // Phase 4 (momentum) — OS-level momentum, we let our spring handle it after phase 3
   }
 
   onCleanup(() => {
