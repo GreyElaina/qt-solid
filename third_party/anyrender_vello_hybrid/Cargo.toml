@@ -38,6 +38,9 @@ path = "src/lib.rs"
 [dependencies.anyrender]
 version = "0.8.0"
 
+[dependencies.bytemuck]
+version = "1"
+
 [dependencies.debug_timer]
 version = "0.1.1"
 

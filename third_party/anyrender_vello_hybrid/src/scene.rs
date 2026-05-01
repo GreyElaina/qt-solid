@@ -1,8 +1,9 @@
 use anyrender::{NormalizedCoord, Paint, PaintRef, PaintScene};
 use kurbo::{Affine, Rect, Shape, Stroke};
-use peniko::{BlendMode, Color, Fill, FontData, ImageBrush, ImageData, StyleRef};
+use peniko::{BlendMode, Brush, Color, Fill, FontData, Gradient, ImageBrush, ImageData, Style, StyleRef};
 use rustc_hash::FxHashMap;
 use vello_common::paint::{ImageId, ImageSource, PaintType};
+use vello_common::recording::{Recordable, Recording};
 use vello_hybrid::Renderer;
 use wgpu::{CommandEncoder, Device, Queue};
 
@@ -31,6 +32,169 @@ fn anyrender_paint_to_vello_hybrid_paint<'a>(
         // TODO: custom paint
         Paint::Custom(_) => PaintType::Solid(peniko::color::palette::css::TRANSPARENT),
     }
+}
+
+/// Convert a peniko `Brush<ImageBrush<ImageData>>` (used in anyrender recording commands)
+/// into a vello_common `PaintType`.
+fn brush_to_paint_type(
+    brush: &Brush<ImageBrush<ImageData>, Gradient>,
+    image_manager: &mut ImageManager<'_>,
+) -> PaintType {
+    match brush {
+        Brush::Solid(alpha_color) => PaintType::Solid(*alpha_color),
+        Brush::Gradient(gradient) => PaintType::Gradient(gradient.clone()),
+        Brush::Image(image_brush) => {
+            let image_id = image_manager.upload_image(&image_brush.image);
+            PaintType::Image(ImageBrush {
+                image: ImageSource::OpaqueId {
+                    id: image_id,
+                    may_have_opacities: true,
+                },
+                sampler: image_brush.sampler,
+            })
+        }
+    }
+}
+
+/// Translate an `anyrender::recording::Scene` into a `vello_common::recording::Recording`
+/// by iterating anyrender `RenderCommand`s and emitting corresponding `Recorder` calls.
+///
+/// `scale_transform` is pre-multiplied into every command's transform (same as
+/// `anyrender::recording::Scene::append_scene` applies `scene_transform`).
+pub fn record_anyrender_scene(
+    hybrid_scene: &mut vello_hybrid::Scene,
+    recording: &mut Recording,
+    anyrender_scene: &anyrender::recording::Scene,
+    scale_transform: Affine,
+    image_manager: &mut ImageManager<'_>,
+) {
+    use anyrender::recording::RenderCommand as AnyCmd;
+    use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
+
+    hybrid_scene.record(recording, |ctx| {
+        for cmd in &anyrender_scene.commands {
+            match cmd {
+                AnyCmd::Fill(fill) => {
+                    let transform = scale_transform * fill.transform;
+                    ctx.set_fill_rule(fill.fill);
+                    ctx.set_transform(transform);
+                    let paint = brush_to_paint_type(&fill.brush, image_manager);
+                    ctx.set_paint(paint);
+                    match &fill.brush_transform {
+                        Some(bt) => ctx.set_paint_transform(*bt),
+                        None => ctx.set_paint_transform(Affine::IDENTITY),
+                    }
+                    ctx.fill_path(&fill.shape);
+                }
+
+                AnyCmd::Stroke(stroke) => {
+                    let transform = scale_transform * stroke.transform;
+                    ctx.set_stroke(stroke.style.clone());
+                    ctx.set_transform(transform);
+                    let paint = brush_to_paint_type(&stroke.brush, image_manager);
+                    ctx.set_paint(paint);
+                    match &stroke.brush_transform {
+                        Some(bt) => ctx.set_paint_transform(*bt),
+                        None => ctx.set_paint_transform(Affine::IDENTITY),
+                    }
+                    ctx.stroke_path(&stroke.shape);
+                }
+
+                AnyCmd::PushLayer(layer) => {
+                    let transform = scale_transform * layer.transform;
+                    ctx.set_transform(transform);
+                    ctx.push_layer(
+                        Some(&layer.clip),
+                        Some(layer.blend),
+                        Some(layer.alpha),
+                        None,
+                        None,
+                    );
+                }
+
+                AnyCmd::PushClipLayer(clip) => {
+                    let transform = scale_transform * clip.transform;
+                    ctx.set_transform(transform);
+                    ctx.push_clip_layer(&clip.clip);
+                }
+
+                AnyCmd::PopLayer => {
+                    ctx.pop_layer();
+                }
+
+                AnyCmd::GlyphRun(glyph_run) => {
+                    let transform = scale_transform * glyph_run.transform;
+                    let paint = brush_to_paint_type(&glyph_run.brush, image_manager);
+                    ctx.set_paint(paint);
+                    ctx.set_transform(transform);
+
+                    fn to_vello_glyph(g: &anyrender::Glyph) -> vello_common::glyph::Glyph {
+                        vello_common::glyph::Glyph {
+                            id: g.id,
+                            x: g.x,
+                            y: g.y,
+                        }
+                    }
+
+                    match &glyph_run.style {
+                        Style::Fill(fill) => {
+                            ctx.set_fill_rule(*fill);
+                            ctx.glyph_run(&glyph_run.font_data)
+                                .font_size(glyph_run.font_size)
+                                .hint(glyph_run.hint)
+                                .normalized_coords(
+                                    bytemuck::cast_slice(&glyph_run.normalized_coords),
+                                )
+                                .glyph_transform(
+                                    glyph_run.glyph_transform.unwrap_or_default(),
+                                )
+                                .fill_glyphs(glyph_run.glyphs.iter().map(to_vello_glyph));
+                        }
+                        Style::Stroke(stroke) => {
+                            ctx.set_stroke(stroke.clone());
+                            ctx.glyph_run(&glyph_run.font_data)
+                                .font_size(glyph_run.font_size)
+                                .hint(glyph_run.hint)
+                                .normalized_coords(
+                                    bytemuck::cast_slice(&glyph_run.normalized_coords),
+                                )
+                                .glyph_transform(
+                                    glyph_run.glyph_transform.unwrap_or_default(),
+                                )
+                                .stroke_glyphs(glyph_run.glyphs.iter().map(to_vello_glyph));
+                        }
+                    }
+                }
+
+                AnyCmd::BoxShadow(shadow) => {
+                    let transform = scale_transform * shadow.transform;
+                    ctx.set_transform(transform);
+                    ctx.set_paint(PaintType::Solid(shadow.brush));
+                    ctx.set_fill_rule(Fill::NonZero);
+
+                    let path = if shadow.radius > 0.0 {
+                        kurbo::RoundedRect::from_rect(shadow.rect, shadow.radius)
+                            .into_path(DEFAULT_TOLERANCE)
+                    } else {
+                        shadow.rect.into_path(DEFAULT_TOLERANCE)
+                    };
+
+                    if shadow.std_dev > 0.0 {
+                        ctx.push_filter_layer(Filter::from_primitive(
+                            FilterPrimitive::GaussianBlur {
+                                std_deviation: shadow.std_dev as f32,
+                                edge_mode: EdgeMode::None,
+                            },
+                        ));
+                        ctx.fill_path(&path);
+                        ctx.pop_layer();
+                    } else {
+                        ctx.fill_path(&path);
+                    }
+                }
+            }
+        }
+    });
 }
 
 pub struct ImageManager<'a> {

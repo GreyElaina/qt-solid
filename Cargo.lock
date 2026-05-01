@@ -64,6 +64,7 @@ name = "anyrender_vello_hybrid"
 version = "0.3.0"
 dependencies = [
  "anyrender",
+ "bytemuck",
  "debug_timer",
  "kurbo 0.13.0",
  "peniko",
