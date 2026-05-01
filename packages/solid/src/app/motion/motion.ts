@@ -11,11 +11,14 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
-import type {
-  QtMotionTarget,
-  QtNode,
-  QtPerPropertyTransition,
-  QtTransitionSpec,
+import {
+  canvasFragmentSetLayoutFlip,
+  canvasFragmentGetWorldBounds,
+  canvasFragmentSetListener,
+  type QtMotionTarget,
+  type QtNode,
+  type QtPerPropertyTransition,
+  type QtTransitionSpec,
 } from "@qt-solid/core/native";
 import type { QtMotionConfig } from "../../qt-intrinsics.ts";
 
@@ -449,6 +452,12 @@ function bindMotionNode(
   // ---------------------------------------------------------------------------
   // Drag gesture binding
   // ---------------------------------------------------------------------------
+  // Persistent drag pose — survives across drag sessions, prevents animate
+  // effect from overwriting drag-controlled axes on release.
+  let dragPoseX = resolveMotionValue(readMotion().initial?.x ?? readMotion().animate?.x) ?? 0;
+  let dragPoseY = resolveMotionValue(readMotion().initial?.y ?? readMotion().animate?.y) ?? 0;
+  let hasDragPose = false;
+
   {
     let dragStartPointerX = 0;
     let dragStartPointerY = 0;
@@ -456,7 +465,6 @@ function bindMotionNode(
     let dragOriginY = 0;
 
     const [isDragging, setIsDragging] = createSignal(false);
-    // Expose isDragging to gesture state (replaces the HOC-level placeholder)
     (gesture as { isDragging: Accessor<boolean> }).isDragging = isDragging;
 
     dragCtrl.onDown = (px: number, py: number) => {
@@ -465,11 +473,8 @@ function bindMotionNode(
 
       dragStartPointerX = px;
       dragStartPointerY = py;
-
-      // Read current target x/y from the animate prop (last commanded position)
-      const anim = props.animate;
-      dragOriginX = resolveMotionValue(anim?.x) ?? 0;
-      dragOriginY = resolveMotionValue(anim?.y) ?? 0;
+      dragOriginX = dragPoseX;
+      dragOriginY = dragPoseY;
 
       setIsDragging(true);
       props.onDragStart?.(px, py);
@@ -490,11 +495,14 @@ function bindMotionNode(
       let targetX = dragOriginX + dx;
       let targetY = dragOriginY + dy;
 
-      // Apply elastic overshoot past constraints
       if (constraints) {
         targetX = applyElastic(targetX, constraints.left, constraints.right, elastic);
         targetY = applyElastic(targetY, constraints.top, constraints.bottom, elastic);
       }
+
+      dragPoseX = targetX;
+      dragPoseY = targetY;
+      hasDragPose = true;
 
       node.setMotionTarget(
         { x: targetX, y: targetY },
@@ -506,9 +514,7 @@ function bindMotionNode(
     dragCtrl.onUp = (px: number, py: number) => {
       if (!isDragging()) return;
       const props = readMotion();
-      setIsDragging(false);
 
-      // Compute clamped final position within constraints
       const axis = props.drag;
       const constraints = props.dragConstraints;
       let dx = px - dragStartPointerX;
@@ -524,9 +530,16 @@ function bindMotionNode(
         finalY = clamp(finalY, constraints.top, constraints.bottom);
       }
 
+      dragPoseX = finalX;
+      dragPoseY = finalY;
+      hasDragPose = true;
+
       // Release with spring — velocity inferred automatically by motion crate
       const releaseTransition = lowerTransition(props.transition) ?? { default: SPRING_DEFAULT };
       node.setMotionTarget({ x: finalX, y: finalY }, releaseTransition);
+
+      // Signal after commanding release so animate effect doesn't race
+      setIsDragging(false);
       props.onDragEnd?.(px, py);
     };
   }
@@ -686,7 +699,16 @@ function bindMotionNode(
       overlay = props.whileFocus;
     }
 
-    const effective = overlay ? mergeMotionTargets(base, overlay) : base;
+    let effective = overlay ? mergeMotionTargets(base, overlay) : base;
+
+    // Preserve drag-controlled axes so animate doesn't overwrite release spring
+    if (hasDragPose && props.drag) {
+      const axis = props.drag;
+      effective = { ...effective };
+      if (axis === true || axis === "x") effective.x = dragPoseX;
+      if (axis === true || axis === "y") effective.y = dragPoseY;
+    }
+
     const delay = parentOrch?.getChildDelay(childIndex) ?? 0;
     sendTarget(node, effective, props.transition, delay, 'animate-effect');
   });
