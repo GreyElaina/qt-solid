@@ -13,7 +13,8 @@ use crate::{
 };
 
 pub(crate) use bridge::{
-    qt_drive_window_compositor_frame, qt_mark_window_compositor_geometry_dirty,
+    qt_drive_window_compositor_frame, qt_drive_window_compositor_frame_with_drawable,
+    qt_mark_window_compositor_geometry_dirty,
     qt_mark_window_compositor_pixels_dirty, qt_mark_window_compositor_pixels_dirty_region,
     qt_mark_window_compositor_scene_dirty,
     qt_window_compositor_frame_is_initialized, qt_window_frame_tick,

@@ -49,7 +49,7 @@ pub(crate) fn capture_vello_widget_exact(node: &impl NodeHandle) -> Result<Optio
 
     let node_id = node.inner().id;
     let now = crate::qt::trace_now_ns() as f64 / 1_000_000_000.0;
-    let (_still_animating, completed) =
+    let (_still_animating, completed, _max_velocity) =
         fragment_store::fragment_store_tick_motion(node_id, now);
     for fid in completed {
         crate::runtime::emit_js_event(crate::api::QtHostEvent::CanvasMotionComplete {

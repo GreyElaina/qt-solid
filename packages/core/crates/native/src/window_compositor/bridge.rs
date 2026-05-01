@@ -21,6 +21,14 @@ pub(crate) fn qt_drive_window_compositor_frame(
     pipeline::drive_window_compositor_frame(node_id, target)
 }
 
+pub(crate) fn qt_drive_window_compositor_frame_with_drawable(
+    node_id: u32,
+    target: QtCompositorTarget,
+    drawable_handle: u64,
+) -> Result<QtWindowCompositorDriveStatus> {
+    pipeline::drive_window_compositor_frame_with_drawable(node_id, target, drawable_handle)
+}
+
 pub(crate) fn qt_window_compositor_frame_is_initialized(
     target: QtCompositorTarget,
 ) -> Result<bool> {

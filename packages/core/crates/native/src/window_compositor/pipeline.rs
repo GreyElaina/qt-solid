@@ -253,12 +253,35 @@ pub(crate) fn drive_window_compositor_frame(
     node_id: u32,
     target: QtCompositorTarget,
 ) -> Result<QtWindowCompositorDriveStatus> {
-    drive_fragment_surface_frame(node_id, target)
+    drive_fragment_surface_frame(node_id, target, 0)
+}
+
+pub(crate) fn drive_window_compositor_frame_with_drawable(
+    node_id: u32,
+    target: QtCompositorTarget,
+    drawable_handle: u64,
+) -> Result<QtWindowCompositorDriveStatus> {
+    drive_fragment_surface_frame(node_id, target, drawable_handle)
+}
+
+fn velocity_to_desired_fps(velocity: f64) -> f32 {
+    // Conservative thresholds — stay at higher fps until velocity is clearly low.
+    // Scroll settling lingers at 30-80 px/s, so the 60fps floor must be below that.
+    if velocity > 300.0 {
+        120.0
+    } else if velocity > 20.0 {
+        60.0
+    } else if velocity > 4.0 {
+        30.0
+    } else {
+        15.0
+    }
 }
 
 fn drive_fragment_surface_frame(
     node_id: u32,
     target: QtCompositorTarget,
+    drawable_handle: u64,
 ) -> Result<QtWindowCompositorDriveStatus> {
     use crate::canvas::vello::peniko::kurbo::Affine;
 
@@ -282,6 +305,11 @@ fn drive_fragment_surface_frame(
     // Also check if fragment tree has running animations — must not skip tick.
     let has_animation = crate::canvas::fragment::fragment_store_has_animating(node_id);
     if !has_dirty && !size_changed && !has_animation {
+        // Release display-link drawable — nothing to render this frame.
+        #[cfg(target_os = "macos")]
+        if drawable_handle != 0 {
+            qt_compositor::release_metal_drawable(drawable_handle);
+        }
         return Ok(QtWindowCompositorDriveStatus::Idle);
     }
 
@@ -296,7 +324,7 @@ fn drive_fragment_surface_frame(
     );
 
     let now = crate::qt::trace_now_ns() as f64 / 1_000_000_000.0;
-    let (still_animating, completed) =
+    let (still_animating, completed, max_velocity) =
         crate::canvas::fragment::fragment_store_tick_motion(node_id, now);
     for fid in completed {
         crate::runtime::emit_js_event(crate::api::QtHostEvent::CanvasMotionComplete {
@@ -305,31 +333,180 @@ fn drive_fragment_surface_frame(
         });
     }
 
-    let mut scene = crate::canvas::vello::Scene::new();
-    crate::canvas::fragment::fragment_store_paint(node_id, &mut scene, Affine::IDENTITY);
+    // Compute dirty rects for partial rendering BEFORE paint, since paint
+    // consumes subtree caches and updates dirty_root_children.
+    use crate::canvas::fragment::DirtyRectResult;
 
-    let backdrop_blurs = crate::canvas::fragment::fragment_store_collect_backdrop_blurs(
-        node_id, layout.scale_factor,
-    );
-    let inner_shadows = crate::canvas::fragment::fragment_store_collect_inner_shadows(
-        node_id, layout.scale_factor,
-    );
+    let dirty_result = if size_changed {
+        DirtyRectResult::FullRepaint
+    } else {
+        crate::canvas::fragment::fragment_store_compute_dirty_rects(node_id, layout.scale_factor)
+    };
 
-    let presented = crate::surface_renderer::render_and_present(
-        node_id,
-        compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
-        layout.scale_factor,
-        &scene,
-        &backdrop_blurs,
-        &inner_shadows,
-    )?;
+    // Extract device-pixel dirty rects for the surface renderer.
+    let dirty_rects_device: Option<Vec<(u32, u32, u32, u32)>> = match &dirty_result {
+        DirtyRectResult::FullRepaint => None,
+        DirtyRectResult::NothingDirty => Some(Vec::new()),
+        DirtyRectResult::Partial(rects) => Some(rects.clone()),
+    };
+
+    // Check if we have promoted layers and should use the composited path.
+    let has_promoted = crate::canvas::fragment::fragment_store_has_promoted(node_id);
+
+    // Convert device-pixel dirty rects to logical coordinates for culling.
+    let dirty_clips_logical: Vec<crate::canvas::vello::peniko::kurbo::Rect> = match &dirty_result {
+        DirtyRectResult::Partial(rects) => {
+            let sf = layout.scale_factor;
+            rects.iter().filter_map(|&(dx, dy, dw, dh)| {
+                if dw == 0 || dh == 0 { return None; }
+                Some(crate::canvas::vello::peniko::kurbo::Rect::new(
+                    dx as f64 / sf,
+                    dy as f64 / sf,
+                    (dx + dw) as f64 / sf,
+                    (dy + dh) as f64 / sf,
+                ))
+            }).collect()
+        }
+        _ => Vec::new(),
+    };
+    crate::canvas::fragment::fragment_store_set_dirty_clips(node_id, dirty_clips_logical.clone());
+
+    let presented = if has_promoted {
+        // Composited path: build RenderPlan with partitioned layers.
+        let render_plan = crate::canvas::fragment::fragment_store_build_render_plan(node_id);
+        crate::canvas::fragment::fragment_store_set_dirty_clips(node_id, Vec::new());
+
+        let backdrop_blurs = crate::canvas::fragment::fragment_store_collect_backdrop_blurs(
+            node_id, layout.scale_factor,
+        );
+        let inner_shadows = crate::canvas::fragment::fragment_store_collect_inner_shadows(
+            node_id, layout.scale_factor,
+        );
+
+        match render_plan {
+            Some(plan) => {
+                // Promoted path still uses wgpu Surface — release display-link
+                // drawable to avoid holding it during get_current_texture().
+                #[cfg(target_os = "macos")]
+                if drawable_handle != 0 {
+                    qt_compositor::release_metal_drawable(drawable_handle);
+                }
+                crate::surface_renderer::render_composited_and_present(
+                    node_id,
+                    compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
+                    layout.scale_factor,
+                    plan,
+                    &backdrop_blurs,
+                    &inner_shadows,
+                    dirty_rects_device.as_deref(),
+                )?
+            }
+            None => true, // No tree → nothing to render.
+        }
+    } else {
+        // Non-promoted path: per-subtree Recording strip caching.
+        // Paint per-subtree scenes, then render with strip cache.
+        let mut subtrees = crate::canvas::fragment::fragment_store_paint_subtrees(node_id);
+
+        // Clear dirty clips after paint.
+        crate::canvas::fragment::fragment_store_set_dirty_clips(node_id, Vec::new());
+
+        // Wrap each subtree with dirty clip layer if partial render.
+        if !dirty_clips_logical.is_empty() {
+            use anyrender::PaintScene;
+            use crate::canvas::vello::peniko::kurbo::{BezPath, Shape};
+            let mut clip_path = BezPath::new();
+            for rect in &dirty_clips_logical {
+                clip_path.extend(rect.path_elements(0.0));
+            }
+            for (_, sub_scene, dirty) in &mut subtrees {
+                if *dirty {
+                    let mut wrapped = crate::canvas::vello::Scene::new();
+                    wrapped.push_clip_layer(Affine::IDENTITY, &clip_path);
+                    wrapped.append_scene(std::mem::take(sub_scene), Affine::IDENTITY);
+                    wrapped.pop_layer();
+                    *sub_scene = wrapped;
+                }
+            }
+        }
+
+        // Debug overlay: draw dirty rect border with per-frame color.
+        // Enable with QT_SOLID_DEBUG_DIRTY=1
+        {
+            use std::sync::atomic::{AtomicU8, Ordering};
+            static ENABLED: AtomicU8 = AtomicU8::new(2); // 2 = unchecked
+            let enabled = match ENABLED.load(Ordering::Relaxed) {
+                2 => {
+                    let v = std::env::var("QT_SOLID_DEBUG_DIRTY").map_or(false, |v| v == "1");
+                    ENABLED.store(v as u8, Ordering::Relaxed);
+                    v
+                }
+                v => v == 1,
+            };
+            if enabled && !dirty_clips_logical.is_empty() {
+                use anyrender::PaintScene;
+                use crate::canvas::vello::peniko::kurbo::Stroke;
+                use crate::canvas::vello::peniko::Color;
+
+                static FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let frame = FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let colors = [
+                    Color::from_rgba8(255, 0, 0, 128),
+                    Color::from_rgba8(0, 255, 0, 128),
+                    Color::from_rgba8(0, 128, 255, 128),
+                    Color::from_rgba8(255, 255, 0, 128),
+                    Color::from_rgba8(255, 0, 255, 128),
+                    Color::from_rgba8(0, 255, 255, 128),
+                ];
+                // Append debug overlay to last subtree (or create one).
+                let debug_scene = if let Some((_, last, dirty)) = subtrees.last_mut() {
+                    *dirty = true; // Force re-record since we modified it.
+                    last
+                } else {
+                    subtrees.push((crate::canvas::fragment::FragmentId(u32::MAX - 1), crate::canvas::vello::Scene::new(), true));
+                    &mut subtrees.last_mut().unwrap().1
+                };
+                for (i, clip_rect) in dirty_clips_logical.iter().enumerate() {
+                    let color = colors[(frame as usize + i) % colors.len()];
+                    let fill_color = Color::from_rgba8(
+                        color.to_rgba8().r, color.to_rgba8().g, color.to_rgba8().b, 24,
+                    );
+                    debug_scene.fill(peniko::Fill::NonZero, Affine::IDENTITY, fill_color, None, clip_rect);
+                    debug_scene.stroke(&Stroke::new(2.0), Affine::IDENTITY, color, None, clip_rect);
+                }
+            }
+        }
+
+        let backdrop_blurs = crate::canvas::fragment::fragment_store_collect_backdrop_blurs(
+            node_id, layout.scale_factor,
+        );
+        let inner_shadows = crate::canvas::fragment::fragment_store_collect_inner_shadows(
+            node_id, layout.scale_factor,
+        );
+
+        crate::surface_renderer::render_and_present_subtrees(
+            node_id,
+            compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
+            layout.scale_factor,
+            subtrees,
+            &backdrop_blurs,
+            &inner_shadows,
+            dirty_rects_device.as_deref(),
+            drawable_handle,
+        )?
+    };
 
     if !presented {
         // Surface not ready — preserve dirty state so next frame drive retries.
         return Ok(QtWindowCompositorDriveStatus::Busy);
     }
 
+    // Consume dirty state after successful present.
+    crate::canvas::fragment::fragment_store_consume_dirty_state(node_id);
+
     if still_animating {
+        let desired_fps = velocity_to_desired_fps(max_velocity);
+        crate::qt::ffi::bridge::qt_macos_set_display_link_frame_rate(node_id, desired_fps);
         crate::runtime::request_overlay_next_frame_exact(&node, node_id)?;
     }
 

@@ -769,11 +769,8 @@ pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
     compositor
         .begin_drive(render_target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    compositor
-        .note_drawable(render_target, drawable_handle)
-    .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     crate::window_compositor::qt_window_frame_tick(node_id)?;
-    let status = crate::window_compositor::qt_drive_window_compositor_frame(node_id, target)?;
+    let status = crate::window_compositor::qt_drive_window_compositor_frame_with_drawable(node_id, target, drawable_handle)?;
 
     if trace_enabled {
         println!("[qt-ffi] display-link node={} status={:?}", node_id, status);
