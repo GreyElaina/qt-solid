@@ -228,6 +228,7 @@ public:
     // On macOS, always run prepare to give CFRunLoop a chance to process
     // native sources (display-link, AppKit events) before libuv enters kevent.
     if (driver_mode_ == PumpDriverMode::WaitBridge ||
+        driver_mode_ == PumpDriverMode::ExternalWake ||
         driver_mode_ == PumpDriverMode::PollingFallback) {
 #elif defined(Q_OS_WIN)
     // On Windows, run prepare in WaitBridge mode to PeekMessage before
@@ -467,7 +468,8 @@ private:
       return;
     }
 #if defined(__APPLE__)
-    if (self->driver_mode_ == PumpDriverMode::WaitBridge) {
+    if (self->driver_mode_ == PumpDriverMode::WaitBridge ||
+        self->driver_mode_ == PumpDriverMode::ExternalWake) {
       // Run CFRunLoop before libuv's kevent poll. This lets native macOS
       // sources (CAMetalDisplayLink, AppKit event ports) fire using the
       // time libuv would otherwise spend blocked in kevent.
@@ -480,8 +482,9 @@ private:
       const int timeout_ms = uv_backend_timeout(self->loop_);
       const double timeout_sec = timeout_ms < 0 ? 0.05 : timeout_ms / 1000.0;
       CFRunLoopRunInMode(kCFRunLoopDefaultMode, timeout_sec, false);
-      return;
     }
+    self->pump_events();
+    return;
 #elif defined(Q_OS_WIN)
     if (self->driver_mode_ == PumpDriverMode::WaitBridge) {
       // Zero-timeout peek: detect pending Win32 messages before libuv
