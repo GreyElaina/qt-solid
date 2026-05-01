@@ -176,6 +176,7 @@ pub struct NodeTimeline {
     /// Snapshot of resting values (what animate prop currently declares).
     /// Used to know the "current target" for properties without active channels.
     resting: HashMap<PropertyKey, f64>,
+    last_max_visual_velocity: f64,
 }
 
 impl NodeTimeline {
@@ -224,11 +225,18 @@ impl NodeTimeline {
         // Capture prev_target from the old channel (if any) so we can infer
         // implicit velocity for a spring transition (driven mode).
         // Velocity = (current_target - prev_target) / (current_time - prev_time)
+        //
+        // Use `now` as the upper time bound instead of `old.started_at()` so that
+        // any gap between the last drive and the release naturally dampens the
+        // instantaneous velocity (e.g. touchpad phase-end arriving 30ms after
+        // the last phase-update).
         let inferred_velocity: Option<f64> = self.channels.get(&key).and_then(|old| {
             let (prev_val, prev_time) = old.prev_target?;
-            let dt = old.started_at() - prev_time;
+            let dt = now - prev_time;
             if dt > 0.0 && dt < 0.5 {
-                Some((old.target() - prev_val) / dt)
+                let raw = (old.target() - prev_val) / dt;
+                // Cap to avoid extreme overshoot from very short inter-frame intervals.
+                Some(raw.clamp(-3000.0, 3000.0))
             } else {
                 None
             }
@@ -300,6 +308,7 @@ impl NodeTimeline {
     pub fn sample_pose(&mut self, now: f64) -> (SampledPose, bool) {
         let mut pose = SampledPose::default();
         let mut animating = false;
+        let mut max_vel = 0.0f64;
 
         // Apply resting values first (for properties with no active channel)
         for (&key, &value) in &self.resting {
@@ -308,14 +317,19 @@ impl NodeTimeline {
 
         // Override with active channel samples
         for (&key, channel) in &mut self.channels {
-            let (value, _velocity) = channel.sample(now);
+            let (value, velocity) = channel.sample(now);
             apply_to_pose(&mut pose, key, value);
 
             if channel.state() == ChannelState::Running {
                 animating = true;
+                let weighted = velocity.abs() * visual_velocity_weight(key);
+                if weighted > max_vel {
+                    max_vel = weighted;
+                }
             }
         }
 
+        self.last_max_visual_velocity = max_vel;
         (pose, animating)
     }
 
@@ -324,6 +338,12 @@ impl NodeTimeline {
         self.channels
             .values()
             .any(|ch| ch.state() == ChannelState::Running)
+    }
+
+    /// Peak weighted velocity across all channels from the last `sample_pose` call.
+    /// Units approximate visual px/s.
+    pub fn max_visual_velocity(&self) -> f64 {
+        self.last_max_visual_velocity
     }
 
     /// Returns true if any paint-class channel is currently animating.
@@ -397,6 +417,38 @@ fn apply_to_pose(pose: &mut SampledPose, key: PropertyKey, value: f64) {
         PropertyKey::ShadowA => pose.shadow_a = value,
         PropertyKey::ScrollX => pose.scroll_x = value,
         PropertyKey::ScrollY => pose.scroll_y = value,
+    }
+}
+
+/// Weight factor to normalize raw property velocity to approximate visual px/s.
+fn visual_velocity_weight(key: PropertyKey) -> f64 {
+    match key {
+        PropertyKey::X
+        | PropertyKey::Y
+        | PropertyKey::LayoutX
+        | PropertyKey::LayoutY
+        | PropertyKey::ScrollX
+        | PropertyKey::ScrollY
+        | PropertyKey::BorderRadius
+        | PropertyKey::BlurRadius => 1.0,
+        PropertyKey::ScaleX
+        | PropertyKey::ScaleY
+        | PropertyKey::LayoutScaleX
+        | PropertyKey::LayoutScaleY => 100.0,
+        PropertyKey::Rotate => 2.0,
+        PropertyKey::Opacity => 60.0,
+        PropertyKey::OriginX | PropertyKey::OriginY => 50.0,
+        PropertyKey::BackgroundR
+        | PropertyKey::BackgroundG
+        | PropertyKey::BackgroundB
+        | PropertyKey::BackgroundA
+        | PropertyKey::ShadowR
+        | PropertyKey::ShadowG
+        | PropertyKey::ShadowB
+        | PropertyKey::ShadowA => 30.0,
+        PropertyKey::ShadowOffsetX
+        | PropertyKey::ShadowOffsetY
+        | PropertyKey::ShadowBlurRadius => 1.0,
     }
 }
 
