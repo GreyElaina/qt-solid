@@ -345,6 +345,11 @@ impl NodeTimeline {
             .any(|(key, &value)| (value - key.default_value()).abs() > 1e-10)
     }
 
+    /// Returns true if a given property has been set as a motion target (has a resting entry).
+    pub fn has_property(&self, key: PropertyKey) -> bool {
+        self.resting.contains_key(&key)
+    }
+
     /// Remove completed channels to free memory.
     pub fn gc_completed(&mut self) {
         self.channels

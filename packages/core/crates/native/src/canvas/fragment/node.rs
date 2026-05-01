@@ -1,14 +1,17 @@
 use fragment_derive::Fragment;
 
 use super::super::vello::peniko::{
-    kurbo::{Affine, BezPath, Rect},
-    BlendMode,
+    kurbo::{Affine, BezPath, Rect, RoundedRectRadii},
+    BlendMode, Color, Fill,
 };
 use super::kinds::{
     CircleFragment, GroupFragment, ImageFragment, PathFragment, RectFragment, SpanFragment,
     TextFragment, TextInputFragment,
 };
-use super::types::{FragmentClipShape, FragmentId, FragmentLayerKey, FragmentListeners};
+use super::types::{
+    FillPaint, FragmentBoxShadow, FragmentBrush, FragmentClipShape, FragmentId, FragmentLayerKey,
+    FragmentListeners,
+};
 
 // ---------------------------------------------------------------------------
 // FragmentData enum — derive generates from_tag, apply_prop, etc.
@@ -169,7 +172,11 @@ impl FragmentNode {
 // Motion pose → fragment property mapping
 // ---------------------------------------------------------------------------
 
-pub(crate) fn apply_sampled_pose_to_fragment(node: &mut FragmentNode, pose: &motion::SampledPose) {
+pub(crate) fn apply_sampled_pose_to_fragment(
+    node: &mut FragmentNode,
+    pose: &motion::SampledPose,
+    timeline: &motion::NodeTimeline,
+) {
     // Motion offset and layout FLIP are applied purely through `transform`,
     // keeping `explicit_x/y` untouched so that taffy layout (flex flow)
     // is not disrupted.  `explicit_x/y` remains under the control of the
@@ -196,6 +203,64 @@ pub(crate) fn apply_sampled_pose_to_fragment(node: &mut FragmentNode, pose: &mot
     let motion_translate = Affine::translate((pose.x + pose.layout_x, pose.y + pose.layout_y));
 
     node.props.transform = motion_translate * layout_scale * user_scale_rotate;
+
+    // Paint channels — only apply when the timeline actually targets them
+    if let FragmentData::Rect(ref mut rect) = node.kind {
+        use motion::PropertyKey;
+
+        // Background color
+        if timeline.has_property(PropertyKey::BackgroundR)
+            || timeline.has_property(PropertyKey::BackgroundG)
+            || timeline.has_property(PropertyKey::BackgroundB)
+            || timeline.has_property(PropertyKey::BackgroundA)
+        {
+            let color = Color::new([
+                pose.background_r as f32,
+                pose.background_g as f32,
+                pose.background_b as f32,
+                pose.background_a as f32,
+            ]);
+            rect.fill = Some(FragmentBrush::Solid(FillPaint {
+                color,
+                rule: Fill::NonZero,
+            }));
+        }
+
+        // Border radius
+        if timeline.has_property(PropertyKey::BorderRadius) {
+            rect.corner_radii = RoundedRectRadii::from_single_radius(pose.border_radius);
+        }
+
+        // Box shadow
+        if timeline.has_property(PropertyKey::ShadowBlurRadius)
+            || timeline.has_property(PropertyKey::ShadowOffsetX)
+            || timeline.has_property(PropertyKey::ShadowOffsetY)
+            || timeline.has_property(PropertyKey::ShadowR)
+        {
+            let shadow_color = Color::new([
+                pose.shadow_r as f32,
+                pose.shadow_g as f32,
+                pose.shadow_b as f32,
+                pose.shadow_a as f32,
+            ]);
+            rect.shadow = Some(FragmentBoxShadow {
+                offset_x: pose.shadow_offset_x,
+                offset_y: pose.shadow_offset_y,
+                blur: pose.shadow_blur_radius,
+                color: shadow_color,
+                inset: false,
+            });
+        }
+
+        // Blur radius (backdrop blur on the node)
+        if timeline.has_property(PropertyKey::BlurRadius) {
+            node.props.backdrop_blur = if pose.blur_radius > 0.01 {
+                Some(pose.blur_radius)
+            } else {
+                None
+            };
+        }
+    }
 
     if node.promoted {
         // Promoted nodes: pose-only dirty — compositor handles transform/opacity.

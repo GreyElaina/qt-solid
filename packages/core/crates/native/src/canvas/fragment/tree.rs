@@ -611,7 +611,7 @@ impl FragmentTree {
         let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
         timeline.set_targets(targets, default_transition, per_property, now, delay_secs);
         let (sampled, animating) = timeline.sample_pose(now);
-        apply_sampled_pose_to_fragment(node, &sampled);
+        apply_sampled_pose_to_fragment(node, &sampled, &timeline);
         if !animating {
             timeline.gc_completed();
         }
@@ -636,7 +636,7 @@ impl FragmentTree {
         let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
         timeline.set_targets_keyframes(targets, times, default_transition, per_property, now, delay_secs);
         let (sampled, animating) = timeline.sample_pose(now);
-        apply_sampled_pose_to_fragment(node, &sampled);
+        apply_sampled_pose_to_fragment(node, &sampled, &timeline);
         if !animating {
             timeline.gc_completed();
         }
@@ -665,8 +665,7 @@ impl FragmentTree {
             }
             let is_promoted = node.promoted;
             let (sampled, animating) = timeline.sample_pose(now);
-            apply_sampled_pose_to_fragment(node, &sampled);
-            // Collect scroll offset updates from motion channels
+            apply_sampled_pose_to_fragment(node, &sampled, &timeline);
             if sampled.scroll_x.abs() > 0.01 || sampled.scroll_y.abs() > 0.01 {
                 scroll_updates.push((id, Vec2::new(sampled.scroll_x, sampled.scroll_y)));
             }
@@ -741,7 +740,7 @@ impl FragmentTree {
         timeline.set_targets(&targets, &instant, &empty, now, 0.0);
         // Immediately sample to update scroll_offsets
         let (sampled, _) = timeline.sample_pose(now);
-        apply_sampled_pose_to_fragment(node, &sampled);
+        apply_sampled_pose_to_fragment(node, &sampled, &timeline);
         node.timeline = Some(timeline);
         // Write scroll offset directly
         let offset = Vec2::new(sampled.scroll_x, sampled.scroll_y);
@@ -774,7 +773,7 @@ impl FragmentTree {
         let empty: HashMap<motion::PropertyKey, motion::TransitionSpec> = HashMap::new();
         timeline.set_targets(&targets, &spring, &empty, now, 0.0);
         let (sampled, animating) = timeline.sample_pose(now);
-        apply_sampled_pose_to_fragment(node, &sampled);
+        apply_sampled_pose_to_fragment(node, &sampled, &timeline);
         if !animating {
             timeline.gc_completed();
         }
@@ -834,7 +833,7 @@ impl FragmentTree {
         timeline.set_targets(&identity_targets, transition, &empty_per_prop, now, 0.0);
 
         let (sampled, animating) = timeline.sample_pose(now);
-        apply_sampled_pose_to_fragment(node, &sampled);
+        apply_sampled_pose_to_fragment(node, &sampled, &timeline);
         if !animating {
             timeline.gc_completed();
         }
