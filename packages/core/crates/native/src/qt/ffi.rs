@@ -411,6 +411,7 @@ pub(crate) mod bridge {
             height: u32,
             stride: u32,
         ) -> Result<()>;
+        fn qt_macos_set_display_link_frame_rate(node_id: u32, fps: f32);
         fn qt_window_minimize(id: u32) -> Result<()>;
         fn qt_window_maximize(id: u32) -> Result<()>;
         fn qt_window_restore(id: u32) -> Result<()>;

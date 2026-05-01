@@ -356,21 +356,30 @@ void HostWindowWidget::handle_compositor_display_link_tick(void *drawable) {
 
   switch (status) {
   case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Presented:
-    request_qt_pump();
+    if (qt_wgpu_renderer::unified_compositor_window_display_link_should_run(
+            windowHandle(), capture_device_pixel_ratio())) {
+      request_qt_pump();
+    } else {
+      stop_compositor_display_link();
+    }
     break;
   case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Busy:
     start_compositor_display_link();
     break;
   case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Idle:
-    if (!qt_wgpu_renderer::unified_compositor_window_display_link_should_run(
-            windowHandle(), capture_device_pixel_ratio())) {
-      stop_compositor_display_link();
-    }
+    stop_compositor_display_link();
     break;
   case qt_wgpu_renderer::UnifiedCompositorDriveStatus::NeedsQtRepaint:
     stop_compositor_display_link();
     update();
     break;
   }
+}
+
+void HostWindowWidget::set_display_link_frame_rate(float fps) {
+  if (compositor_display_link_handle_ == nullptr) {
+    return;
+  }
+  ::qt_macos_display_link_set_preferred_fps(compositor_display_link_handle_, fps);
 }
 #endif

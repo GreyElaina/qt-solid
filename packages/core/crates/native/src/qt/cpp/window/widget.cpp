@@ -217,6 +217,7 @@ public:
   void shutdown_compositor_display_link();
   void post_compositor_frame_drive_from_display_link(void *drawable);
   void handle_compositor_display_link_tick(void *drawable);
+  void set_display_link_frame_rate(float fps);
 #endif
 
   // -- Input methods (out-of-line in input.cpp) ------------------------------

@@ -15,6 +15,8 @@ MacosDisplayLinkHandle *qt_macos_display_link_create(
 bool qt_macos_display_link_start(MacosDisplayLinkHandle *handle);
 void qt_macos_display_link_stop(MacosDisplayLinkHandle *handle);
 void qt_macos_display_link_destroy(MacosDisplayLinkHandle *handle);
+void qt_macos_display_link_set_preferred_fps(MacosDisplayLinkHandle *handle,
+                                              float fps);
 
 /// Returns an opaque pointer to the NativeFrameNotifier. Valid for process lifetime.
 const void *qt_solid_native_frame_notifier();

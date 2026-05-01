@@ -1064,6 +1064,22 @@ void post_frame_signal_for_node(std::uint32_t node_id) {
 }
 #endif
 
+void qt_macos_set_display_link_frame_rate(std::uint32_t node_id, float fps) {
+#if defined(Q_OS_MACOS)
+  if (!g_host || !g_host->started()) {
+    return;
+  }
+  auto *widget = g_host->registry().widget_ptr(node_id);
+  auto *host = dynamic_cast<HostWindowWidget *>(widget);
+  if (host) {
+    host->set_display_link_frame_rate(fps);
+  }
+#else
+  (void)node_id;
+  (void)fps;
+#endif
+}
+
 } // namespace qt_solid_spike::qt
 
 extern "C" void qt_solid_notify_window_compositor_present_complete(

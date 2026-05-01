@@ -9,7 +9,7 @@ use objc2_foundation::{
     NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes,
 };
 use objc2_quartz_core::{
-    CAMetalDisplayLink, CAMetalDisplayLinkDelegate, CAMetalDisplayLinkUpdate,
+    CAFrameRateRange, CAMetalDisplayLink, CAMetalDisplayLinkDelegate, CAMetalDisplayLinkUpdate,
     CAMetalLayer as ObjcCAMetalLayer,
 };
 use window_host::NativeFrameNotifier;
@@ -195,6 +195,9 @@ pub unsafe extern "C" fn qt_macos_display_link_start(
     }
 
     if let Some(display_link) = handle.display_link.as_ref() {
+        // Reset to max frame rate on resume — a prior animation's settling
+        // phase may have lowered it, and the new animation should start smooth.
+        display_link.setPreferredFrameRateRange(CAFrameRateRange::new(15.0, 120.0, 120.0));
         display_link.setPaused(false);
         trace(format_args!("start resume context=0x{:x}", handle.context_ptr));
         return true;
@@ -240,4 +243,25 @@ pub unsafe extern "C" fn qt_macos_display_link_destroy(handle: *mut MacosDisplay
         display_link.setDelegate(None);
     }
     handle.delegate.take();
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn qt_macos_display_link_set_preferred_fps(
+    handle: *mut MacosDisplayLinkHandle,
+    fps: f32,
+) {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return;
+    };
+    let Some(display_link) = handle.display_link.as_ref() else {
+        return;
+    };
+    let preferred = fps.max(1.0);
+    let minimum = (preferred * 0.5).max(1.0);
+    let maximum = preferred;
+    display_link.setPreferredFrameRateRange(CAFrameRateRange::new(minimum, maximum, preferred));
+    trace(format_args!(
+        "set-preferred-fps context=0x{:x} min={:.0} max={:.0} preferred={:.0}",
+        handle.context_ptr, minimum, maximum, preferred
+    ));
 }

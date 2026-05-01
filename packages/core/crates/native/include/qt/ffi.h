@@ -127,4 +127,6 @@ void qt_window_present_cpu_frame(std::uint32_t node_id,
                                   std::uint32_t height,
                                   std::uint32_t stride);
 
+void qt_macos_set_display_link_frame_rate(std::uint32_t node_id, float fps);
+
 } // namespace qt_solid_spike::qt
