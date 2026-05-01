@@ -540,6 +540,99 @@ function bindMotionNode(
     onCleanup(() => node.unsetLayoutId(layoutId));
   });
 
+  // layout (same-element FLIP): detect own bounds changes and animate via FLIP
+  {
+    const layoutMode = () => {
+      const l = readMotion().layout;
+      if (l === true || l === "position" || l === "size") return l;
+      return null;
+    };
+
+    createEffect(() => {
+      const mode = layoutMode();
+      if (!mode) return;
+
+      const fragNode = node as unknown as { canvasNodeId: number; fragmentId: number; eventHandlers: Map<string, (...args: unknown[]) => void> };
+      const LISTENER_LAYOUT = 1;
+
+      let prevX = 0;
+      let prevY = 0;
+      let prevW = 0;
+      let prevH = 0;
+      let hasPrev = false;
+
+      // Snapshot initial bounds
+      const initialBounds = canvasFragmentGetWorldBounds(fragNode.canvasNodeId, fragNode.fragmentId);
+      if (initialBounds) {
+        prevX = initialBounds.x;
+        prevY = initialBounds.y;
+        prevW = initialBounds.width;
+        prevH = initialBounds.height;
+        hasPrev = true;
+      }
+
+      const onLayoutHandler = (_e: { x: number; y: number; width: number; height: number }) => {
+        // Get new world bounds (layout event gives local position/size, need world)
+        const newBounds = canvasFragmentGetWorldBounds(fragNode.canvasNodeId, fragNode.fragmentId);
+        if (!newBounds || !hasPrev) {
+          if (newBounds) {
+            prevX = newBounds.x;
+            prevY = newBounds.y;
+            prevW = newBounds.width;
+            prevH = newBounds.height;
+            hasPrev = true;
+          }
+          return;
+        }
+
+        const curMode = untrack(layoutMode);
+        const dx = prevX - newBounds.x;
+        const dy = prevY - newBounds.y;
+        const sx = newBounds.width > 0 ? prevW / newBounds.width : 1;
+        const sy = newBounds.height > 0 ? prevH / newBounds.height : 1;
+
+        // Filter by mode
+        const posDelta = curMode !== "size" ? (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) : false;
+        const sizeDelta = curMode !== "position" ? (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001) : false;
+
+        if (posDelta || sizeDelta) {
+          const flipDx = curMode === "size" ? 0 : dx;
+          const flipDy = curMode === "size" ? 0 : dy;
+          const flipSx = curMode === "position" ? 1 : sx;
+          const flipSy = curMode === "position" ? 1 : sy;
+
+          const transition = lowerTransitionSpec(readMotion().layoutTransition) ?? {
+            type: "spring",
+            stiffness: 500,
+            damping: 30,
+            mass: 1,
+          } as QtTransitionSpec;
+
+          canvasFragmentSetLayoutFlip(
+            fragNode.canvasNodeId,
+            fragNode.fragmentId,
+            flipDx, flipDy, flipSx, flipSy,
+            transition,
+          );
+        }
+
+        prevX = newBounds.x;
+        prevY = newBounds.y;
+        prevW = newBounds.width;
+        prevH = newBounds.height;
+      };
+
+      // Register layout listener
+      fragNode.eventHandlers.set("onLayout", onLayoutHandler as (...args: unknown[]) => void);
+      canvasFragmentSetListener(fragNode.canvasNodeId, fragNode.fragmentId, LISTENER_LAYOUT, true);
+
+      onCleanup(() => {
+        fragNode.eventHandlers.delete("onLayout");
+        canvasFragmentSetListener(fragNode.canvasNodeId, fragNode.fragmentId, LISTENER_LAYOUT, false);
+      });
+    });
+  }
+
   onMount(() => {
     started = true;
     // Compute delay dynamically from current orchestration config
