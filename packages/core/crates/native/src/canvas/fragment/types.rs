@@ -116,6 +116,180 @@ impl PaintPlan {
 }
 
 // ---------------------------------------------------------------------------
+// RenderPlan — partitioned output for compositor
+// ---------------------------------------------------------------------------
+
+/// A composited layer that passed the z-order safety check.
+/// Its texture is retained across frames and only re-rasterized when
+/// `content_dirty` is true.
+#[derive(Debug)]
+pub struct CompositedLayer {
+    pub layer_key: FragmentLayerKey,
+    pub fragment_id: FragmentId,
+    pub scene: Scene,
+    pub bounds: Rect,
+    pub transform: Affine,
+    pub clip: Option<FragmentClipShape>,
+    pub opacity: f32,
+    pub blend_mode: BlendMode,
+    pub content_dirty: bool,
+    pub pose_only_dirty: bool,
+}
+
+/// Partitioned render plan produced by `PaintPlan::partition()`.
+///
+/// `base_scene` contains all inline content plus any demoted promoted layers
+/// (those whose z-order can't be preserved if composited separately).
+/// `composited_layers` are safe to render to independent textures and drawn
+/// after the base in paint order.
+#[derive(Debug)]
+pub struct RenderPlan {
+    pub base_scene: Scene,
+    pub composited_layers: Vec<CompositedLayer>,
+    pub stale_keys: Vec<FragmentLayerKey>,
+    /// True when only composited layers changed pose (no base or content dirty).
+    pub pose_only: bool,
+}
+
+impl PaintPlan {
+    /// Partition chunks into a base scene (inline + demoted promoted) and
+    /// compositor-safe promoted layers.
+    ///
+    /// A promoted chunk is safe to composite independently only if no later
+    /// inline chunk's bounds overlap with it. Otherwise it is "demoted" and
+    /// flattened into the base scene to preserve correct z-order.
+    pub fn partition(self) -> RenderPlan {
+        let chunks = self.chunks;
+        let stale_keys = self.stale_keys;
+
+        if chunks.is_empty() {
+            return RenderPlan {
+                base_scene: Scene::new(),
+                composited_layers: Vec::new(),
+                stale_keys,
+                pose_only: false,
+            };
+        }
+
+        // Backwards pass: determine placement for each chunk.
+        // A promoted chunk is safe to composite if it does not overlap any
+        // later base-painted content (inline or demoted promoted).
+        let mut placements: Vec<bool> = vec![true; chunks.len()]; // true = composite
+        let mut later_base_bounds: Option<Rect> = None;
+
+        for i in (0..chunks.len()).rev() {
+            match &chunks[i] {
+                PaintChunk::Inline(s) => {
+                    placements[i] = false; // inline always goes to base
+                    if let Some(b) = super::tree::scene_bounds(s) {
+                        later_base_bounds = Some(match later_base_bounds {
+                            Some(u) => u.union(b),
+                            None => b,
+                        });
+                    }
+                }
+                PaintChunk::Promoted(layer) => {
+                    // Conservative: demote if non-default blend or path clip.
+                    let unsupported_blend = layer.blend_mode != BlendMode::default();
+                    let has_path_clip = matches!(layer.clip, Some(FragmentClipShape::Path(_)));
+
+                    // Transform local bounds to world space for overlap check.
+                    let world_bounds = super::paint::transform_local_bounds_to_world(
+                        layer.bounds, layer.transform,
+                    );
+                    let overlaps = later_base_bounds
+                        .map_or(false, |u| rects_intersect(world_bounds, u));
+
+                    if unsupported_blend || has_path_clip || overlaps {
+                        placements[i] = false; // demote to base
+                        later_base_bounds = Some(match later_base_bounds {
+                            Some(u) => u.union(world_bounds),
+                            None => world_bounds,
+                        });
+                    }
+                    // else: safe to composite
+                }
+            }
+        }
+
+        // Forward pass: build base_scene and composited_layers.
+        let mut base_scene = Scene::new();
+        let mut composited_layers = Vec::new();
+        let mut any_base_dirty = false;
+        let mut all_composited_pose_only = true;
+
+        for (chunk, is_composite) in chunks.into_iter().zip(placements) {
+            match (chunk, is_composite) {
+                (PaintChunk::Inline(s), _) => {
+                    if !s.commands.is_empty() {
+                        any_base_dirty = true;
+                    }
+                    base_scene.append_scene(s, Affine::IDENTITY);
+                }
+                (PaintChunk::Promoted(layer), true) => {
+                    if layer.content_dirty {
+                        all_composited_pose_only = false;
+                    }
+                    composited_layers.push(CompositedLayer {
+                        layer_key: layer.layer_key,
+                        fragment_id: layer.fragment_id,
+                        scene: layer.scene,
+                        bounds: layer.bounds,
+                        transform: layer.transform,
+                        clip: layer.clip,
+                        opacity: layer.opacity,
+                        blend_mode: layer.blend_mode,
+                        content_dirty: layer.content_dirty,
+                        pose_only_dirty: layer.pose_only_dirty,
+                    });
+                }
+                (PaintChunk::Promoted(layer), false) => {
+                    // Demote: flatten into base with transform/opacity/clip.
+                    any_base_dirty = true;
+                    flatten_promoted_into_scene(&mut base_scene, &layer);
+                }
+            }
+        }
+
+        let pose_only = !any_base_dirty
+            && !composited_layers.is_empty()
+            && all_composited_pose_only;
+
+        RenderPlan {
+            base_scene,
+            composited_layers,
+            stale_keys,
+            pose_only,
+        }
+    }
+}
+
+/// Flatten a promoted layer into a scene, applying its transform/opacity/clip.
+fn flatten_promoted_into_scene(scene: &mut Scene, layer: &PromotedLayer) {
+    let needs_layer = layer.opacity < 1.0 - f32::EPSILON
+        || layer.clip.is_some()
+        || layer.blend_mode != BlendMode::default();
+
+    if needs_layer {
+        push_fragment_layer(
+            scene,
+            layer.transform,
+            layer.clip.as_ref(),
+            layer.opacity,
+            layer.blend_mode,
+        );
+        scene.append_scene(layer.scene.clone(), layer.transform);
+        scene.pop_layer();
+    } else {
+        scene.append_scene(layer.scene.clone(), layer.transform);
+    }
+}
+
+fn rects_intersect(a: Rect, b: Rect) -> bool {
+    a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0
+}
+
+// ---------------------------------------------------------------------------
 // Fragment identity
 // ---------------------------------------------------------------------------
 

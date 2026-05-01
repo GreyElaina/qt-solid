@@ -249,10 +249,39 @@ pub fn fragment_store_set_prop(
     .is_some()
 }
 
+pub fn fragment_store_set_dirty_clips(canvas_node_id: u32, clips: Vec<Rect>) {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.dirty_clips = clips;
+    });
+}
+
 pub fn fragment_store_paint(canvas_node_id: u32, scene: &mut Scene, transform: Affine) {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         tree.paint_into_scene(scene, transform);
     });
+}
+
+pub fn fragment_store_paint_subtrees(canvas_node_id: u32) -> Vec<(FragmentId, Scene, bool)> {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.paint_subtrees()
+    }).unwrap_or_default()
+}
+
+pub fn fragment_store_compute_dirty_rects(canvas_node_id: u32, scale_factor: f64) -> DirtyRectResult {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.compute_dirty_rects(scale_factor)
+    }).unwrap_or(DirtyRectResult::FullRepaint)
+}
+
+pub fn fragment_store_consume_dirty_state(canvas_node_id: u32) {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.consume_dirty_state();
+    });
+}
+
+pub fn fragment_store_force_full_repaint(canvas_node_id: u32) -> bool {
+    runtime::with_fragment_tree(canvas_node_id, |tree| tree.force_full_repaint)
+        .unwrap_or(true)
 }
 
 pub fn fragment_store_paint_single(canvas_node_id: u32, fragment_id: FragmentId, scene: &mut Scene, transform: Affine) {
@@ -276,6 +305,12 @@ pub fn fragment_store_world_bounds(canvas_node_id: u32, fragment_id: FragmentId)
 
 pub fn fragment_store_build_paint_plan(canvas_node_id: u32) -> Option<PaintPlan> {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.build_paint_plan())
+}
+
+pub fn fragment_store_build_render_plan(canvas_node_id: u32) -> Option<RenderPlan> {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.build_paint_plan().partition()
+    })
 }
 
 pub fn fragment_store_has_promoted(canvas_node_id: u32) -> bool {

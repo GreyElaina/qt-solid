@@ -969,6 +969,11 @@ impl FragmentTree {
     // -----------------------------------------------------------------------
 
     pub fn paint_into_scene(&mut self, scene: &mut Scene, base_transform: Affine) {
+        // Ensure AABBs are up to date for culling.
+        if !self.dirty_clips.is_empty() {
+            self.ensure_aabbs();
+        }
+
         if self.promoted_node_count == 0 {
             if !self.any_dirty {
                 if let Some(cached) = &self.cached_scene {
@@ -978,15 +983,23 @@ impl FragmentTree {
             }
 
             let root_children = self.sorted_children_by_z(&self.root_children.clone());
+            let dirty_clips = self.dirty_clips.clone();
             let mut fresh = Scene::new();
             for &child_id in &root_children {
                 if let Some(cached) = self.subtree_scene_cache.get(&child_id) {
                     fresh.append_scene(cached.clone(), Affine::IDENTITY);
                 } else {
                     let mut sub = Scene::new();
-                    self.paint_node(&mut sub, child_id, Affine::IDENTITY);
+                    if !dirty_clips.is_empty() {
+                        self.paint_node_culled(&mut sub, child_id, Affine::IDENTITY, &dirty_clips);
+                    } else {
+                        self.paint_node(&mut sub, child_id, Affine::IDENTITY);
+                    }
                     fresh.append_scene(sub.clone(), Affine::IDENTITY);
-                    self.subtree_scene_cache.insert(child_id, sub);
+                    // Only cache subtree scenes from full paints.
+                    if dirty_clips.is_empty() {
+                        self.subtree_scene_cache.insert(child_id, sub);
+                    }
                 }
             }
 
@@ -998,7 +1011,11 @@ impl FragmentTree {
             self.dirty_root_children.clear();
 
             scene.append_scene(fresh.clone(), base_transform);
-            self.cached_scene = Some(fresh);
+            // Only cache the full scene — partial (culled) paints must not be
+            // reused as the complete scene for future full renders.
+            if self.dirty_clips.is_empty() {
+                self.cached_scene = Some(fresh);
+            }
             self.paint_debug_highlight(scene, base_transform);
             return;
         }
@@ -1015,6 +1032,61 @@ impl FragmentTree {
             }
         }
         self.paint_debug_highlight(scene, base_transform);
+    }
+
+    /// Paint per root-child subtrees without merging. Returns `(FragmentId, Scene, is_dirty)`.
+    /// Only valid when `promoted_node_count == 0`; falls back to single merged scene otherwise.
+    pub fn paint_subtrees(&mut self) -> Vec<(FragmentId, Scene, bool)> {
+        if !self.dirty_clips.is_empty() {
+            self.ensure_aabbs();
+        }
+
+        // Promoted path not supported — return single merged.
+        if self.promoted_node_count != 0 {
+            let mut merged = Scene::new();
+            self.paint_into_scene(&mut merged, Affine::IDENTITY);
+            // Use FragmentId(u32::MAX) as sentinel for merged scene.
+            return vec![(FragmentId(u32::MAX), merged, true)];
+        }
+
+        let root_children = self.sorted_children_by_z(&self.root_children.clone());
+        let dirty_clips = self.dirty_clips.clone();
+        let mut result = Vec::with_capacity(root_children.len());
+
+        for &child_id in &root_children {
+            if let Some(cached) = self.subtree_scene_cache.get(&child_id) {
+                result.push((child_id, cached.clone(), false));
+            } else {
+                let mut sub = Scene::new();
+                if !dirty_clips.is_empty() {
+                    self.paint_node_culled(&mut sub, child_id, Affine::IDENTITY, &dirty_clips);
+                } else {
+                    self.paint_node(&mut sub, child_id, Affine::IDENTITY);
+                }
+                if dirty_clips.is_empty() {
+                    self.subtree_scene_cache.insert(child_id, sub.clone());
+                }
+                result.push((child_id, sub, true));
+            }
+        }
+
+        for node in self.nodes.values_mut() {
+            node.dirty = false;
+            node.pose_dirty = false;
+        }
+        self.any_dirty = false;
+        self.dirty_root_children.clear();
+
+        // Cache merged scene for paint_into_scene compatibility.
+        if self.dirty_clips.is_empty() {
+            let mut fresh = Scene::new();
+            for (_, sub, _) in &result {
+                fresh.append_scene(sub.clone(), Affine::IDENTITY);
+            }
+            self.cached_scene = Some(fresh);
+        }
+
+        result
     }
 
     fn paint_node(&self, scene: &mut Scene, id: FragmentId, parent_transform: Affine) {
@@ -1042,6 +1114,76 @@ impl FragmentTree {
         let children = self.sorted_children_by_z(&node.children.clone());
         for child_id in children {
             self.paint_node(scene, child_id, child_transform);
+        }
+
+        if needs_layer {
+            scene.pop_layer();
+        }
+    }
+
+    /// Paint a node with layer-aware dirty rect culling.
+    /// - `needs_layer()` nodes are atomic: if `subtree_aabb ∩ dirty_rects = ∅`, skip entirely;
+    ///   else paint the whole subtree without further culling.
+    /// - Non-layer nodes: if `world_aabb ∩ dirty_rects = ∅`, skip self encode but still recurse.
+    fn paint_node_culled(
+        &self,
+        scene: &mut Scene,
+        id: FragmentId,
+        parent_transform: Affine,
+        dirty_clips: &[Rect],
+    ) {
+        let Some(node) = self.node(id) else { return };
+        if !node.props.visible { return; }
+
+        let scroll = self.scroll_offsets.get(&id).copied();
+        let needs_layer = node.needs_layer() || scroll.is_some();
+
+        // Layer-aware culling.
+        if !dirty_clips.is_empty() {
+            if needs_layer {
+                // Atomic unit: skip entire subtree if no intersection.
+                if let Some(aabb) = node.subtree_aabb {
+                    if !dirty_clips.iter().any(|c| rects_intersect(aabb, *c)) {
+                        return;
+                    }
+                }
+                // Intersects → paint full subtree without further culling.
+                self.paint_node(scene, id, parent_transform);
+                return;
+            }
+            // Non-layer node: check self, still recurse children.
+        }
+
+        let transform = parent_transform * node.local_transform();
+
+        if needs_layer {
+            let layer_clip = node.clip_shape().or_else(|| {
+                scroll.and_then(|_| node.effective_bounds().map(FragmentClipShape::Rect))
+            });
+            push_fragment_layer(scene, transform, layer_clip.as_ref(), node.props.opacity, node.props.blend_mode);
+        }
+
+        // Cull self-encode if world_aabb doesn't intersect any dirty rect.
+        let encode_self = if dirty_clips.is_empty() {
+            true
+        } else {
+            match node.world_aabb {
+                Some(aabb) => dirty_clips.iter().any(|c| rects_intersect(aabb, *c)),
+                None => true,
+            }
+        };
+        if encode_self {
+            node.kind.encode(scene, transform);
+        }
+
+        let child_transform = match scroll {
+            Some(s) => transform * Affine::translate((-s.x, -s.y)),
+            None => transform,
+        };
+
+        let children = self.sorted_children_by_z(&node.children.clone());
+        for child_id in children {
+            self.paint_node_culled(scene, child_id, child_transform, dirty_clips);
         }
 
         if needs_layer {
@@ -1106,6 +1248,13 @@ impl FragmentTree {
         let reuse_cache = !self.any_dirty;
         let mut scene_cache = std::mem::take(&mut self.promoted_scene_cache);
 
+        // Capture per-node dirty flags before clearing — needed for
+        // content_dirty / pose_only_dirty on PromotedLayer.
+        let dirty_flags: HashMap<FragmentId, (bool, bool)> = self.nodes.iter()
+            .filter(|(_, n)| n.promoted)
+            .map(|(&id, n)| (id, (n.dirty, n.pose_dirty)))
+            .collect();
+
         let mut collector = PaintCollector {
             chunks: Vec::new(),
             current_inline: Scene::new(),
@@ -1128,6 +1277,13 @@ impl FragmentTree {
         for chunk in &mut collector.chunks {
             if let PaintChunk::Promoted(layer) = chunk {
                 layer.layer_key = self.ensure_layer_key(layer.fragment_id);
+                // Propagate captured dirty flags.
+                let (content_dirty, pose_dirty) = dirty_flags
+                    .get(&layer.fragment_id)
+                    .copied()
+                    .unwrap_or((true, false));
+                layer.content_dirty = content_dirty;
+                layer.pose_only_dirty = !content_dirty && pose_dirty;
             }
         }
 
@@ -1252,7 +1408,7 @@ impl FragmentTree {
                 scene_cache.insert(id, cache_copy);
             }
 
-            let bounds = Self::compute_subtree_local_bounds(nodes, id, Affine::IDENTITY)
+            let bounds = Self::compute_promoted_local_bounds(nodes, id)
                 .unwrap_or(Rect::ZERO);
             let clip_rect = collector.accumulated_clip_rect();
 
@@ -1265,6 +1421,8 @@ impl FragmentTree {
                 clip: clip_rect.map(FragmentClipShape::Rect),
                 opacity: node.props.opacity,
                 blend_mode: node.props.blend_mode,
+                content_dirty: true,   // set correctly in build_paint_plan
+                pose_only_dirty: false,
             }));
 
             collector.resume_inline_after_split();
@@ -1390,6 +1548,30 @@ impl FragmentTree {
         true
     }
 
+    /// Compute bounds for a promoted subtree in local space — matching the
+    /// coordinate space used by `paint_promoted_subtree_local` (root at
+    /// identity, children relative to identity).
+    fn compute_promoted_local_bounds(
+        nodes: &HashMap<FragmentId, FragmentNode>,
+        id: FragmentId,
+    ) -> Option<Rect> {
+        let node = nodes.get(&id)?;
+        // Root node encoded at identity (no local_transform applied).
+        let mut result: Option<Rect> = node.effective_bounds();
+        // Children also painted from identity.
+        for &child_id in &node.children {
+            if let Some(child_bounds) =
+                Self::compute_subtree_local_bounds(nodes, child_id, Affine::IDENTITY)
+            {
+                result = Some(match result {
+                    Some(r) => r.union(child_bounds),
+                    None => child_bounds,
+                });
+            }
+        }
+        result
+    }
+
     /// Compute the axis-aligned bounding box of an entire subtree in the
     /// coordinate space of the given `parent_transform`.
     fn compute_subtree_local_bounds(
@@ -1416,4 +1598,252 @@ impl FragmentTree {
         }
         result
     }
+
+    /// Compute dirty rects from individual dirty node bounds.
+    ///
+    /// Returns a `DirtyRectResult` indicating full repaint, nothing dirty,
+    /// or a list of partial device-pixel rects.
+    pub fn compute_dirty_rects(&mut self, scale_factor: f64) -> DirtyRectResult {
+        if self.force_full_repaint {
+            return DirtyRectResult::FullRepaint;
+        }
+        if self.dirty_node_ids.is_empty() && self.stale_node_bounds.is_empty() {
+            return DirtyRectResult::NothingDirty;
+        }
+
+        // Ensure world AABBs are up to date for new bounds estimation.
+        self.ensure_aabbs();
+
+        // Collect per-node dirty rects: union of old bounds and new bounds.
+        let all_ids: HashSet<FragmentId> = self
+            .stale_node_bounds
+            .keys()
+            .copied()
+            .chain(self.dirty_node_ids.iter().copied())
+            .collect();
+
+        let mut rects: Vec<Rect> = Vec::with_capacity(all_ids.len());
+        for id in all_ids {
+            let mut node_rect: Option<Rect> = None;
+            if let Some(&stale) = self.stale_node_bounds.get(&id) {
+                node_rect = Some(stale);
+            }
+            if let Some(node) = self.nodes.get(&id) {
+                if let Some(aabb) = node.world_aabb {
+                    node_rect = Some(match node_rect {
+                        Some(r) => r.union(aabb),
+                        None => aabb,
+                    });
+                }
+            }
+            if let Some(r) = node_rect {
+                rects.push(r);
+            }
+        }
+
+        if rects.is_empty() {
+            return DirtyRectResult::NothingDirty;
+        }
+
+        // Convert to device pixels first — tile math operates in pixel space.
+        let mut device_rects: Vec<(u32, u32, u32, u32)> = rects
+            .iter()
+            .map(|r| {
+                let x = (r.x0 * scale_factor).floor().max(0.0) as u32;
+                let y = (r.y0 * scale_factor).floor().max(0.0) as u32;
+                let x1 = (r.x1 * scale_factor).ceil() as u32;
+                let y1 = (r.y1 * scale_factor).ceil() as u32;
+                (x, y, x1.saturating_sub(x), y1.saturating_sub(y))
+            })
+            .collect();
+
+        // Tile-aware merge: use wide tile cost (256×4) instead of pixel area.
+        merge_dirty_rects_tile_aware(&mut device_rects);
+
+        DirtyRectResult::Partial(device_rects)
+    }
+
+    /// Clear stale bounds and force_full_repaint after a frame has been presented.
+    pub fn consume_dirty_state(&mut self) {
+        self.stale_node_bounds.clear();
+        self.dirty_node_ids.clear();
+        self.force_full_repaint = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scene bounds computation from anyrender RenderCommands
+// ---------------------------------------------------------------------------
+
+/// Compute the axis-aligned bounding box of all render commands in a scene.
+pub(crate) fn scene_bounds(scene: &Scene) -> Option<Rect> {
+    use anyrender::recording::RenderCommand;
+
+    let mut result: Option<Rect> = None;
+
+    for cmd in &scene.commands {
+        let cmd_bounds = match cmd {
+            RenderCommand::Fill(fill) => {
+                let local = fill.shape.bounding_box();
+                Some(transform_local_bounds_to_world(local, fill.transform))
+            }
+            RenderCommand::Stroke(stroke) => {
+                let local = stroke.shape.bounding_box();
+                let inflated = inflate_rect(local, stroke.style.width / 2.0);
+                Some(transform_local_bounds_to_world(inflated, stroke.transform))
+            }
+            RenderCommand::BoxShadow(bs) => {
+                let extent = bs.std_dev * 3.0 + bs.radius;
+                let inflated = inflate_rect(bs.rect, extent);
+                Some(transform_local_bounds_to_world(inflated, bs.transform))
+            }
+            RenderCommand::GlyphRun(gr) => {
+                // Conservative estimate: x range from glyphs, height from font_size.
+                if gr.glyphs.is_empty() {
+                    None
+                } else {
+                    let fs = gr.font_size as f64;
+                    let min_x = gr.glyphs.iter().map(|g| g.x as f64).fold(f64::INFINITY, f64::min);
+                    let max_x = gr.glyphs.iter().map(|g| g.x as f64).fold(f64::NEG_INFINITY, f64::max);
+                    // Last glyph advance approximated as 0.6 * font_size.
+                    let local = Rect::new(min_x, -fs * 0.8, max_x + fs * 0.6, fs * 0.2);
+                    Some(transform_local_bounds_to_world(local, gr.transform))
+                }
+            }
+            RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_) | RenderCommand::PopLayer => None,
+        };
+
+        if let Some(b) = cmd_bounds {
+            result = Some(match result {
+                Some(r) => r.union(b),
+                None => b,
+            });
+        }
+    }
+
+    result
+}
+
+fn inflate_rect(r: Rect, amount: f64) -> Rect {
+    Rect::new(r.x0 - amount, r.y0 - amount, r.x1 + amount, r.y1 + amount)
+}
+
+fn rects_intersect(a: Rect, b: Rect) -> bool {
+    a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0
+}
+
+/// Wide tile dimensions matching vello_hybrid's coarse rasterizer.
+/// Content strips and clip regions are dispatched at this granularity.
+const WIDE_TILE_W: u32 = 256;
+const WIDE_TILE_H: u32 = 4;
+
+/// Count how many wide tiles a device-pixel rect covers.
+fn wide_tile_count(x: u32, y: u32, w: u32, h: u32) -> u32 {
+    if w == 0 || h == 0 {
+        return 0;
+    }
+    let tx0 = x / WIDE_TILE_W;
+    let ty0 = y / WIDE_TILE_H;
+    let tx1 = (x + w + WIDE_TILE_W - 1) / WIDE_TILE_W;
+    let ty1 = (y + h + WIDE_TILE_H - 1) / WIDE_TILE_H;
+    (tx1 - tx0) * (ty1 - ty0)
+}
+
+/// Union two device-pixel rects.
+fn union_device_rect(
+    a: (u32, u32, u32, u32),
+    b: (u32, u32, u32, u32),
+) -> (u32, u32, u32, u32) {
+    let x0 = a.0.min(b.0);
+    let y0 = a.1.min(b.1);
+    let x1 = (a.0 + a.2).max(b.0 + b.2);
+    let y1 = (a.1 + a.3).max(b.1 + b.3);
+    (x0, y0, x1 - x0, y1 - y0)
+}
+
+/// Tile-aware dirty rect merge (O(n³) worst case, fine for n ≤ ~20).
+///
+/// Strategy:
+/// 1. Unconditionally merge overlapping rects (tile_waste ≤ 0).
+/// 2. Repeatedly merge the pair with the smallest tile_waste until
+///    count ≤ MAX_DIRTY_RECTS.
+/// 3. Opportunistically merge pairs where tile_waste = 0 even when
+///    under the cap (same tile row, no extra tiles).
+fn merge_dirty_rects_tile_aware(rects: &mut Vec<(u32, u32, u32, u32)>) {
+    // Phase 1: merge all overlapping pairs (free or negative waste).
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut i = 0;
+        while i < rects.len() {
+            let mut j = i + 1;
+            while j < rects.len() {
+                let (ax, ay, aw, ah) = rects[i];
+                let (bx, by, bw, bh) = rects[j];
+                // Check pixel overlap.
+                let overlaps = ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+                if overlaps {
+                    rects[i] = union_device_rect(rects[i], rects[j]);
+                    rects.swap_remove(j);
+                    changed = true;
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    // Phase 2: reduce to MAX_DIRTY_RECTS by merging the cheapest pair
+    // (measured in wide tiles added).
+    while rects.len() > MAX_DIRTY_RECTS {
+        let (mi, mj) = cheapest_merge_pair(rects);
+        rects[mi] = union_device_rect(rects[mi], rects[mj]);
+        rects.swap_remove(mj);
+    }
+
+    // Phase 3: opportunistic zero-cost merges (same tile rows, no extra tiles).
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut i = 0;
+        while i < rects.len() {
+            let mut j = i + 1;
+            while j < rects.len() {
+                let merged = union_device_rect(rects[i], rects[j]);
+                let cost_separate =
+                    wide_tile_count(rects[i].0, rects[i].1, rects[i].2, rects[i].3)
+                        + wide_tile_count(rects[j].0, rects[j].1, rects[j].2, rects[j].3);
+                let cost_merged = wide_tile_count(merged.0, merged.1, merged.2, merged.3);
+                if cost_merged <= cost_separate {
+                    rects[i] = merged;
+                    rects.swap_remove(j);
+                    changed = true;
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+}
+
+/// Find the pair (i, j) whose merge adds the fewest extra wide tiles.
+fn cheapest_merge_pair(rects: &[(u32, u32, u32, u32)]) -> (usize, usize) {
+    let mut best = (0, 1);
+    let mut best_waste = u32::MAX;
+    for i in 0..rects.len() {
+        let ti = wide_tile_count(rects[i].0, rects[i].1, rects[i].2, rects[i].3);
+        for j in (i + 1)..rects.len() {
+            let tj = wide_tile_count(rects[j].0, rects[j].1, rects[j].2, rects[j].3);
+            let merged = union_device_rect(rects[i], rects[j]);
+            let tm = wide_tile_count(merged.0, merged.1, merged.2, merged.3);
+            let waste = tm.saturating_sub(ti + tj);
+            if waste < best_waste {
+                best_waste = waste;
+                best = (i, j);
+            }
+        }
+    }
+    best
 }
