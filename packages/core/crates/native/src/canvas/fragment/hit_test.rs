@@ -20,16 +20,26 @@ impl FragmentTree {
     }
 
     fn recompute_aabb(&mut self, id: FragmentId, parent_transform: Affine) -> Option<Rect> {
-        let (local_bounds, local_transform, children) = {
+        let (local_bounds, paint_outset, local_transform, children) = {
             let node = self.nodes.get(&id)?;
             (
                 node.effective_bounds(),
+                node.paint_outset(),
                 parent_transform * node.local_transform(),
                 node.children.clone(),
             )
         };
 
-        let world_aabb = local_bounds.map(|lb| transform_local_bounds_to_world(lb, local_transform));
+        // Inflate local bounds by paint outset (stroke, shadow, border extend
+        // beyond the content rect) so dirty rects cover the full paint extent.
+        let inflated = local_bounds.map(|lb| {
+            if paint_outset > 0.0 {
+                lb.inflate(paint_outset, paint_outset)
+            } else {
+                lb
+            }
+        });
+        let world_aabb = inflated.map(|lb| transform_local_bounds_to_world(lb, local_transform));
 
         let child_transform = match self.scroll_offsets.get(&id) {
             Some(s) => local_transform * Affine::translate((-s.x, -s.y)),

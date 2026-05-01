@@ -166,6 +166,59 @@ impl FragmentNode {
         }
         None
     }
+
+    /// Extra outset beyond `effective_bounds` caused by stroke, shadow, borders.
+    /// Used to inflate world_aabb so dirty rects cover the full paint extent.
+    pub(crate) fn paint_outset(&self) -> f64 {
+        match &self.kind {
+            FragmentData::Rect(r) => {
+                let mut outset = 0.0_f64;
+                // Stroke outset (half stroke width extends outside path)
+                if r.stroke.is_some() {
+                    let sw = r.stroke_width.max(
+                        r.stroke.as_ref().map_or(0.0, |s| s.width),
+                    );
+                    outset = outset.max(sw / 2.0);
+                }
+                // Per-side borders (each drawn as inset stroke at half width)
+                for b in [&r.border_top, &r.border_right, &r.border_bottom, &r.border_left] {
+                    if let Some(b) = b {
+                        outset = outset.max(b.width / 2.0);
+                    }
+                }
+                // Box shadow (non-inset): offset + blur extent
+                if let Some(shadow) = &r.shadow {
+                    if !shadow.inset {
+                        let sx = shadow.offset_x.abs() + shadow.blur * 2.0;
+                        let sy = shadow.offset_y.abs() + shadow.blur * 2.0;
+                        outset = outset.max(sx.max(sy));
+                    }
+                }
+                outset
+            }
+            FragmentData::Circle(c) => {
+                if c.stroke.is_some() {
+                    let sw = c.stroke_width.max(
+                        c.stroke.as_ref().map_or(0.0, |s| s.width),
+                    );
+                    sw / 2.0
+                } else {
+                    0.0
+                }
+            }
+            FragmentData::Path(p) => {
+                if p.stroke.is_some() {
+                    let sw = p.stroke_width.max(
+                        p.stroke.as_ref().map_or(0.0, |s| s.width),
+                    );
+                    sw / 2.0
+                } else {
+                    0.0
+                }
+            }
+            _ => 0.0,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

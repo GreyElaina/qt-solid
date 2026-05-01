@@ -150,7 +150,10 @@ pub fn fragment_store_set_prop(
                     apply_grid_tracks_to_style(style, key, tracks);
                 });
             }
-            tree.invalidate();
+            tree.any_dirty = true;
+            tree.aabbs_dirty = true;
+            tree.cached_scene = None;
+            tree.invalidate_subtree_cache_for(fragment_id);
             return;
         }
 
@@ -651,9 +654,9 @@ pub fn fragment_store_set_motion_target_keyframes(
     .unwrap_or(false)
 }
 
-pub fn fragment_store_tick_motion(canvas_node_id: u32, now: f64) -> (bool, Vec<FragmentId>) {
+pub fn fragment_store_tick_motion(canvas_node_id: u32, now: f64) -> (bool, Vec<FragmentId>, f64) {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.tick_motion(now))
-        .unwrap_or((false, Vec::new()))
+        .unwrap_or((false, Vec::new(), 0.0))
 }
 
 pub fn fragment_store_get_world_bounds(canvas_node_id: u32, fragment_id: FragmentId) -> Option<Rect> {

@@ -58,6 +58,10 @@ pub struct PromotedLayer {
     pub clip: Option<FragmentClipShape>,
     pub opacity: f32,
     pub blend_mode: BlendMode,
+    /// True when the subtree content changed (needs vello re-rasterization).
+    pub content_dirty: bool,
+    /// True when only pose (transform/opacity) changed (compositor-only update).
+    pub pose_only_dirty: bool,
 }
 
 #[derive(Debug)]

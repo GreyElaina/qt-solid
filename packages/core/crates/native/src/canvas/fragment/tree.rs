@@ -69,6 +69,33 @@ pub struct FragmentTree {
     pub(crate) scroll_offsets: HashMap<FragmentId, Vec2>,
     /// Fragment to highlight (devtools overlay).
     pub(crate) debug_highlight: Option<FragmentId>,
+    /// When true, next frame must do a full clear+render (resize, first frame, clear_all).
+    pub(crate) force_full_repaint: bool,
+    /// Old bounds of invalidated nodes, keyed by FragmentId.
+    /// Stores the world_aabb BEFORE the change so dirty rects cover both
+    /// old and new positions. Multiple invalidations of the same node are
+    /// unioned into one entry.
+    pub(crate) stale_node_bounds: HashMap<FragmentId, Rect>,
+    /// Nodes that have been marked dirty since last frame. Used to compute
+    /// new bounds for dirty rect calculation.
+    pub(crate) dirty_node_ids: HashSet<FragmentId>,
+    /// Dirty clip rects in logical coordinates. Set before paint,
+    /// used by paint_node_culled for subtree culling.
+    pub(crate) dirty_clips: Vec<Rect>,
+}
+
+/// Maximum number of independent dirty rects before falling back to union.
+const MAX_DIRTY_RECTS: usize = 8;
+
+/// Result of dirty rect computation.
+#[derive(Debug)]
+pub enum DirtyRectResult {
+    /// Full repaint required (first frame, resize, clear_all).
+    FullRepaint,
+    /// Nothing is dirty — no render needed (noop blit).
+    NothingDirty,
+    /// Partial update — list of dirty rects in device pixels (x, y, w, h).
+    Partial(Vec<(u32, u32, u32, u32)>),
 }
 
 impl Default for FragmentTree {
@@ -97,6 +124,10 @@ impl Default for FragmentTree {
             last_layout_size: None,
             scroll_offsets: HashMap::new(),
             debug_highlight: None,
+            force_full_repaint: true,
+            stale_node_bounds: HashMap::new(),
+            dirty_node_ids: HashSet::new(),
+            dirty_clips: Vec::new(),
         }
     }
 }
@@ -174,7 +205,10 @@ impl FragmentTree {
                 listeners: FragmentListeners::empty(),
             },
         );
-        self.invalidate();
+        // Node not yet attached to a parent — just mark global dirty.
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
         id
     }
 
@@ -190,7 +224,10 @@ impl FragmentTree {
             }
             None => self.root_children.push(id),
         }
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
+        self.invalidate_subtree_cache_for(id);
     }
 
     /// Insert `child` into `parent`'s children list. If `before` is `Some`,
@@ -220,13 +257,19 @@ impl FragmentTree {
             if let Some(pos) = children.iter().position(|id| *id == anchor) {
                 children.insert(pos, child);
                 self.sync_taffy_children(parent);
-                self.invalidate();
+                self.any_dirty = true;
+                self.aabbs_dirty = true;
+                self.cached_scene = None;
+                self.invalidate_subtree_cache_for(child);
                 return;
             }
         }
         children.push(child);
         self.sync_taffy_children(parent);
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
+        self.invalidate_subtree_cache_for(child);
     }
 
     /// Sync taffy tree children for a given parent (or root).
@@ -254,6 +297,9 @@ impl FragmentTree {
 
     /// Remove `child` from `parent`'s children list without destroying it.
     pub fn detach_child(&mut self, parent: Option<FragmentId>, child: FragmentId) {
+        // Invalidate BEFORE detaching — root_child_ancestor needs the parent chain.
+        self.invalidate_subtree_cache_for(child);
+
         let children = match parent {
             Some(parent_id) => {
                 let Some(parent_node) = self.nodes.get_mut(&parent_id) else {
@@ -269,10 +315,15 @@ impl FragmentTree {
             child_node.parent = None;
         }
         self.sync_taffy_children(parent);
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
     }
 
     pub fn remove(&mut self, id: FragmentId) {
+        // Invalidate BEFORE removing — root_child_ancestor needs the parent chain.
+        self.invalidate_subtree_cache_for(id);
+
         if let Some(parent_id) = self.nodes.get(&id).and_then(|n| n.parent) {
             if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
                 parent_node.children.retain(|child| *child != id);
@@ -302,7 +353,9 @@ impl FragmentTree {
                 }
             }
         }
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
     }
 
     pub fn node(&self, id: FragmentId) -> Option<&FragmentNode> {
@@ -361,7 +414,21 @@ impl FragmentTree {
     }
 
     /// Invalidate the subtree scene cache for the root child that contains `id`.
+    /// Also captures the node's old world_aabb for dirty rect calculation.
+    /// Stale bounds are NOT clipped — they represent pixels that need clearing
+    /// regardless of clip ancestor visibility.
     pub(crate) fn invalidate_subtree_cache_for(&mut self, id: FragmentId) {
+        // Capture old bounds unclipped — these pixels exist on base_texture.
+        if let Some(node) = self.nodes.get(&id) {
+            if let Some(aabb) = node.world_aabb {
+                self.stale_node_bounds
+                    .entry(id)
+                    .and_modify(|existing| *existing = existing.union(aabb))
+                    .or_insert(aabb);
+            }
+        }
+        self.dirty_node_ids.insert(id);
+
         if let Some(rc) = self.root_child_ancestor(id) {
             self.dirty_root_children.insert(rc);
             self.subtree_scene_cache.remove(&rc);
@@ -377,18 +444,12 @@ impl FragmentTree {
         self.invalidate_subtree_cache_for(id);
     }
 
-    pub(crate) fn invalidate(&mut self) {
-        self.any_dirty = true;
-        self.aabbs_dirty = true;
-        self.cached_scene = None;
-        self.subtree_scene_cache.clear();
-        self.dirty_root_children.clear();
-    }
-
     pub fn set_debug_highlight(&mut self, id: Option<FragmentId>) {
         if self.debug_highlight != id {
             self.debug_highlight = id;
-            self.invalidate();
+            // Debug overlay is cosmetic — just force scene rebuild, not full repaint.
+            self.any_dirty = true;
+            self.cached_scene = None;
         }
     }
 
@@ -616,7 +677,10 @@ impl FragmentTree {
             timeline.gc_completed();
         }
         node.timeline = Some(timeline);
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
+        self.invalidate_subtree_cache_for(id);
         animating
     }
 
@@ -641,17 +705,21 @@ impl FragmentTree {
             timeline.gc_completed();
         }
         node.timeline = Some(timeline);
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
+        self.invalidate_subtree_cache_for(id);
         animating
     }
 
-    /// Tick all fragment timelines. Returns (still_animating, completed_fragment_ids).
-    pub fn tick_motion(&mut self, now: f64) -> (bool, Vec<FragmentId>) {
+    /// Tick all fragment timelines. Returns (still_animating, completed_fragment_ids, max_visual_velocity).
+    pub fn tick_motion(&mut self, now: f64) -> (bool, Vec<FragmentId>, f64) {
         let ids: Vec<FragmentId> = self.nodes.keys().copied().collect();
         let mut any_animating = false;
         let mut completed = Vec::new();
         let mut any_non_promoted_sampled = false;
         let mut scroll_updates: Vec<(FragmentId, Vec2)> = Vec::new();
+        let mut max_velocity = 0.0f64;
         for id in ids {
             let Some(node) = self.nodes.get_mut(&id) else {
                 continue;
@@ -666,6 +734,10 @@ impl FragmentTree {
             let is_promoted = node.promoted;
             let (sampled, animating) = timeline.sample_pose(now);
             apply_sampled_pose_to_fragment(node, &sampled, &timeline);
+            let vel = timeline.max_visual_velocity();
+            if vel > max_velocity {
+                max_velocity = vel;
+            }
             if sampled.scroll_x.abs() > 0.01 || sampled.scroll_y.abs() > 0.01 {
                 scroll_updates.push((id, Vec2::new(sampled.scroll_x, sampled.scroll_y)));
             }
@@ -688,11 +760,21 @@ impl FragmentTree {
             }
         }
         if any_non_promoted_sampled {
-            self.invalidate();
+            // Collect animated non-promoted IDs for targeted cache invalidation.
+            let animated_ids: Vec<FragmentId> = self.nodes.values()
+                .filter(|n| n.timeline.as_ref().map_or(false, |t| t.is_animating()) && !n.promoted)
+                .map(|n| n.id)
+                .collect();
+            self.any_dirty = true;
+            self.aabbs_dirty = true;
+            self.cached_scene = None;
+            for aid in animated_ids {
+                self.invalidate_subtree_cache_for(aid);
+            }
         } else if any_animating {
             self.aabbs_dirty = true;
         }
-        (any_animating, completed)
+        (any_animating, completed, max_velocity)
     }
 
     // -----------------------------------------------------------------------
@@ -720,7 +802,10 @@ impl FragmentTree {
             if let Some(node) = self.nodes.get_mut(&id) {
                 node.dirty = true;
             }
-            self.invalidate();
+            self.any_dirty = true;
+            self.aabbs_dirty = true;
+            self.cached_scene = None;
+            self.invalidate_subtree_cache_for(id);
         }
     }
 
@@ -749,7 +834,10 @@ impl FragmentTree {
         } else {
             self.scroll_offsets.insert(id, offset);
         }
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
+        self.invalidate_subtree_cache_for(id);
     }
 
     /// Release scroll: retarget ScrollX/Y to clamped values using spring transition.
@@ -785,7 +873,10 @@ impl FragmentTree {
         } else {
             self.scroll_offsets.insert(id, offset);
         }
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
+        self.invalidate_subtree_cache_for(id);
         animating
     }
 
@@ -838,7 +929,10 @@ impl FragmentTree {
             timeline.gc_completed();
         }
         node.timeline = Some(timeline);
-        self.invalidate();
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.cached_scene = None;
+        self.invalidate_subtree_cache_for(id);
         animating
     }
 
