@@ -576,7 +576,7 @@ pub(crate) fn qt_text_edit_sync(
     // Request repaint.
     if let Ok(generation) = crate::runtime::current_app_generation() {
         if let Ok(node) = crate::runtime::node_by_id(generation, canvas_node_id) {
-            let _ = crate::runtime::request_repaint_exact(&node);
+            let _ = crate::runtime::request_repaint(&node);
         }
     }
 }
@@ -591,7 +591,7 @@ pub(crate) fn qt_text_edit_set_caret_visible(
 
     if let Ok(generation) = crate::runtime::current_app_generation() {
         if let Ok(node) = crate::runtime::node_by_id(generation, canvas_node_id) {
-            let _ = crate::runtime::request_repaint_exact(&node);
+            let _ = crate::runtime::request_repaint(&node);
         }
     }
 }

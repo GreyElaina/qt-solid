@@ -875,26 +875,13 @@ pub(crate) fn destroy_node(node: &impl NodeHandle) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn request_repaint_exact(node: &impl NodeHandle) -> Result<()> {
+pub(crate) fn request_repaint(node: &impl NodeHandle) -> Result<()> {
     ensure_live_node(node)?;
     if let Some(window_id) =
         window_compositor::window_ancestor_id_for_node(node.inner().generation, node.inner().id)?
     {
         window_compositor::qt_mark_window_compositor_pixels_dirty(window_id, node.inner().id);
     }
-    qt::qt_request_repaint(node.inner().id).map_err(|error| qt_error(error.what().to_owned()))
-}
-
-pub(crate) fn request_repaint_with_compositor_frame(node: &impl NodeHandle) -> Result<()> {
-    ensure_live_node(node)?;
-    if let Some(window_id) =
-        window_compositor::window_ancestor_id_for_node(node.inner().generation, node.inner().id)?
-    {
-        window_compositor::qt_mark_window_compositor_pixels_dirty(window_id, node.inner().id);
-    }
-    // Request a compositor frame to ensure macOS display-link driven rendering
-    // actually picks up the dirty state; widget->update() alone only queues a
-    // QPaintEvent which on macOS does not trigger a frame tick.
     let _ = qt::qt_request_window_compositor_frame(node.inner().id);
     qt::qt_request_repaint(node.inner().id).map_err(|error| qt_error(error.what().to_owned()))
 }

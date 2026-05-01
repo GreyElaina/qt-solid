@@ -542,7 +542,7 @@ impl QtNode {
 
     #[napi(js_name = "requestRepaint")]
     pub fn qt_solid_request_repaint(&self) -> Result<()> {
-        runtime::request_repaint_exact(self)
+        runtime::request_repaint(self)
     }
 
     #[napi(js_name = "requestNextFrame")]
@@ -1375,9 +1375,7 @@ pub fn canvas_fragment_clear_image(
 pub fn canvas_fragment_request_repaint(canvas_node_id: u32) -> Result<()> {
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
-    // Mark compositor dirty and request a compositor frame so macOS display-link
-    // driven rendering picks up the change (widget->update() alone is not enough).
-    runtime::request_repaint_with_compositor_frame(&node)
+    runtime::request_repaint(&node)
 }
 
 #[napi_derive::napi(js_name = "canvasFragmentSetDebugHighlight")]
@@ -1391,7 +1389,7 @@ pub fn canvas_fragment_set_debug_highlight(
     );
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
-    runtime::request_repaint_with_compositor_frame(&node)
+    runtime::request_repaint(&node)
 }
 
 #[napi_derive::napi(js_name = "canvasFragmentComputeLayout")]
@@ -1403,7 +1401,7 @@ pub fn canvas_fragment_compute_layout(
     fragment_store::fragment_store_compute_layout(canvas_node_id, available_width, available_height);
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
-    runtime::request_repaint_exact(&node)
+    runtime::request_repaint(&node)
 }
 
 #[napi_derive::napi(js_name = "canvasFragmentSetListener")]
@@ -1467,11 +1465,7 @@ pub fn canvas_fragment_set_motion_target(
     };
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
-    if animating {
-        runtime::request_repaint_with_compositor_frame(&node)?;
-    } else {
-        runtime::request_repaint_exact(&node)?;
-    }
+    runtime::request_repaint(&node)?;
     Ok(animating)
 }
 
@@ -1515,7 +1509,7 @@ pub fn canvas_fragment_set_scroll_offset(
     );
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
-    runtime::request_repaint_with_compositor_frame(&node)
+    runtime::request_repaint(&node)
 }
 
 #[napi_derive::napi(js_name = "canvasFragmentScrollDrive")]
@@ -1535,7 +1529,7 @@ pub fn canvas_fragment_scroll_drive(
     );
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
-    runtime::request_repaint_with_compositor_frame(&node)
+    runtime::request_repaint(&node)
 }
 
 #[napi_derive::napi(js_name = "canvasFragmentScrollRelease")]
@@ -1567,7 +1561,7 @@ pub fn canvas_fragment_scroll_release(
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
     if animating {
-        runtime::request_repaint_with_compositor_frame(&node)?;
+        runtime::request_repaint(&node)?;
     }
     Ok(animating)
 }
@@ -1610,7 +1604,7 @@ pub fn canvas_fragment_set_layout_flip(
     );
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
-    runtime::request_repaint_exact(&node)?;
+    runtime::request_repaint(&node)?;
     Ok(animating)
 }
 
