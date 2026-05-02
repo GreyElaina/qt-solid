@@ -1,151 +1,3 @@
-bool qt_wgpu_timing_enabled() {
-  static const bool enabled = qEnvironmentVariableIsSet("QT_SOLID_WGPU_TIMING");
-  return enabled;
-}
-
-struct QtWgpuWakeStats {
-  std::atomic<std::uint64_t> request_qt_pump_calls{0};
-  std::atomic<std::uint64_t> libuv_request_pump_calls{0};
-  std::atomic<std::uint64_t> libuv_pump_events{0};
-  std::atomic<std::uint64_t> libuv_zero_timeout_pumps{0};
-  std::atomic<std::uint64_t> compositor_present_completions{0};
-  std::atomic<std::uint64_t> compositor_frame_requests{0};
-  std::atomic<std::uint64_t> compositor_frame_posts{0};
-  std::atomic<std::uint64_t> compositor_frame_runs{0};
-  std::atomic<std::uint64_t> compositor_frame_presented{0};
-  std::atomic<std::uint64_t> compositor_frame_busy{0};
-  std::atomic<std::uint64_t> compositor_frame_idle{0};
-  std::atomic<std::uint64_t> compositor_frame_needs_qt_repaint{0};
-  std::atomic<std::uint64_t> last_logged_frame_runs{0};
-};
-
-QtWgpuWakeStats &qt_wgpu_wake_stats() {
-  static QtWgpuWakeStats stats;
-  return stats;
-}
-
-void maybe_log_qt_wgpu_wake_stats() {
-  if (!qt_wgpu_timing_enabled()) {
-    return;
-  }
-
-  auto &stats = qt_wgpu_wake_stats();
-  const std::uint64_t frame_runs =
-      stats.compositor_frame_runs.load(std::memory_order_relaxed);
-  if (frame_runs == 0 || frame_runs % 240 != 0) {
-    return;
-  }
-
-  std::uint64_t last_logged =
-      stats.last_logged_frame_runs.load(std::memory_order_relaxed);
-  while (last_logged < frame_runs) {
-    if (stats.last_logged_frame_runs.compare_exchange_weak(
-            last_logged, frame_runs, std::memory_order_relaxed,
-            std::memory_order_relaxed)) {
-      std::fprintf(
-          stderr,
-          "qt-wgpu wake request_qt_pump=%llu libuv_request_pump=%llu libuv_pump_events=%llu libuv_zero_timeout=%llu present_completions=%llu frame_requests=%llu frame_posts=%llu frame_runs=%llu presented=%llu busy=%llu idle=%llu repaint=%llu\n",
-          static_cast<unsigned long long>(
-              stats.request_qt_pump_calls.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              stats.libuv_request_pump_calls.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              stats.libuv_pump_events.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              stats.libuv_zero_timeout_pumps.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(stats.compositor_present_completions.load(
-              std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              stats.compositor_frame_requests.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              stats.compositor_frame_posts.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(frame_runs),
-          static_cast<unsigned long long>(stats.compositor_frame_presented.load(
-              std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              stats.compositor_frame_busy.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(
-              stats.compositor_frame_idle.load(std::memory_order_relaxed)),
-          static_cast<unsigned long long>(stats.compositor_frame_needs_qt_repaint.load(
-              std::memory_order_relaxed)));
-      return;
-    }
-  }
-}
-
-void record_request_qt_pump() {
-  qt_wgpu_wake_stats().request_qt_pump_calls.fetch_add(1, std::memory_order_relaxed);
-  maybe_log_qt_wgpu_wake_stats();
-}
-
-void record_libuv_request_pump() {
-  qt_wgpu_wake_stats().libuv_request_pump_calls.fetch_add(1, std::memory_order_relaxed);
-  maybe_log_qt_wgpu_wake_stats();
-}
-
-void record_libuv_pump_events(bool zero_timeout_pumped) {
-  auto &stats = qt_wgpu_wake_stats();
-  stats.libuv_pump_events.fetch_add(1, std::memory_order_relaxed);
-  if (zero_timeout_pumped) {
-    stats.libuv_zero_timeout_pumps.fetch_add(1, std::memory_order_relaxed);
-  }
-  maybe_log_qt_wgpu_wake_stats();
-}
-
-void record_compositor_present_complete() {
-  qt_wgpu_wake_stats().compositor_present_completions.fetch_add(
-      1, std::memory_order_relaxed);
-  maybe_log_qt_wgpu_wake_stats();
-}
-
-void record_compositor_frame_request() {
-  qt_wgpu_wake_stats().compositor_frame_requests.fetch_add(
-      1, std::memory_order_relaxed);
-  maybe_log_qt_wgpu_wake_stats();
-}
-
-void record_compositor_frame_post() {
-  qt_wgpu_wake_stats().compositor_frame_posts.fetch_add(1, std::memory_order_relaxed);
-  maybe_log_qt_wgpu_wake_stats();
-}
-
-void record_compositor_frame_status(
-    qt_wgpu_renderer::UnifiedCompositorDriveStatus status) {
-  auto &stats = qt_wgpu_wake_stats();
-  stats.compositor_frame_runs.fetch_add(1, std::memory_order_relaxed);
-  switch (status) {
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Presented:
-    stats.compositor_frame_presented.fetch_add(1, std::memory_order_relaxed);
-    break;
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Busy:
-    stats.compositor_frame_busy.fetch_add(1, std::memory_order_relaxed);
-    break;
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Idle:
-    stats.compositor_frame_idle.fetch_add(1, std::memory_order_relaxed);
-    break;
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::NeedsQtRepaint:
-    stats.compositor_frame_needs_qt_repaint.fetch_add(1, std::memory_order_relaxed);
-    break;
-  }
-  maybe_log_qt_wgpu_wake_stats();
-}
-
-static bool qt_solid_wgpu_trace_enabled() {
-  static const bool enabled = qEnvironmentVariableIsSet("QT_SOLID_WGPU_TRACE");
-  return enabled;
-}
-
-template <typename... Args>
-static void qt_solid_wgpu_trace(const char *fmt, Args... args) {
-  if (!qt_solid_wgpu_trace_enabled()) {
-    return;
-  }
-  std::fprintf(stdout, "[qt-host] ");
-  std::fprintf(stdout, fmt, args...);
-  std::fprintf(stdout, "\n");
-  std::fflush(stdout);
-}
-
 class LibuvQtPump final {
 public:
   explicit LibuvQtPump(uv_loop_t *loop) : loop_(loop) {
@@ -154,17 +6,16 @@ public:
     }
 
     supports_zero_timeout_pump_ =
-        qt_solid_spike::qt::window_host_supports_zero_timeout_pump();
+        window_host_supports_zero_timeout_pump();
     supports_external_wake_ =
-        qt_solid_spike::qt::window_host_supports_external_wake();
-    wait_bridge_kind_ = wait_bridge_kind_from_tag(
-        qt_solid_spike::qt::window_host_wait_bridge_kind_tag());
+        window_host_supports_external_wake();
+    wait_bridge_kind_ = qt_runtime_wait_bridge_kind_impl();
     if (wait_bridge_kind_ == WaitBridgeKind::UnixFd) {
       wait_bridge_unix_fd_ =
-          qt_solid_spike::qt::window_host_wait_bridge_unix_fd();
+          qt_runtime_wait_bridge_unix_fd_impl();
     } else if (wait_bridge_kind_ == WaitBridgeKind::WindowsHandle) {
       wait_bridge_windows_handle_ =
-          qt_solid_spike::qt::window_host_wait_bridge_windows_handle();
+          window_host_wait_bridge_windows_handle();
     }
     driver_mode_ = select_driver_mode();
 
@@ -323,14 +174,12 @@ public:
 
     pumping_ = true;
     drain_runtime_wait_bridge_notifications();
-    bool zero_timeout_pumped = false;
 #if !defined(__APPLE__)
     // On macOS, native source dispatch (display-link, AppKit events) is
     // handled by CFRunLoopRunInMode in the uv_prepare callback. Other
     // platforms still need the Rust-side pump.
     if (supports_zero_timeout_pump_) {
-      qt_solid_spike::qt::window_host_pump_zero_timeout();
-      zero_timeout_pumped = true;
+      window_host_pump_zero_timeout();
     }
 #endif
 
@@ -347,7 +196,6 @@ public:
       }
     }
     pumping_ = false;
-    record_libuv_pump_events(zero_timeout_pumped);
 
 #if defined(Q_OS_WIN)
     if (!shutdown_requested_.load()) {
@@ -367,9 +215,8 @@ public:
                    issue_external_wake ? 1 : 0);
       std::fflush(stdout);
     }
-    record_libuv_request_pump();
     if (issue_external_wake && supports_external_wake_) {
-      qt_solid_spike::qt::window_host_request_wake();
+      window_host_request_wake();
     }
 
     const int status = uv_async_send(&async_);

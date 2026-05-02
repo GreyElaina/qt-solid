@@ -5,7 +5,7 @@ members = [
 
     "packages/core/crates/qt-compositor",
     "packages/core/crates/motion",
-    "packages/core/macros/fragment-derive",
+    "packages/core/macros/fragment-derive", "packages/core/crates/qt-host",
 ]
 resolver = "2"
 

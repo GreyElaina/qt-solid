@@ -4,8 +4,8 @@ std::uint32_t qt_show_open_file_dialog(std::uint32_t window_id, rust::Str title,
   std::uint32_t request_id = next_dialog_request_id.fetch_add(1);
 
   QWidget *parent = nullptr;
-  if (window_id != 0 && g_host && g_host->started()) {
-    parent = g_host->registry().widget_ptr(window_id);
+  if (window_id != 0 && qt_solid::host::qt_host_started_impl()) {
+    parent = g_registry->widget_ptr(window_id);
   }
 
   QString qtitle = QString::fromUtf8(title.data(), static_cast<int>(title.size()));
@@ -36,8 +36,8 @@ std::uint32_t qt_show_save_file_dialog(std::uint32_t window_id, rust::Str title,
   std::uint32_t request_id = next_dialog_request_id.fetch_add(1);
 
   QWidget *parent = nullptr;
-  if (window_id != 0 && g_host && g_host->started()) {
-    parent = g_host->registry().widget_ptr(window_id);
+  if (window_id != 0 && qt_solid::host::qt_host_started_impl()) {
+    parent = g_registry->widget_ptr(window_id);
   }
 
   QString qtitle = QString::fromUtf8(title.data(), static_cast<int>(title.size()));

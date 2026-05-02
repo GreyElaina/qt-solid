@@ -2,7 +2,7 @@
 
 #include <memory>
 
-namespace qt_solid_spike::qt {
+namespace qt_solid::host {
 
 class MacosEventBufferBridge final {
 public:
@@ -22,4 +22,4 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-} // namespace qt_solid_spike::qt
+} // namespace qt_solid::host

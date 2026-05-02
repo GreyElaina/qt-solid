@@ -347,7 +347,7 @@ int qt_runtime_wait_bridge_unix_fd_impl() {
 
 std::uint64_t qt_runtime_wait_bridge_windows_handle_impl() {
 #if defined(Q_OS_WIN)
-  return qt_solid_spike::qt::window_host_wait_bridge_windows_handle();
+  return window_host_wait_bridge_windows_handle();
 #else
   return 0;
 #endif

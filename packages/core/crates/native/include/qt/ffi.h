@@ -22,10 +22,8 @@ struct QtScreenDpiInfo;
 struct QtTextMeasurement;
 
 bool qt_host_started();
-std::uint8_t qt_runtime_wait_bridge_kind_tag();
-std::int32_t qt_runtime_wait_bridge_unix_fd();
-void start_qt_host(std::uintptr_t uv_loop_ptr);
-void shutdown_qt_host();
+void qt_host_start(std::uintptr_t uv_loop_ptr);
+void qt_host_shutdown();
 void qt_create_widget(std::uint32_t id, std::uint8_t kind_tag);
 void qt_insert_child(std::uint32_t parent_id, std::uint32_t child_id,
                      std::uint32_t anchor_id_or_zero);

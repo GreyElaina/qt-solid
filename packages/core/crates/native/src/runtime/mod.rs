@@ -22,7 +22,7 @@ use self::capture::WidgetCapture;
 use self::tree::NodeTree;
 use self::types::NodeKind;
 #[rustfmt::skip]
-use ::window_host::HostCapabilities as RawWindowHostCapabilities;
+use qt_host::HostCapabilities as RawWindowHostCapabilities;
 
 use crate::{
     api::{
@@ -33,7 +33,6 @@ use crate::{
     qt::{self, QtRealizedNodeState},
     trace,
     window_compositor::{self, CompositorState},
-    window_host,
 };
 
 pub(crate) const ROOT_NODE_ID: u32 = 1;
@@ -476,10 +475,9 @@ pub(crate) fn start_app(
     let callback_ref = on_event.create_ref()?;
     let callback_tsfn = on_event.build_threadsafe_function().build()?;
 
-    window_host::start()?;
+    qt_host::start().map_err(|e| qt_error(e.to_string()))?;
 
-    if let Err(error) = qt::start_qt_host(env.get_uv_event_loop()? as usize) {
-        window_host::stop();
+    if let Err(error) = qt::qt_host_start(env.get_uv_event_loop()? as usize) {
         return Err(qt_error(error.what().to_owned()));
     }
 
@@ -504,9 +502,7 @@ fn finish_shutdown_runtime_state() {
 }
 
 fn shutdown_host_now() -> Result<()> {
-    qt::shutdown_qt_host().map_err(|error| qt_error(error.what().to_owned()))?;
-    window_host::stop();
-    Ok(())
+    qt::qt_host_shutdown().map_err(|error| qt_error(error.what().to_owned()))
 }
 
 pub(crate) fn shutdown_app(generation: u64) -> Result<()> {
@@ -596,19 +592,19 @@ fn api_window_host_capabilities(
 }
 
 fn current_window_host_backend_name() -> String {
-    crate::window_host::backend_name().unwrap_or_else(crate::window_host::detected_backend_name)
+    qt_host::backend_name().unwrap_or_else(qt_host::detected_backend_name)
 }
 
 fn current_window_host_capabilities() -> QtWindowHostCapabilities {
     api_window_host_capabilities(
-        crate::window_host::capabilities()
-            .unwrap_or_else(crate::window_host::detected_capabilities),
+        qt_host::capabilities()
+            .unwrap_or_else(qt_host::detected_capabilities),
     )
 }
 
 pub(crate) fn window_host_info() -> QtWindowHostInfo {
     QtWindowHostInfo {
-        enabled: window_host::enabled(),
+        enabled: true,
         backend_name: current_window_host_backend_name(),
         capabilities: current_window_host_capabilities(),
     }

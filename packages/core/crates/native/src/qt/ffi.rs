@@ -298,23 +298,14 @@ pub(crate) mod bridge {
         fn qt_window_motion_hit_root_ids(window_id: u32) -> Result<Vec<u32>>;
         fn next_trace_id() -> u64;
         fn trace_cpp_stage(trace_id: u64, stage: &str, node_id: u32, prop_id: u16, detail: &str);
-        fn window_host_supports_zero_timeout_pump() -> bool;
-        fn window_host_supports_external_wake() -> bool;
-        fn window_host_wait_bridge_kind_tag() -> u8;
-        fn window_host_wait_bridge_unix_fd() -> i32;
-        fn window_host_wait_bridge_windows_handle() -> u64;
-        fn window_host_pump_zero_timeout() -> bool;
-        fn window_host_request_wake();
     }
 
     unsafe extern "C++" {
         include!("qt/ffi.h");
 
         fn qt_host_started() -> bool;
-        fn qt_runtime_wait_bridge_kind_tag() -> u8;
-        fn qt_runtime_wait_bridge_unix_fd() -> i32;
-        fn start_qt_host(uv_loop_ptr: usize) -> Result<()>;
-        fn shutdown_qt_host() -> Result<()>;
+        fn qt_host_start(uv_loop_ptr: usize) -> Result<()>;
+        fn qt_host_shutdown() -> Result<()>;
         fn qt_create_widget(id: u32, kind_tag: u8) -> Result<()>;
         fn qt_insert_child(parent_id: u32, child_id: u32, anchor_id_or_zero: u32) -> Result<()>;
         fn qt_remove_child(parent_id: u32, child_id: u32) -> Result<()>;
@@ -432,9 +423,8 @@ pub(crate) use bridge::{
     qt_capture_widget_visible_rects, qt_create_widget,
     qt_debug_node_state, qt_destroy_widget, qt_host_started, qt_insert_child,
     qt_remove_child,
-    qt_request_repaint, qt_request_window_compositor_frame, qt_runtime_wait_bridge_kind_tag,
-    qt_runtime_wait_bridge_unix_fd, schedule_debug_event,
-    shutdown_qt_host, start_qt_host, trace_now_ns,
+    qt_request_repaint, qt_request_window_compositor_frame, schedule_debug_event,
+    qt_host_shutdown, qt_host_start, trace_now_ns,
     qt_clipboard_get_text, qt_clipboard_set_text, qt_clipboard_has_text,
     qt_clipboard_formats, qt_clipboard_get, qt_clipboard_clear,
     qt_clipboard_set, QtClipboardEntry,
@@ -893,32 +883,4 @@ pub(crate) fn trace_cpp_stage(
     detail: &str,
 ) {
     super::runtime::trace_cpp_stage(trace_id, stage, node_id, prop_id, detail);
-}
-
-pub(crate) fn window_host_pump_zero_timeout() -> bool {
-    super::ffi_host::window_host_pump_zero_timeout()
-}
-
-pub(crate) fn window_host_supports_zero_timeout_pump() -> bool {
-    super::ffi_host::window_host_supports_zero_timeout_pump()
-}
-
-pub(crate) fn window_host_supports_external_wake() -> bool {
-    super::ffi_host::window_host_supports_external_wake()
-}
-
-pub(crate) fn window_host_wait_bridge_kind_tag() -> u8 {
-    super::ffi_host::window_host_wait_bridge_kind_tag()
-}
-
-pub(crate) fn window_host_wait_bridge_unix_fd() -> i32 {
-    super::ffi_host::window_host_wait_bridge_unix_fd()
-}
-
-pub(crate) fn window_host_wait_bridge_windows_handle() -> u64 {
-    super::ffi_host::window_host_wait_bridge_windows_handle()
-}
-
-pub(crate) fn window_host_request_wake() {
-    super::ffi_host::window_host_request_wake();
 }

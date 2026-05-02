@@ -3,11 +3,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "build/qt_wgpu_renderer.rs"]
-mod qt_wgpu_renderer;
-#[path = "build/qt_taffy_layout.rs"]
-mod qt_taffy_layout;
-
 use qt_build_utils::QtBuild;
 
 fn add_include_if_exists(build: &mut cc::Build, path: impl AsRef<Path>) {
@@ -43,7 +38,7 @@ fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
         }
     }
 
-    // Add mkspecs include dir for qplatformdefs.h (needed by QWidgetLineControl).
+    // mkspecs include dir for qplatformdefs.h
     if let Ok(output) = std::process::Command::new(
         env::var("QMAKE").unwrap_or_else(|_| "qmake".to_string()),
     )
@@ -71,65 +66,16 @@ fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
     include_dirs
 }
 
-fn find_qt_gui_rhi_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
-    let qt_version = qt_build.version().to_string();
-    let mut include_dirs = Vec::new();
-
-    for include_path in qt_build.include_paths() {
-        let candidate = include_path.join(&qt_version).join("QtGui");
-        if candidate.join("rhi/qrhi.h").exists() {
-            include_dirs.push(candidate);
-        }
-    }
-
-    include_dirs.sort();
-    include_dirs.dedup();
-    include_dirs
-}
-
-fn assert_supported_macos_qt_version(qt_build: &QtBuild) {
-    let version = qt_build.version();
-    let supported = version.major == 6 && version.minor == 10;
-    assert!(
-        supported,
-        "macOS native build requires Qt 6.10.x for Cocoa dispatcher private shim; found {}",
-        version
-    );
-}
-
 fn main() {
-    let qt_wgpu_renderer = qt_wgpu_renderer::spec();
-    let qt_taffy_layout = qt_taffy_layout::spec();
-
-    println!("cargo:rerun-if-changed=build/qt_wgpu_renderer.rs");
-    println!("cargo:rerun-if-changed=include/qt/widget_host.h");
-    println!("cargo:rerun-if-changed=include/qt/ffi.h");
-
-    println!("cargo:rerun-if-changed=src/qt/cpp/ffi.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/util.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/inspector.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/text.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/window/text_edit.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/window/widget.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/window/input.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/window/compositor.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/widget_tree/layout.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/widget_tree/mouse.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/widget_tree/tree.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/platform/clipboard.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/platform/file_dialogs.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/platform/appearance.cpp");
-    println!("cargo:rerun-if-changed=src/qt/ffi.rs");
-
-    println!("cargo:rerun-if-changed=src/qt/runtime.rs");
-    println!("cargo:rerun-if-changed=src/qt/mod.rs");
-    println!("cargo:rerun-if-changed=src/layout/ffi.rs");
-    println!("cargo:rerun-if-changed=src/layout/registry_ffi.rs");
-
-
-    qt_wgpu_renderer.emit_rerun_if_changed();
-    qt_taffy_layout.emit_rerun_if_changed();
-    napi_build::setup();
+    println!("cargo:rerun-if-changed=src/ffi.rs");
+    println!("cargo:rerun-if-changed=src/cpp/host/host.cpp");
+    println!("cargo:rerun-if-changed=src/cpp/host/uv.cpp");
+    println!("cargo:rerun-if-changed=src/cpp/host/wait_bridge.cpp");
+    println!("cargo:rerun-if-changed=src/cpp/host/state.cpp");
+    println!("cargo:rerun-if-changed=src/cpp/macos/event_buffer.mm");
+    println!("cargo:rerun-if-changed=include/qt_host/host.h");
+    println!("cargo:rerun-if-changed=include/qt_host/macos/event_buffer.h");
+    println!("cargo:rerun-if-changed=include/qt_host/macos/cocoa_dispatcher_shim.h");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
 
@@ -142,19 +88,17 @@ fn main() {
 
     let qt_include_dirs = qt_build.include_paths();
     let qt_private_include_dirs = find_qt_private_include_dirs(&qt_build);
-    let qt_gui_rhi_include_dirs = find_qt_gui_rhi_include_dirs(&qt_build);
+
+    let mut build = cxx_build::bridge("src/ffi.rs");
+    // host.cpp is an amalgam translation unit that #includes uv.cpp, wait_bridge.cpp,
+    // and state.cpp. Those files are NOT separate compilation units.
+    build.file("src/cpp/host/host.cpp");
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        assert_supported_macos_qt_version(&qt_build);
-    }
-
-    let mut build = cxx_build::bridges(["src/qt/ffi.rs", "src/layout/ffi.rs", "src/layout/registry_ffi.rs"]);
-    build.file("src/qt/cpp/ffi.cpp");
-    qt_wgpu_renderer.add_cpp_sources(&mut build);
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        qt_wgpu_renderer.add_objc_sources(&mut build);
+        build.file("src/cpp/macos/event_buffer.mm");
         build.flag_if_supported("-fblocks");
     }
+
     let windows_msvc = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
     if windows_msvc {
@@ -167,25 +111,16 @@ fn main() {
         build.std("c++17");
     }
 
+    // Include dirs: qt-host's own include dir + vendored libuv headers
     add_include_if_exists(&mut build, "include");
-    // qt-host crate headers (qt_host/host.h)
-    add_include_if_exists(&mut build, "../qt-host/include");
-    qt_wgpu_renderer.add_include_dirs(&mut build);
-    qt_taffy_layout.add_include_dirs(&mut build);
     add_include_if_exists(&mut build, &out_dir);
-
-    // Vendored libuv headers (compile-time only; symbols resolved dynamically at runtime).
+    // Vendored libuv headers (compile-time only; symbols resolved at runtime)
     add_include_if_exists(&mut build, "../../../../third_party/libuv-include");
 
     for include_dir in qt_include_dirs {
         add_include_if_exists(&mut build, include_dir);
     }
-
     for include_dir in qt_private_include_dirs {
-        add_include_if_exists(&mut build, include_dir);
-    }
-
-    for include_dir in qt_gui_rhi_include_dirs {
         add_include_if_exists(&mut build, include_dir);
     }
 
@@ -194,8 +129,9 @@ fn main() {
     }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
+        println!("cargo:rustc-link-lib=framework=QuartzCore");
     }
 
     qt_build.cargo_link_libraries(&mut build);
-    build.compile("qt-solid-native");
+    build.compile("qt-host-cpp");
 }

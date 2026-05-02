@@ -2,6 +2,7 @@
 #include "qt_wgpu_platform.h"
 #include "native/src/qt/ffi.rs.h"
 #include "qt/widget_host.h"
+#include "qt_host/host.h"
 
 #include <array>
 #include <cstring>
@@ -82,9 +83,7 @@
 #endif
 
 #if defined(Q_OS_MACOS)
-#include "qt/macos/event_buffer.h"
 #include "qt/macos/display_link.h"
-#include "qt/macos/cocoa_dispatcher_shim.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <pthread.h>
 #endif
@@ -114,9 +113,29 @@
 namespace qt_solid_spike::qt {
 namespace {
 
+using qt_solid::host::throw_error;
+using qt_solid::host::throw_uv_error;
+using qt_solid::host::request_qt_pump;
+using qt_solid::host::on_required_qt_host_thread;
+
+// Trace helpers (duplicated here for compositor.cpp and other ffi-layer users)
+static bool qt_solid_wgpu_trace_enabled() {
+  static const bool enabled = qEnvironmentVariableIsSet("QT_SOLID_WGPU_TRACE");
+  return enabled;
+}
+
+template <typename... Args>
+static void qt_solid_wgpu_trace(const char *fmt, Args... args) {
+  if (!qt_solid_wgpu_trace_enabled()) {
+    return;
+  }
+  std::fprintf(stdout, "[qt-host] ");
+  std::fprintf(stdout, fmt, args...);
+  std::fprintf(stdout, "\n");
+  std::fflush(stdout);
+}
+
 #include "util.cpp"
-#include "host/wait_bridge.cpp"
-#include "host/uv.cpp"
 #include "inspector.cpp"
 #include "text.cpp"
 #include "window/text_edit.cpp"
@@ -126,44 +145,44 @@ namespace {
 #include "widget_tree/layout.cpp"
 #include "widget_tree/mouse.cpp"
 #include "widget_tree/tree.cpp"
-#include "host/state.cpp"
 
 } // namespace
+
+static QtRegistry *g_registry = nullptr;
 
 // ---------------------------------------------------------------------------
 // FFI routing — thin wrappers that delegate to g_host / registry
 // ---------------------------------------------------------------------------
 
-bool qt_host_started() { return g_host != nullptr && g_host->started(); }
+bool qt_host_started() { return qt_solid::host::qt_host_started_impl(); }
 
-std::uint8_t qt_runtime_wait_bridge_kind_tag() {
-  return static_cast<std::uint8_t>(qt_runtime_wait_bridge_kind_impl());
-}
-
-std::int32_t qt_runtime_wait_bridge_unix_fd() {
-  return qt_runtime_wait_bridge_unix_fd_impl();
-}
-
-void start_qt_host(std::uintptr_t uv_loop_ptr) {
-  if (!on_required_qt_host_thread()) {
-    throw_error("QtApp.start must run on macOS main thread");
-  }
-
+void qt_host_start(std::uintptr_t uv_loop_ptr) {
   if (uv_loop_ptr == 0) {
     throw_error("received null libuv loop pointer from N-API");
   }
 
-  if (!g_host) {
-    g_host = new QtHostState(reinterpret_cast<uv_loop_t *>(uv_loop_ptr));
+  if (!g_registry) {
+    g_registry = new QtRegistry();
   }
 
-  try {
-    g_host->start();
-  } catch (...) {
-    delete g_host;
-    g_host = nullptr;
-    throw;
-  }
+  qt_solid::host::QtHostCallbacks callbacks;
+  callbacks.on_pre_start = []() {
+    qt_wgpu_renderer::register_static_platform_plugins();
+    qt_wgpu_renderer::configure_unified_compositor_platform();
+  };
+  callbacks.on_started = [](QApplication *app) {
+    qt_wgpu_renderer::sync_unified_compositor_active_state();
+    g_registry->install_motion_mouse_filter(app);
+  };
+  callbacks.on_shutdown = []() {
+    g_registry->clear();
+  };
+  callbacks.on_app_activate = []() {
+    qt_solid_spike::qt::emit_app_event(::rust::Str("activate"));
+  };
+
+  qt_solid::host::qt_host_start_impl(
+      reinterpret_cast<uv_loop_t *>(uv_loop_ptr), callbacks);
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
   QObject::connect(
@@ -185,7 +204,6 @@ void start_qt_host(std::uintptr_t uv_loop_ptr) {
       });
 #endif
 
-  // Monitor DPI changes on primary screen.
   auto *primary_screen = QGuiApplication::primaryScreen();
   if (primary_screen) {
     QObject::connect(
@@ -197,71 +215,63 @@ void start_qt_host(std::uintptr_t uv_loop_ptr) {
   }
 }
 
-void shutdown_qt_host() {
-  if (!on_required_qt_host_thread()) {
-    throw_error("QtApp.shutdown must run on macOS main thread");
-  }
-
-  if (!g_host) {
-    return;
-  }
-
-  g_host->shutdown();
+void qt_host_shutdown() {
+  qt_solid::host::qt_host_shutdown_impl();
 }
 
 void qt_create_widget(std::uint32_t id, std::uint8_t kind_tag) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before creating Qt widgets");
   }
 
-  g_host->registry().create_widget(id, kind_tag);
+  g_registry->create_widget(id, kind_tag);
   request_qt_pump();
 }
 
 void qt_insert_child(std::uint32_t parent_id, std::uint32_t child_id,
                      std::uint32_t anchor_id_or_zero) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before inserting Qt widgets");
   }
 
-  g_host->registry().insert_child(parent_id, child_id, anchor_id_or_zero);
+  g_registry->insert_child(parent_id, child_id, anchor_id_or_zero);
   request_qt_pump();
 }
 
 void qt_remove_child(std::uint32_t parent_id, std::uint32_t child_id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before removing Qt widgets");
   }
 
-  g_host->registry().remove_child(parent_id, child_id);
+  g_registry->remove_child(parent_id, child_id);
   request_qt_pump();
 }
 
 void qt_destroy_widget(std::uint32_t id,
                        rust::Slice<const std::uint32_t> subtree_ids) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     return;
   }
 
-  g_host->registry().destroy_widget(id, subtree_ids);
+  g_registry->destroy_widget(id, subtree_ids);
   request_qt_pump();
 }
 
 void qt_request_repaint(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before requesting a repaint");
   }
 
-  g_host->registry().request_repaint(id);
+  g_registry->request_repaint(id);
   request_qt_pump();
 }
 
 bool qt_request_window_compositor_frame(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before requesting a compositor frame");
   }
 
-  const bool requested = g_host->registry().request_window_compositor_frame(id);
+  const bool requested = g_registry->request_window_compositor_frame(id);
 #if !defined(Q_OS_MACOS)
   request_qt_pump();
 #endif
@@ -269,67 +279,66 @@ bool qt_request_window_compositor_frame(std::uint32_t id) {
 }
 
 void notify_window_compositor_present_complete(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     return;
   }
 
-  record_compositor_present_complete();
   auto *context = QCoreApplication::instance();
   if (context == nullptr) {
     return;
   }
 
   QTimer::singleShot(0, context, [id]() {
-    if (!g_host || !g_host->started()) {
+    if (!qt_solid::host::qt_host_started_impl()) {
       return;
     }
 
-    g_host->registry().notify_window_compositor_frame_complete(id);
+    g_registry->notify_window_compositor_frame_complete(id);
   });
   request_qt_pump();
 }
 
 QtWidgetCaptureLayout qt_capture_widget_layout(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before capturing a Qt widget");
   }
 
-  return g_host->registry().capture_widget_layout(id);
+  return g_registry->capture_widget_layout(id);
 }
 
 void qt_set_window_transient_owner(std::uint32_t window_id, std::uint32_t owner_id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before setting transient owner");
   }
 
-  g_host->registry().set_window_transient_owner(window_id, owner_id);
+  g_registry->set_window_transient_owner(window_id, owner_id);
 }
 
 rust::Vec<QtRect> qt_capture_widget_visible_rects(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before reading a Qt widget visible region");
   }
 
-  return g_host->registry().capture_widget_visible_rects(id);
+  return g_registry->capture_widget_visible_rects(id);
 }
 
 void qt_set_widget_mouse_transparent(std::uint32_t id, bool transparent) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before changing a Qt widget mouse transparency");
   }
 
-  g_host->registry().set_widget_mouse_transparent(id, transparent);
+  g_registry->set_widget_mouse_transparent(id, transparent);
 }
 
 void qt_capture_widget_into(std::uint32_t id, std::uint32_t width_px,
                             std::uint32_t height_px, std::size_t stride,
                             bool include_children,
                             rust::Slice<std::uint8_t> bytes) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before capturing a Qt widget");
   }
 
-  g_host->registry().capture_widget_into(id, width_px, height_px, stride,
+  g_registry->capture_widget_into(id, width_px, height_px, stride,
                                          include_children, bytes);
 }
 
@@ -337,119 +346,119 @@ void qt_capture_widget_region_into(std::uint32_t id, std::uint32_t width_px,
                                    std::uint32_t height_px, std::size_t stride,
                                    bool include_children, QtRect rect,
                                    rust::Slice<std::uint8_t> bytes) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before capturing a Qt widget");
   }
 
-  g_host->registry().capture_widget_region_into(id, width_px, height_px, stride,
+  g_registry->capture_widget_region_into(id, width_px, height_px, stride,
                                                 include_children, rect, bytes);
 }
 
 QtRealizedNodeState qt_debug_node_state(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before reading a Qt debug snapshot");
   }
 
-  return g_host->registry().debug_node_state(id);
+  return g_registry->debug_node_state(id);
 }
 
 QtNodeBounds debug_node_bounds(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before reading debug node bounds");
   }
 
-  return g_host->registry().debug_node_bounds(id);
+  return g_registry->debug_node_bounds(id);
 }
 
 QtScreenGeometry get_screen_geometry(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before reading screen geometry");
   }
 
-  return g_host->registry().get_screen_geometry(id);
+  return g_registry->get_screen_geometry(id);
 }
 
 void focus_widget(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before focusing widget");
   }
 
-  g_host->registry().focus_widget(id);
+  g_registry->focus_widget(id);
 }
 
 QtScreenGeometry get_widget_size_hint(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before reading widget size hint");
   }
 
-  return g_host->registry().get_widget_size_hint(id);
+  return g_registry->get_widget_size_hint(id);
 }
 
 std::uint32_t debug_node_at_point(std::int32_t screen_x,
                                   std::int32_t screen_y) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before reading debug node at point");
   }
 
-  return g_host->registry().debug_node_at_point(screen_x, screen_y);
+  return g_registry->debug_node_at_point(screen_x, screen_y);
 }
 
 void debug_set_inspect_mode(bool enabled) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before toggling debug inspect mode");
   }
 
-  g_host->registry().debug_set_inspect_mode(enabled);
+  g_registry->debug_set_inspect_mode(enabled);
   request_qt_pump();
 }
 
 void debug_click_node(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before triggering debug clicks");
   }
 
-  g_host->registry().debug_click_node(id);
+  g_registry->debug_click_node(id);
   request_qt_pump();
 }
 
 void debug_close_node(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before triggering debug close requests");
   }
 
-  g_host->registry().debug_close_node(id);
+  g_registry->debug_close_node(id);
   request_qt_pump();
 }
 
 void debug_input_insert_text(std::uint32_t id, rust::Str value) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before triggering debug text input");
   }
 
-  g_host->registry().debug_input_insert_text(id, value);
+  g_registry->debug_input_insert_text(id, value);
   request_qt_pump();
 }
 
 void debug_highlight_node(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before triggering debug highlight");
   }
 
-  g_host->registry().debug_highlight_node(id);
+  g_registry->debug_highlight_node(id);
   request_qt_pump();
 }
 
 void debug_clear_highlight() {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before clearing debug highlight");
   }
 
-  g_host->registry().debug_clear_highlight();
+  g_registry->debug_clear_highlight();
   request_qt_pump();
 }
 
 void schedule_debug_event(std::uint32_t delay_ms, rust::Str name) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before scheduling a debug event");
   }
 
@@ -765,10 +774,10 @@ QtStyledShapedTextResult qt_shape_styled_text_to_path(
 // ---------------------------------------------------------------------------
 
 static HostWindowWidget *require_host_window(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before modifying window properties");
   }
-  auto *widget = g_host->registry().widget_ptr(id);
+  auto *widget = g_registry->widget_ptr(id);
   auto *host = dynamic_cast<HostWindowWidget *>(widget);
   if (!host) {
     throw_error("target widget is not a window");
@@ -1050,10 +1059,10 @@ void post_frame_signal_for_node(std::uint32_t node_id) {
   QMetaObject::invokeMethod(
       context,
       [node_id]() {
-        if (!g_host || !g_host->started()) {
+        if (!qt_solid::host::qt_host_started_impl()) {
           return;
         }
-        auto *widget = g_host->registry().widget_ptr(node_id);
+        auto *widget = g_registry->widget_ptr(node_id);
         auto *host = dynamic_cast<HostWindowWidget *>(widget);
         if (host != nullptr) {
           host->drive_compositor_frame_from_signal();
@@ -1066,10 +1075,10 @@ void post_frame_signal_for_node(std::uint32_t node_id) {
 
 void qt_macos_set_display_link_frame_rate(std::uint32_t node_id, float fps) {
 #if defined(Q_OS_MACOS)
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     return;
   }
-  auto *widget = g_host->registry().widget_ptr(node_id);
+  auto *widget = g_registry->widget_ptr(node_id);
   auto *host = dynamic_cast<HostWindowWidget *>(widget);
   if (host) {
     host->set_display_link_frame_rate(fps);

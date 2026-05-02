@@ -26,7 +26,6 @@ bool HostWindowWidget::request_compositor_frame() {
     return false;
   }
   autonomous_repaint_timer_.stop();
-  record_compositor_frame_request();
 #if defined(Q_OS_MACOS)
   const bool requested = qt_wgpu_renderer::unified_compositor_window_request_frame(
       windowHandle(), capture_device_pixel_ratio());
@@ -97,7 +96,6 @@ void HostWindowWidget::post_compositor_frame_drive() {
   }
 
   compositor_drive_posted_ = true;
-  record_compositor_frame_post();
   QPointer<HostWindowWidget> deferred_host(this);
   QTimer::singleShot(0, this, [deferred_host]() {
     if (deferred_host == nullptr) {
@@ -147,7 +145,6 @@ void HostWindowWidget::drive_compositor_frame() {
   const auto status = qt_wgpu_renderer::drive_unified_compositor_window_frame(
       windowHandle(), rust_node_id_, capture_device_pixel_ratio());
   driving_compositor_frame_ = false;
-  record_compositor_frame_status(status);
 
   switch (status) {
   case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Presented:
@@ -352,7 +349,6 @@ void HostWindowWidget::handle_compositor_display_link_tick(void *drawable) {
   qt_solid_wgpu_trace("tick node=%u status=%d", rust_node_id_,
                       static_cast<int>(status));
   driving_compositor_frame_ = false;
-  record_compositor_frame_status(status);
 
   switch (status) {
   case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Presented:

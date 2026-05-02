@@ -1,5 +1,4 @@
 pub(crate) mod ffi;
-mod ffi_host;
 mod runtime;
 
 pub(crate) use ffi::{
@@ -9,9 +8,8 @@ pub(crate) use ffi::{
     qt_capture_widget_into, qt_capture_widget_layout, qt_capture_widget_visible_rects, qt_create_widget,
     qt_debug_node_state, qt_destroy_widget, qt_host_started, qt_insert_child,
     qt_remove_child,
-    qt_request_repaint, qt_request_window_compositor_frame, qt_runtime_wait_bridge_kind_tag,
-    qt_runtime_wait_bridge_unix_fd, schedule_debug_event,
-    shutdown_qt_host, start_qt_host, trace_now_ns,
+    qt_request_repaint, qt_request_window_compositor_frame, schedule_debug_event,
+    qt_host_shutdown, qt_host_start, trace_now_ns,
     qt_clipboard_get_text, qt_clipboard_set_text, qt_clipboard_has_text,
     qt_clipboard_formats, qt_clipboard_get, qt_clipboard_clear,
     qt_clipboard_set, QtClipboardEntry,

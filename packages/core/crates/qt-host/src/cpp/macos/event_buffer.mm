@@ -1,4 +1,4 @@
-#include "qt/macos/event_buffer.h"
+#include "qt_host/macos/event_buffer.h"
 
 #include <AppKit/AppKit.h>
 #include <ApplicationServices/ApplicationServices.h>
@@ -18,7 +18,7 @@
 #include <string>
 #include <utility>
 
-namespace qt_solid_spike::qt {
+namespace qt_solid::host {
 
 namespace {
 
@@ -308,14 +308,4 @@ int MacosEventBufferBridge::read_fd() const noexcept { return impl_->read_fd(); 
 
 void MacosEventBufferBridge::drain() noexcept { impl_->drain(); }
 
-} // namespace qt_solid_spike::qt
-
-#import <QuartzCore/CAMetalLayer.h>
-
-extern "C" void qt_wgpu_set_metal_layer_presents_with_transaction(void *layer, bool value) {
-  if (layer == nullptr) {
-    return;
-  }
-  auto *metal_layer = (__bridge CAMetalLayer *)layer;
-  metal_layer.presentsWithTransaction = value ? YES : NO;
-}
+} // namespace qt_solid::host

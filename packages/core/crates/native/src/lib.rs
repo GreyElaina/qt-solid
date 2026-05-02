@@ -11,7 +11,6 @@ mod scene_renderer;
 mod surface_renderer;
 mod trace;
 mod window_compositor;
-mod window_host;
 
 pub use api::{
     FocusPolicy, QtApp, QtHostEvent, QtNode, qt_solid_capture_window_frame,

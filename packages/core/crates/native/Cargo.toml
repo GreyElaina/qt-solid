@@ -22,7 +22,6 @@ tokio = { version = "1.51.0", features = ["rt-multi-thread", "time"] }
 vello = { version = "0.8.0" }
 vello_cpu = "0.0.7"
 vello_hybrid = { version = "0.0.7", features = ["std"] }
-window-host = { version = "0.1.0", path = "../window-host" }
 pollster = "0.4"
 raw-window-handle = "0.6"
 png = "0.18"
@@ -34,6 +33,7 @@ peniko = "0.6"
 rustc-hash = "2.1.2"
 vello_common = { version = "0.0.7", default-features = false }
 bitflags = "2"
+qt-host = { version = "0.1.0", path = "../qt-host" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-metal = "1.1.0"

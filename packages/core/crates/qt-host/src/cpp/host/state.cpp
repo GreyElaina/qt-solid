@@ -1,6 +1,6 @@
 class QtHostState {
 public:
-  explicit QtHostState(uv_loop_t *loop) : loop_(loop) {}
+  explicit QtHostState(uv_loop_t *loop, QtHostCallbacks callbacks) : loop_(loop), callbacks_(callbacks) {}
 
   bool started() const { return started_; }
 
@@ -9,8 +9,9 @@ public:
       return;
     }
 
-    qt_wgpu_renderer::register_static_platform_plugins();
-    qt_wgpu_renderer::configure_unified_compositor_platform();
+    if (callbacks_.on_pre_start) {
+      callbacks_.on_pre_start();
+    }
 
     argv_storage_ = "qt-solid-spike";
     argv_[0] = argv_storage_.data();
@@ -25,12 +26,10 @@ public:
       app_ = std::make_unique<QApplication>(argc_, argv_);
       app_->setApplicationName(QStringLiteral("qt-solid-spike"));
       app_->setQuitOnLastWindowClosed(false);
-      qt_wgpu_renderer::sync_unified_compositor_active_state();
       QObject::connect(app_.get(), &QGuiApplication::applicationStateChanged,
-                       app_.get(), [](Qt::ApplicationState state) {
-                         if (state == Qt::ApplicationActive) {
-                           qt_solid_spike::qt::emit_app_event(
-                               ::rust::Str("activate"));
+                       app_.get(), [this](Qt::ApplicationState state) {
+                         if (state == Qt::ApplicationActive && callbacks_.on_app_activate) {
+                           callbacks_.on_app_activate();
                          }
                        });
 #if defined(__APPLE__)
@@ -48,7 +47,9 @@ public:
       pump_ = std::make_unique<LibuvQtPump>(loop_);
       pump_->start();
       pump_->pump_events();
-      registry_.install_motion_mouse_filter(app_.get());
+      if (callbacks_.on_started) {
+        callbacks_.on_started(app_.get());
+      }
       started_ = true;
     } catch (...) {
       if (pump_) {
@@ -87,13 +88,6 @@ public:
     } else {
       execute_teardown();
     }
-  }
-
-  QtRegistry &registry() {
-    if (!started_) {
-      throw_error("Qt host is not started");
-    }
-    return registry_;
   }
 
   int runtime_wait_bridge_unix_fd() const noexcept {
@@ -144,7 +138,9 @@ private:
 #if defined(__APPLE__)
     wait_bridge_.reset();
 #endif
-    registry_.clear();
+    if (callbacks_.on_shutdown) {
+      callbacks_.on_shutdown();
+    }
     if (QCoreApplication::instance() != nullptr) {
       for (int index = 0; index < 4; ++index) {
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -164,7 +160,7 @@ private:
 #if defined(__APPLE__)
   std::unique_ptr<MacosEventBufferBridge> wait_bridge_;
 #endif
-  QtRegistry registry_;
+  QtHostCallbacks callbacks_;
   bool started_ = false;
 };
 
@@ -175,7 +171,6 @@ void request_qt_pump() {
     return;
   }
 
-  record_request_qt_pump();
   g_host->request_pump();
 }
 int current_runtime_wait_bridge_unix_fd() noexcept {

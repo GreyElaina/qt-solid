@@ -16,11 +16,11 @@ std::uint8_t qt_system_color_scheme() {
 }
 
 QtScreenDpiInfo qt_screen_dpi_info(std::uint32_t id) {
-  if (!g_host || !g_host->started()) {
+  if (!qt_solid::host::qt_host_started_impl()) {
     throw_error("call QtApp.start before reading screen DPI");
   }
 
-  auto *widget = g_host->registry().widget_ptr(id);
+  auto *widget = g_registry->widget_ptr(id);
   if (!widget) {
     throw_error("invalid widget id for screen DPI query");
   }

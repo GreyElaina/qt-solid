@@ -46,6 +46,13 @@ pub struct WindowHost {
     inner: Backend,
 }
 
+// SAFETY: All Backend implementations (macOS, Linux, Windows) use internally
+// thread-safe primitives: CFRunLoopWakeUp (documented thread-safe), AtomicBool,
+// Arc, eventfd/Event handles. The only non-Sync field is CFRetained<CFRunLoop>,
+// but CFRunLoop is documented as thread-safe for wakeup operations.
+unsafe impl Send for WindowHost {}
+unsafe impl Sync for WindowHost {}
+
 pub fn detected_backend_kind() -> BackendKind {
     detect_backend_kind()
 }
