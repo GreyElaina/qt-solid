@@ -13,12 +13,12 @@ bytemuck = { version = "1.25.0", features = ["extern_crate_alloc"] }
 cxx = "1.0.194"
 fragment-derive = { version = "0.1.0", path = "../../macros/fragment-derive" }
 motion = { version = "0.1.0", path = "../motion" }
-napi = { version = "3.8.4", features = ["napi8"] }
-napi-derive = "3.5.3"
+napi = { version = "3.8.6", features = ["napi8"] }
+napi-derive = "3.5.5"
 once_cell = "1.21.4"
 taffy = "0.10.1"
 qt-compositor = { version = "0.1.0", path = "../qt-compositor" }
-tokio = { version = "1.51.0", features = ["rt-multi-thread", "time"] }
+tokio = { version = "1.52.1", features = ["rt-multi-thread", "time"] }
 vello = { version = "0.8.0" }
 vello_cpu = "0.0.7"
 vello_hybrid = { version = "0.0.7", features = ["std"] }
@@ -49,7 +49,7 @@ objc2-foundation = "0.3.2"
 objc2-quartz-core = "0.3.2"
 
 [build-dependencies]
-cc = "1.2.59"
+cc = "1.2.61"
 cxx-build = "1.0.194"
 napi-build = "2.3.1"
 qt-build-utils = "0.8.1"
