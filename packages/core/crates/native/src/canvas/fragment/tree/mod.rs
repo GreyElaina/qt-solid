@@ -461,23 +461,9 @@ impl FragmentTree {
     // Layout (taffy)
     // -----------------------------------------------------------------------
 
-    /// Run taffy layout and apply results to fragment nodes.
-    pub fn compute_layout(&mut self, available_width: f64, available_height: f64) -> Vec<FragmentLayoutChange> {
-        let Some(root) = self.taffy_root else { return Vec::new() };
-
-        let mut root_style = self.taffy.style(root).cloned().unwrap_or_default();
-        root_style.size = taffy::geometry::Size {
-            width: taffy::style::Dimension::length(available_width as f32),
-            height: taffy::style::Dimension::length(available_height as f32),
-        };
-        root_style.flex_shrink = 0.0;
-        let _ = self.taffy.set_style(root, root_style);
-
-        let available = taffy::geometry::Size {
-            width: AvailableSpace::Definite(available_width as f32),
-            height: AvailableSpace::Definite(available_height as f32),
-        };
-
+    /// Sync intrinsic leaf measures (text, text-input, circle) into taffy styles
+    /// so that layout passes produce correct sizes.
+    fn sync_intrinsic_leaf_measures(&mut self) {
         // Sync fixed measure for text nodes with shaped cache.
         let text_sizes: Vec<(taffy::tree::NodeId, f32, f32)> = self.nodes.values()
             .filter_map(|node| {
@@ -540,6 +526,26 @@ impl FragmentTree {
             }
             let _ = self.taffy.set_style(tn, style);
         }
+    }
+
+    /// Run taffy layout and apply results to fragment nodes.
+    pub fn compute_layout(&mut self, available_width: f64, available_height: f64) -> Vec<FragmentLayoutChange> {
+        let Some(root) = self.taffy_root else { return Vec::new() };
+
+        let mut root_style = self.taffy.style(root).cloned().unwrap_or_default();
+        root_style.size = taffy::geometry::Size {
+            width: taffy::style::Dimension::length(available_width as f32),
+            height: taffy::style::Dimension::length(available_height as f32),
+        };
+        root_style.flex_shrink = 0.0;
+        let _ = self.taffy.set_style(root, root_style);
+
+        let available = taffy::geometry::Size {
+            width: AvailableSpace::Definite(available_width as f32),
+            height: AvailableSpace::Definite(available_height as f32),
+        };
+
+        self.sync_intrinsic_leaf_measures();
 
         let _ = self.taffy.compute_layout(root, available);
         let events = self.apply_layout_results();

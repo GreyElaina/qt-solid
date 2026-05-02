@@ -777,6 +777,10 @@ fn configure_metal_layer(
     layer_ref.setFramebufferOnly(false);
     layer_ref.setPresentsWithTransaction(false);
     layer_ref.setDisplaySyncEnabled(!should_prefer_immediate_present_mode());
+    // Allow transparent content (popup windows, translucent backgrounds).
+    // CAMetalLayer defaults to opaque=YES which renders black behind any
+    // transparent pixels regardless of NSWindow/NSView transparency settings.
+    layer_ref.setOpaque(false);
     Ok(())
 }
 

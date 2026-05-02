@@ -17,18 +17,25 @@ import {
   getScreenGeometry,
   getWidgetSizeHint,
   setWindowTransientOwner,
+  canvasComputeIntrinsicSize,
 } from "@qt-solid/core/native"
 
 import {
   createElement as createQtElement,
+  insert as insertInto,
   insertNode as insertQtNode,
   setProp as setQtProp,
   spread as spreadQtProps,
+  createCanvasFragmentBinding,
+  destroyCanvasFragmentBinding,
+  registerCanvasBinding,
+  unregisterCanvasBinding,
+  CanvasScopeContext,
   nativeRoot,
 } from "../../runtime/renderer.ts"
 
-import { extendProps, getter, toAccessor, viewPropsFrom } from "../props.ts"
-import type { PopupDismissEvent, PopupProps, PopupSource } from "./types.ts"
+import { extendProps, getter, toAccessor, windowPropsFrom } from "../props.ts"
+import type { PopupDismissEvent, PopupProps, PopupSource, WindowProps } from "./types.ts"
 
 interface PopupOwnerState {
   readonly id: number
@@ -40,6 +47,7 @@ const PopupOwnerContext = createContext<PopupOwnerState | null>(null)
 function computePopupPosition(
   props: PopupProps,
   popupNodeId: number,
+  measuredSize?: { width: number; height: number },
 ): { x: number; y: number } | undefined {
   const anchor = props.anchor
   if (anchor) {
@@ -47,9 +55,9 @@ function computePopupPosition(
     if (!bounds.visible) return undefined
 
     const screen = getScreenGeometry(anchor.id)
-    const sizeHint = getWidgetSizeHint(popupNodeId)
-    const popupWidth = props.width ?? sizeHint.width
-    const popupHeight = props.height ?? sizeHint.height
+    const fallback = measuredSize ?? getWidgetSizeHint(popupNodeId)
+    const popupWidth = props.width ?? fallback.width
+    const popupHeight = props.height ?? fallback.height
     const placement = props.placement ?? "bottom"
 
     type Placement = typeof placement
@@ -131,28 +139,49 @@ export function usePopup(source: PopupSource): PopupComposable {
       }
     }
 
+    // Window props — popup effect owns visible separately, so exclude it from spread
+    const baseWindowProps = windowPropsFrom(read as unknown as Accessor<WindowProps>)
+    const { visible: _v, ...windowPropsNoVisible } = Object.getOwnPropertyDescriptors(baseWindowProps)
+    spreadQtProps(
+      node,
+      extendProps(
+        Object.defineProperties({}, windowPropsNoVisible),
+        {
+          windowKind: getter(() => 1),
+          transparentBackground: getter(() => true),
+          onCloseRequested: getter(() => dismissAll),
+        },
+      ),
+    )
+
+    // Canvas fragment binding — popup window needs its own canvas to host fragment children
+    const fragmentBinding = createCanvasFragmentBinding(popupNode.id)
+    registerCanvasBinding(popupNode.id, fragmentBinding.root)
+
+    onCleanup(() => {
+      unregisterCanvasBinding(popupNode.id)
+      destroyCanvasFragmentBinding(popupNode.id)
+    })
+
     // Wrap children with PopupOwnerContext so nested popups can find their parent
     const popupOwnerState: PopupOwnerState = {
       get id() { return popupNode.id },
       dismiss: dismissAll,
     }
-    const resolved = resolveChildren(children)
-    const wrappedChildren = () => createComponent(PopupOwnerContext.Provider, {
-      value: popupOwnerState,
-      get children() { return resolved() },
-    })
 
-    // Build popup props lazily — never spread `read()` eagerly to avoid
-    // reading `children` inside non-children effects (which would re-mount
-    // nested Popup components on every prop change).
-    spreadQtProps(
-      node,
-      extendProps(viewPropsFrom(read, wrappedChildren), {
-        windowKind: getter(() => 1),
-        transparentBackground: getter(() => true),
-        onCloseRequested: getter(() => dismissAll),
-      }),
-    )
+    createComponent(CanvasScopeContext.Provider, {
+      value: { canvasNodeId: popupNode.id, root: fragmentBinding.root },
+      get children() {
+        const resolved = resolveChildren(children)
+        insertInto(fragmentBinding.root, () =>
+          createComponent(PopupOwnerContext.Provider, {
+            value: popupOwnerState,
+            get children() { return resolved() },
+          }),
+        )
+        return undefined
+      },
+    })
 
     // Portal: insert popup window into root, not into the JSX parent
     insertQtNode(root, node)
@@ -161,9 +190,9 @@ export function usePopup(source: PopupSource): PopupComposable {
     let previousVisible = false
     let positionRetryTimer: ReturnType<typeof setTimeout> | undefined
 
-    const applyPosition = () => {
+    const applyPosition = (measured?: { width: number; height: number }) => {
       const props = read()
-      const pos = computePopupPosition(props, popupNode.id)
+      const pos = computePopupPosition(props, popupNode.id, measured)
       if (pos) {
         setQtProp(node, "screenX", pos.x, undefined)
         setQtProp(node, "screenY", pos.y, undefined)
@@ -180,8 +209,22 @@ export function usePopup(source: PopupSource): PopupComposable {
       }
 
       if (nextVisible) {
-        applyPosition()
-        positionRetryTimer = setTimeout(applyPosition, 0)
+        // Hug content: run intrinsic layout pass and size window to content
+        const contentSize = canvasComputeIntrinsicSize(popupNode.id)
+        const measured = contentSize
+          ? {
+              width: Math.ceil(props.width ?? contentSize.width),
+              height: Math.ceil(props.height ?? contentSize.height),
+            }
+          : undefined
+
+        if (measured) {
+          setQtProp(node, "width", measured.width, undefined)
+          setQtProp(node, "height", measured.height, undefined)
+        }
+
+        applyPosition(measured)
+        positionRetryTimer = setTimeout(() => applyPosition(measured), 0)
 
         // Transient owner: prefer parent popup, then anchor's window
         const ownerId = parentPopup?.id ?? props.anchor?.id
@@ -229,8 +272,17 @@ export function createPopup(
   const PopupMount: Component = () => {
     const effectiveProps = (): PopupProps => {
       const base = read()
-      const visible = base.visible ?? !disposed()
-      return { ...base, visible }
+      const controlled = base.visible != null
+      return {
+        ...base,
+        visible: base.visible ?? !disposed(),
+        onDismiss(event) {
+          if (!controlled) {
+            setDisposed(true)
+          }
+          base.onDismiss?.(event)
+        },
+      }
     }
 
     return usePopup(effectiveProps)(body)

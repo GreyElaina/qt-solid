@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use taffy::prelude::AvailableSpace;
+
 use crate::canvas::fragment::node::apply_sampled_pose_to_fragment;
 use crate::canvas::fragment::types::FragmentId;
 use crate::vello::peniko::kurbo::{Rect, Vec2};
@@ -240,6 +242,32 @@ impl FragmentTree {
         let taffy_node = node.taffy_node?;
         let layout = self.taffy.layout(taffy_node).ok()?;
         Some((layout.content_size.width as f64, layout.content_size.height as f64))
+    }
+
+    /// Compute intrinsic (max-content) size of the fragment tree.
+    /// Temporarily sets the taffy root to auto sizing, syncs leaf measures,
+    /// and runs a layout pass with `MaxContent` so the root shrink-wraps.
+    pub fn compute_intrinsic_size(&mut self) -> Option<(f64, f64)> {
+        let root = self.taffy_root?;
+
+        self.sync_intrinsic_leaf_measures();
+
+        // Temporarily set root to auto so it shrink-wraps to content.
+        let mut root_style = self.taffy.style(root).cloned().unwrap_or_default();
+        root_style.size = taffy::geometry::Size {
+            width: taffy::style::Dimension::auto(),
+            height: taffy::style::Dimension::auto(),
+        };
+        root_style.flex_shrink = 0.0;
+        let _ = self.taffy.set_style(root, root_style);
+
+        let available = taffy::geometry::Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        };
+        let _ = self.taffy.compute_layout(root, available);
+        let layout = self.taffy.layout(root).ok()?;
+        Some((layout.size.width.ceil() as f64, layout.size.height.ceil() as f64))
     }
 
     /// Start a layout FLIP animation: instantly set layout channels to the

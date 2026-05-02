@@ -1591,6 +1591,19 @@ pub fn canvas_fragment_get_content_size(
     })
 }
 
+#[napi_derive::napi(js_name = "canvasComputeIntrinsicSize")]
+pub fn canvas_compute_intrinsic_size(
+    canvas_node_id: u32,
+) -> Option<QtWorldBounds> {
+    let size = fragment_store::fragment_store_compute_intrinsic_size(canvas_node_id);
+    size.map(|(w, h)| QtWorldBounds {
+        x: 0.0,
+        y: 0.0,
+        width: w,
+        height: h,
+    })
+}
+
 #[napi_derive::napi(js_name = "canvasFragmentSetLayoutFlip")]
 pub fn canvas_fragment_set_layout_flip(
     canvas_node_id: u32,

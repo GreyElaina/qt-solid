@@ -949,18 +949,15 @@ fn create_window_surface_with_backends(
     let (surface, metal_layer_ptr) = {
         let ns_view = NonNull::new(target.primary_handle as *mut c_void)
             .ok_or_else(|| SurfaceCreationError::NoGpu("NSView handle is null".into()))?;
-        let layer = unsafe { raw_window_metal::Layer::from_ns_view(ns_view) };
-        let layer_ptr = layer.as_ptr().as_ptr() as *mut c_void;
+        let layer_ptr = qt_compositor::resolve_metal_layer_for_ns_view(ns_view);
         let surface = unsafe {
             instance
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
-                    layer_ptr,
+                    layer_ptr.as_ptr(),
                 ))
                 .map_err(|e| SurfaceCreationError::NoGpu(format!("create surface: {e}")))?
         };
-        // Leak the Layer so the CAMetalLayer stays alive for the surface lifetime.
-        std::mem::forget(layer);
-        (surface, SendPtr(layer_ptr))
+        (surface, SendPtr(layer_ptr.as_ptr()))
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -1015,11 +1012,21 @@ fn create_window_surface_with_backends(
         .find(|f| !f.is_srgb())
         .copied()
         .unwrap_or(capabilities.formats[0]);
+    // Pick the first non-Opaque alpha mode so surface.configure() sets
+    // CAMetalLayer.opaque = NO. On macOS Metal this is typically PostMultiplied.
+    // `Auto` resolves to `Opaque`, which makes the layer opaque regardless of
+    // pixel alpha — causing black backgrounds on transparent windows (popups).
+    let alpha_mode = capabilities
+        .alpha_modes
+        .iter()
+        .copied()
+        .find(|m| *m != wgpu::CompositeAlphaMode::Opaque && *m != wgpu::CompositeAlphaMode::Auto)
+        .unwrap_or(wgpu::CompositeAlphaMode::Auto);
     let config = wgpu::SurfaceConfiguration {
         format: surface_format,
         present_mode: wgpu::PresentMode::AutoVsync,
         desired_maximum_frame_latency: 2,
-        alpha_mode: wgpu::CompositeAlphaMode::Auto,
+        alpha_mode,
         ..config
     };
     // Set a non-panicking error handler so surface.configure failures are

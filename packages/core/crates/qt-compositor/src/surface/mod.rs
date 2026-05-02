@@ -96,6 +96,89 @@ pub unsafe fn compositor_surface_target(
     }
 }
 
+/// On macOS, find an existing `CAMetalLayer` sublayer (e.g. `RawWindowMetalLayer`)
+/// on the given NSView and return its pointer. If none exists, create one via
+/// `raw_window_metal::Layer::from_ns_view` and leak it so it lives for the
+/// surface lifetime. The returned pointer is suitable for
+/// `SurfaceTargetUnsafe::CoreAnimationLayer`.
+///
+/// Using `CoreAnimationLayer` instead of `RawHandle::AppKit` avoids wgpu-hal
+/// creating a second `WgpuObserverLayer` sublayer on the same view.
+///
+/// When an existing sublayer is reused, `setMaximumDrawableCount:` is patched
+/// to a no-op on its class so that a later `wgpu surface.configure()` does not
+/// trip the Apple restriction "should not be called when using
+/// CAMetalDisplayLink".
+#[cfg(target_os = "macos")]
+pub fn resolve_metal_layer_for_ns_view(ns_view: NonNull<c_void>) -> NonNull<c_void> {
+    use objc2::msg_send;
+    use objc2::runtime::AnyClass;
+    use objc2_foundation::NSObjectProtocol;
+    use objc2_quartz_core::CALayer;
+
+    let view: &objc2::runtime::AnyObject = unsafe { ns_view.cast().as_ref() };
+    let root_layer: Option<objc2::rc::Retained<CALayer>> = unsafe { msg_send![view, layer] };
+    if let Some(root_layer) = root_layer {
+        let sublayers: Option<objc2::rc::Retained<objc2_foundation::NSArray<CALayer>>> =
+            unsafe { msg_send![&*root_layer, sublayers] };
+        if let Some(sublayers) = sublayers {
+            let metal_cls =
+                AnyClass::get(c"CAMetalLayer").expect("CAMetalLayer class not found");
+            for i in 0..sublayers.count() {
+                let sub: &CALayer = unsafe { msg_send![&*sublayers, objectAtIndex: i] };
+                if sub.isKindOfClass(metal_cls) {
+                    patch_set_maximum_drawable_count_noop(sub);
+                    let ptr = sub as *const CALayer as *mut c_void;
+                    return NonNull::new(ptr).unwrap();
+                }
+            }
+        }
+    }
+    // No existing CAMetalLayer sublayer — create one.
+    let layer = unsafe { raw_window_metal::Layer::from_ns_view(ns_view) };
+    let ptr = layer.as_ptr().as_ptr() as *mut c_void;
+    std::mem::forget(layer);
+    NonNull::new(ptr).unwrap()
+}
+
+/// Replace `setMaximumDrawableCount:` with a no-op on the concrete class of
+/// `layer`. This is safe because the layer is already managed by
+/// `CAMetalDisplayLink` which owns drawable count scheduling. Without this
+/// patch, wgpu's `surface.configure()` triggers an ObjC exception:
+/// "-setMaximumDrawableCount should not be called when using CAMetalDisplayLink."
+#[cfg(target_os = "macos")]
+fn patch_set_maximum_drawable_count_noop(layer: &objc2_quartz_core::CALayer) {
+    use std::sync::Once;
+
+    static PATCH: Once = Once::new();
+    PATCH.call_once(|| {
+        unsafe {
+            let cls = objc2::runtime::AnyObject::class(layer);
+            let cls_ptr = cls as *const objc2::runtime::AnyClass
+                as *mut objc2::runtime::AnyClass;
+            let sel = objc2::sel!(setMaximumDrawableCount:);
+
+            extern "C-unwind" fn noop_set_max_drawable_count(
+                _this: *mut std::ffi::c_void,
+                _cmd: *const std::ffi::c_void,
+                _count: u64,
+            ) {
+            }
+
+            let imp: objc2::runtime::Imp = std::mem::transmute(
+                noop_set_max_drawable_count as extern "C-unwind" fn(*mut std::ffi::c_void, *const std::ffi::c_void, u64),
+            );
+            let types = c"v@:Q";
+            objc2::ffi::class_replaceMethod(
+                cls_ptr,
+                sel,
+                imp,
+                types.as_ptr(),
+            );
+        }
+    });
+}
+
 fn texture_format(format: QtCompositorImageFormat) -> wgpu::TextureFormat {
     match format {
         QtCompositorImageFormat::Bgra8UnormPremultiplied => wgpu::TextureFormat::Bgra8UnormSrgb,
@@ -874,6 +957,20 @@ impl WindowCompositorContext {
             backends,
             ..Default::default()
         });
+        #[cfg(target_os = "macos")]
+        let surface = {
+            let ns_view = NonNull::new(target.primary_handle as *mut c_void)
+                .ok_or_else(|| QtWgpuRendererError::new("NSView handle is null"))?;
+            let layer_ptr = resolve_metal_layer_for_ns_view(ns_view);
+            unsafe {
+                instance
+                    .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
+                        layer_ptr.as_ptr(),
+                    ))
+                    .map_err(|error| QtWgpuRendererError::new(error.to_string()))?
+            }
+        };
+        #[cfg(not(target_os = "macos"))]
         let surface = unsafe {
             instance
                 .create_surface_unsafe(compositor_surface_target(target)?)
@@ -903,7 +1000,23 @@ impl WindowCompositorContext {
                 config.present_mode =
                     preferred_present_mode(&capabilities.present_modes, config.present_mode);
                 config.desired_maximum_frame_latency = 2;
-                config.alpha_mode = wgpu::CompositeAlphaMode::Auto;
+                // On macOS the shared CAMetalLayer must be non-opaque for
+                // transparent windows. PostMultiplied makes wgpu-hal call
+                // set_opaque(false) during configure. On other platforms
+                // Auto is fine (opaque windows are the common case).
+                config.alpha_mode = if cfg!(target_os = "macos") {
+                    capabilities
+                        .alpha_modes
+                        .iter()
+                        .copied()
+                        .find(|m| {
+                            *m != wgpu::CompositeAlphaMode::Opaque
+                                && *m != wgpu::CompositeAlphaMode::Auto
+                        })
+                        .unwrap_or(wgpu::CompositeAlphaMode::Auto)
+                } else {
+                    wgpu::CompositeAlphaMode::Auto
+                };
                 config
             })?;
         surface.configure(&device, &config);
@@ -1191,10 +1304,27 @@ impl PreparedCompositorFrame {
                         .configure(&context.device, &surface_state.config);
                 }
                 Err(wgpu::SurfaceError::Lost) => {
+                    let surface_target = {
+                        #[cfg(target_os = "macos")]
+                        {
+                            let ns_view = NonNull::new(
+                                surface_state.target.primary_handle as *mut c_void,
+                            )
+                            .ok_or_else(|| {
+                                QtWgpuRendererError::new("NSView handle is null on surface lost")
+                            })?;
+                            let layer_ptr = resolve_metal_layer_for_ns_view(ns_view);
+                            wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer_ptr.as_ptr())
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            compositor_surface_target(surface_state.target)?
+                        }
+                    };
                     surface_state.surface = unsafe {
                         surface_state
                             .instance
-                            .create_surface_unsafe(compositor_surface_target(surface_state.target)?)
+                            .create_surface_unsafe(surface_target)
                             .map_err(|error| QtWgpuRendererError::new(error.to_string()))?
                     };
                     surface_state

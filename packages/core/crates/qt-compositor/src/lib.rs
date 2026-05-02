@@ -56,4 +56,7 @@ pub use surface::{
     PreparedCompositorFrame,
 };
 
+#[cfg(target_os = "macos")]
+pub use surface::resolve_metal_layer_for_ns_view;
+
 pub use platform::backend_kind;

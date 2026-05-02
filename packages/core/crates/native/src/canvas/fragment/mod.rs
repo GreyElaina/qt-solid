@@ -755,6 +755,14 @@ pub fn fragment_store_get_content_size(
     }).flatten()
 }
 
+pub fn fragment_store_compute_intrinsic_size(
+    canvas_node_id: u32,
+) -> Option<(f64, f64)> {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.compute_intrinsic_size()
+    }).flatten()
+}
+
 pub fn fragment_store_set_layout_flip(
     canvas_node_id: u32,
     fragment_id: FragmentId,

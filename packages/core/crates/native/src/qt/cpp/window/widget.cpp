@@ -1,3 +1,13 @@
+#if defined(Q_OS_MACOS)
+// Popup outside-click monitor (implemented in platform/popup_monitor.mm)
+extern "C" void qt_popup_install_outside_click_monitor(
+    std::uint32_t node_id,
+    void *ns_view_ptr,
+    void (*callback)(std::uint32_t));
+extern "C" void qt_popup_remove_outside_click_monitor(std::uint32_t node_id);
+static void popup_outside_click_callback(std::uint32_t node_id);
+#endif
+
 static QWidget *deepest_child_at(QWidget *root, const QPoint &point_in_root) {
   if (root == nullptr || !root->rect().contains(point_in_root)) {
     return nullptr;
@@ -232,6 +242,11 @@ protected:
 #endif
     if (!cpu_frame_.isNull()) {
       QPainter painter(this);
+      if (testAttribute(Qt::WA_TranslucentBackground)) {
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.fillRect(rect(), Qt::transparent);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+      }
       painter.setRenderHint(QPainter::SmoothPixmapTransform);
       painter.drawImage(rect(), cpu_frame_);
     }
@@ -272,13 +287,24 @@ protected:
   }
 
   void showEvent(QShowEvent *event) override {
-    if (window_kind_ != 0) {
+    // Only adjustSize for non-main windows that haven't been explicitly sized
+    // from JS (e.g. popup intrinsic sizing sets width/height before show).
+    if (window_kind_ != 0 && !testAttribute(Qt::WA_Resized)) {
       adjustSize();
     }
     QWidget::showEvent(event);
     sync_window_metadata();
     request_compositor_frame();
-#if !defined(Q_OS_MACOS)
+#if defined(Q_OS_MACOS)
+    // macOS Cocoa does not dismiss Qt::Popup on clicks to other in-process
+    // windows. Install a local event monitor to detect outside clicks.
+    if (window_kind_ == 1) {
+      qt_popup_install_outside_click_monitor(
+          rust_node_id_,
+          reinterpret_cast<void *>(winId()),
+          popup_outside_click_callback);
+    }
+#else
     if (!autonomous_repaint_timer_.isActive()) {
       autonomous_repaint_timer_.start();
     }
@@ -290,6 +316,25 @@ protected:
     autonomous_repaint_timer_.stop();
     compositor_frame_requested_ = false;
     compositor_drive_posted_ = false;
+
+#if defined(Q_OS_MACOS)
+    if (window_kind_ == 1) {
+      qt_popup_remove_outside_click_monitor(rust_node_id_);
+    }
+#endif
+
+    // Qt::Popup outside click: Qt auto-hides without closeEvent.
+    // Fire close_requested handlers so JS dismiss logic runs.
+    // No re-entrancy risk: JS will setVisible(false) on an already-hidden
+    // widget, which is a no-op in Qt (no second hideEvent).
+    if (window_kind_ != 0 && !tearing_down_ &&
+        !close_requested_handlers_.empty()) {
+      auto handlers = close_requested_handlers_;
+      for (const auto &handler : handlers) {
+        handler();
+      }
+    }
+
 #if defined(Q_OS_MACOS)
     stop_compositor_display_link();
 #endif
@@ -439,8 +484,18 @@ private:
     flags.setFlag(Qt::WindowStaysOnTopHint, always_on_top_);
     setWindowFlags(flags);
 
-    if (window_kind_ != 0) {
+    if (window_kind_ != 0 || transparent_background_) {
       setAttribute(Qt::WA_TranslucentBackground, true);
+      // Qt Cocoa's QCocoaWindow::isOpaque() checks alphaBufferSize, not
+      // WA_TranslucentBackground. Without alpha in the surface format the
+      // NSWindow stays opaque → black background behind transparent content.
+      if (windowHandle() != nullptr) {
+        auto fmt = windowHandle()->format();
+        if (fmt.alphaBufferSize() < 8) {
+          fmt.setAlphaBufferSize(8);
+          windowHandle()->setFormat(fmt);
+        }
+      }
     }
 
     if (!saved_geometry.isNull()) {
@@ -476,10 +531,18 @@ private:
 #endif
   bool close_pending_ = false;
   bool tearing_down_ = false;
+#if !defined(Q_OS_MACOS)
   bool compositor_window_destroyed_ = false;
+#endif
   QTimer autonomous_repaint_timer_;
   std::vector<CloseRequestedHandler> close_requested_handlers_;
   TextEditSession text_edit_session_;
   QImage cpu_frame_;
 
 };
+
+#if defined(Q_OS_MACOS)
+static void popup_outside_click_callback(std::uint32_t node_id) {
+  qt_window_event_close_requested(node_id);
+}
+#endif
