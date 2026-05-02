@@ -766,7 +766,6 @@ pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
     target: QtCompositorTarget,
     drawable_handle: u64,
 ) -> napi::Result<QtWindowCompositorDriveStatus> {
-    let trace_enabled = std::env::var_os("QT_SOLID_WGPU_TRACE").is_some();
     let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)?;
     let compositor = qt_compositor::load_or_create_compositor(render_target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
@@ -776,9 +775,6 @@ pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
     crate::renderer::scheduler::frame_clock::qt_window_frame_tick(node_id)?;
     let status = crate::renderer::scheduler::pipeline::drive_frame_with_drawable(node_id, target, drawable_handle)?;
 
-    if trace_enabled {
-        println!("[qt-ffi] display-link node={} status={:?}", node_id, status);
-    }
     if matches!(status, QtWindowCompositorDriveStatus::Busy) {
         let _ = compositor.request_frame(
             render_target,

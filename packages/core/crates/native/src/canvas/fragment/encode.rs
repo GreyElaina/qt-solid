@@ -21,7 +21,10 @@ fn push_gradient_stops(gradient: &mut Gradient, stops: &[GradientStop]) {
 pub(crate) fn fill_brush_gradient(scene: &mut Scene, transform: Affine, brush: &FragmentBrush, fill_rule: Fill, path: &BezPath) {
     match brush {
         FragmentBrush::Solid(fill) => {
-            scene.fill(fill.rule, transform, fill.color, None, path);
+            // vello_hybrid reserves alpha=0 for clipping; skip invisible fills.
+            if fill.color.components[3] > 0.0 {
+                scene.fill(fill.rule, transform, fill.color, None, path);
+            }
         }
         FragmentBrush::LinearGradient { start_x, start_y, end_x, end_y, stops } => {
             let mut gradient = Gradient::new_linear(
@@ -140,7 +143,9 @@ impl FragmentEncode for CircleFragment {
         let circle = Circle::new(center, self.r);
         let path = BezPath::from_vec(circle.path_elements(0.1).collect());
         if let Some(fill) = &self.fill {
-            scene.fill(fill.rule, transform, fill.color, None, &path);
+            if fill.color.components[3] > 0.0 {
+                scene.fill(fill.rule, transform, fill.color, None, &path);
+            }
         }
         if let Some(stroke) = &self.stroke {
             scene.stroke(&Stroke::new(self.stroke_width.max(stroke.width)), transform, stroke.color, None, &path);

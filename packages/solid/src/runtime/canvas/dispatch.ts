@@ -17,7 +17,7 @@ import {
 
 export const HANDLED_EVENT_NAMES = new Set([
   "onClick", "onDoubleClick", "onPointerDown", "onPointerUp", "onPointerMove",
-  "onPointerEnter", "onPointerLeave",
+  "onPointerEnter", "onPointerLeave", "onContextMenu",
   "onKeyDown", "onKeyUp",
   "onWheel",
   "onFocusIn", "onFocusOut",

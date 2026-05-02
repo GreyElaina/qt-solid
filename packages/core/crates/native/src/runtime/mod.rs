@@ -1284,7 +1284,6 @@ mod tests {
         sync::Arc,
     };
 
-    use super::RuntimeState;
     use crate::renderer::scheduler::{
         pipeline::{
             coalesce_scene_subtree_roots_in_tree, group_window_capture_parts,

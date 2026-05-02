@@ -110,7 +110,7 @@ void HostWindowWidget::wheelEvent(QWheelEvent *event) {
 }
 
 void HostWindowWidget::mouseDoubleClickEvent(QMouseEvent *event) {
-  if (rust_node_id_ == 0) {
+  if (rust_node_id_ == 0 || event->button() != Qt::LeftButton) {
     QWidget::mouseDoubleClickEvent(event);
     return;
   }
