@@ -418,7 +418,7 @@ protected:
 
   void resizeEvent(QResizeEvent *event) override {
     QWidget::resizeEvent(event);
-    if (rust_node_id_ == 0) {
+    if (render_suppressed()) {
       return;
     }
     const QSize s = event->size();
