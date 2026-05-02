@@ -13,6 +13,7 @@ import {
   dispatchCanvasKeyboardEvent,
   dispatchCanvasTextInputChange,
   dispatchCanvasWheelEvent,
+  dispatchCanvasContextMenuEvent,
   dispatchFragmentLayout,
 } from "./canvas/dispatch.ts"
 import { hoveredFragments } from "./canvas/registry.ts"
@@ -188,6 +189,9 @@ export function handleEvent(event: QtHostEvent): void {
     if (eventTag === 3) {
       dispatchCanvasPointerMoveForHover(canvasNodeId, fragmentId, x, y)
     }
+  } else if (event.type === "canvascontextmenu") {
+    const { canvasNodeId, fragmentId, x, y, screenX, screenY } = event
+    dispatchCanvasContextMenuEvent(canvasNodeId, fragmentId, x, y, screenX, screenY)
   } else if (event.type === "canvaskeyboard") {
     const { canvasNodeId, fragmentId, eventTag, qtKey, modifiers, text, repeat, nativeScanCode, nativeVirtualKey } = event
     dispatchCanvasKeyboardEvent(canvasNodeId, fragmentId, eventTag, qtKey, modifiers, text, repeat, nativeScanCode, nativeVirtualKey)

@@ -336,6 +336,7 @@ protected:
   void mouseDoubleClickEvent(QMouseEvent *event) override;
   void inputMethodEvent(QInputMethodEvent *event) override;
   QVariant inputMethodQuery(Qt::InputMethodQuery query) const override;
+  void contextMenuEvent(QContextMenuEvent *event) override;
 
   bool focusNextPrevChild(bool next) override {
     if (rust_node_id_ == 0) {

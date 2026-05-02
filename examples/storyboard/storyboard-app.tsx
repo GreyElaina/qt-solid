@@ -50,6 +50,7 @@ import {
   SubtitleLabel,
   TitleLabel,
   DisplayLabel,
+  useContextMenu,
 } from "@qt-solid/fluent"
 
 // ---------------------------------------------------------------------------
@@ -585,6 +586,47 @@ const MotionCompoundDemo: Component = () => {
 }
 
 // ---------------------------------------------------------------------------
+// Context Menu demo
+// ---------------------------------------------------------------------------
+
+const ContextMenuDemo: Component = () => {
+  const theme = useTheme()
+  const [lastAction, setLastAction] = createSignal("(right-click the box)")
+
+  const { onContextMenu, menu } = useContextMenu({
+    items: () => [
+      { text: "Cut", icon: "M19 3l-6 6m-1 1L4 18V20H6L14 12M19 3l2 2L14 12M19 3l-4 0M5 12H3v2", onClick: () => setLastAction("Cut") },
+      { text: "Copy", onClick: () => setLastAction("Copy") },
+      { text: "Paste", onClick: () => setLastAction("Paste") },
+      { text: "Delete", disabled: true },
+    ],
+    width: 160,
+  })
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <rect
+        fill={theme().backgroundSecondary}
+        stroke={theme().strokeDefault}
+        strokeWidth={1}
+        cornerRadius={8}
+        width={280}
+        height={160}
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        gap={8}
+        onContextMenu={onContextMenu}
+      >
+        <text text="Right-click here" fontSize={14} color={theme().foregroundPrimary} />
+        <text text={lastAction()} fontSize={12} color={theme().foregroundSecondary} />
+      </rect>
+      {menu()}
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Stories registry
 // ---------------------------------------------------------------------------
 
@@ -772,6 +814,12 @@ const STORIES: StoryDef[] = [
   {
     name: "Motion · Compound",
     render: () => <MotionCompoundDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Context Menu",
+    render: () => <ContextMenuDemo />,
     axes: {},
     defaults: {},
   },

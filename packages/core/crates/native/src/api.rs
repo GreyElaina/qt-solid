@@ -124,6 +124,14 @@ pub enum QtHostEvent {
         x: f64,
         y: f64,
     },
+    CanvasContextMenu {
+        canvas_node_id: u32,
+        fragment_id: i32,
+        x: f64,
+        y: f64,
+        screen_x: f64,
+        screen_y: f64,
+    },
     CanvasKeyboard {
         canvas_node_id: u32,
         fragment_id: i32,

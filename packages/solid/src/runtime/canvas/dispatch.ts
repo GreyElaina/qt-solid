@@ -109,6 +109,22 @@ export function dispatchCanvasPointerEvent(
   }
 }
 
+export function dispatchCanvasContextMenuEvent(
+  canvasNodeId: number,
+  fragmentId: number,
+  x: number,
+  y: number,
+  screenX: number,
+  screenY: number,
+): void {
+  const binding = CANVAS_BINDINGS.get(canvasNodeId)
+  if (!binding) return
+
+  const node = findFragmentNode(binding.root, fragmentId)
+  if (!node) return
+  bubbleEvent(node, "onContextMenu", { x, y, screenX, screenY })
+}
+
 // ---------------------------------------------------------------------------
 // Hover dispatch — ancestor-diff based enter/leave
 // ---------------------------------------------------------------------------

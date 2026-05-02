@@ -1160,6 +1160,23 @@ pub(crate) fn emit_canvas_pointer_event(canvas_node_id: u32, event_tag: u8, x: f
     });
 }
 
+pub(crate) fn emit_canvas_context_menu_event(canvas_node_id: u32, x: f64, y: f64, screen_x: f64, screen_y: f64) {
+    use crate::canvas::fragment::fragment_store_hit_test;
+
+    let fragment_id = fragment_store_hit_test(canvas_node_id, x, y)
+        .map(|id| id.0 as i32)
+        .unwrap_or(-1);
+
+    emit_js_event(QtHostEvent::CanvasContextMenu {
+        canvas_node_id,
+        fragment_id,
+        x,
+        y,
+        screen_x,
+        screen_y,
+    });
+}
+
 pub(crate) fn qt_canvas_key_event(
     canvas_node_id: u32,
     event_tag: u8,

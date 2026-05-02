@@ -41,6 +41,8 @@ export declare const enum AlignSelf {
   Stretch = 'stretch'
 }
 
+export declare function canvasComputeIntrinsicSize(canvasNodeId: number): QtWorldBounds | null
+
 export declare function canvasFragmentClearImage(canvasNodeId: number, fragmentId: number): void
 
 export declare function canvasFragmentComputeLayout(canvasNodeId: number, availableWidth: number, availableHeight: number): void
@@ -309,6 +311,7 @@ export type QtHostEvent =
   | { type: 'inspect', nodeId: number }
   | { type: 'listener', nodeId: number, listenerId: number, traceId?: number }
   | { type: 'canvaspointer', canvasNodeId: number, fragmentId: number, eventTag: number, x: number, y: number }
+  | { type: 'canvascontextmenu', canvasNodeId: number, fragmentId: number, x: number, y: number, screenX: number, screenY: number }
   | { type: 'canvaskeyboard', canvasNodeId: number, fragmentId: number, eventTag: number, qtKey: number, modifiers: number, text: string, repeat: boolean, nativeScanCode: number, nativeVirtualKey: number }
   | { type: 'canvaswheel', canvasNodeId: number, fragmentId: number, deltaX: number, deltaY: number, pixelDx: number, pixelDy: number, x: number, y: number, modifiers: number, phase: number }
   | { type: 'canvasmotioncomplete', canvasNodeId: number, fragmentId: number }

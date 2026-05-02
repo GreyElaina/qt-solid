@@ -1,14 +1,58 @@
 void HostWindowWidget::mousePressEvent(QMouseEvent *event) {
-  const QPointF pos = event->position();
-  qt_solid_spike::qt::qt_canvas_pointer_event(rust_node_id_, 1, pos.x(), pos.y());
+  if (rust_node_id_ == 0) {
+    QWidget::mousePressEvent(event);
+    return;
+  }
+  if (event->button() == Qt::LeftButton) {
+    const QPointF pos = event->position();
+    qt_solid_spike::qt::qt_canvas_pointer_event(rust_node_id_, 1, pos.x(), pos.y());
+  } else if (event->button() == Qt::RightButton) {
+    // Accept the press so that mouseReleaseEvent receives the matching release.
+    event->accept();
+  } else {
+    QWidget::mousePressEvent(event);
+  }
 }
 
 void HostWindowWidget::mouseReleaseEvent(QMouseEvent *event) {
+  if (rust_node_id_ == 0) {
+    QWidget::mouseReleaseEvent(event);
+    return;
+  }
+
+  // Right-click release (or Ctrl+Click on macOS): emit context menu directly.
+  // On macOS, Qt may not synthesize QContextMenuEvent reliably when the
+  // release handler does not call the base class, so handle it here.
+  const bool context_click =
+      event->button() == Qt::RightButton ||
+      (event->button() == Qt::LeftButton &&
+       (event->modifiers() & Qt::ControlModifier));
+  if (context_click) {
+    const QPointF local = event->position();
+    const QPoint global = event->globalPosition().toPoint();
+    qt_solid_spike::qt::qt_canvas_context_menu_event(
+        rust_node_id_,
+        local.x(), local.y(),
+        static_cast<double>(global.x()),
+        static_cast<double>(global.y()));
+    event->accept();
+    return;
+  }
+
+  if (event->button() != Qt::LeftButton) {
+    QWidget::mouseReleaseEvent(event);
+    return;
+  }
+
   const QPointF pos = event->position();
   qt_solid_spike::qt::qt_canvas_pointer_event(rust_node_id_, 2, pos.x(), pos.y());
 }
 
 void HostWindowWidget::mouseMoveEvent(QMouseEvent *event) {
+  if (rust_node_id_ == 0) {
+    QWidget::mouseMoveEvent(event);
+    return;
+  }
   const QPointF pos = event->position();
   if (text_edit_session_.active() && (event->buttons() & Qt::LeftButton)) {
     qt_solid_spike::qt::qt_canvas_pointer_event(rust_node_id_, 4, pos.x(), pos.y());
@@ -102,4 +146,24 @@ void HostWindowWidget::forward_key_event(QKeyEvent *event, std::uint8_t event_ta
       rust_node_id_, event_tag, qt_key, mods,
       rust::Str(text_utf8.constData(), text_utf8.size()),
       repeat, scan_code, virtual_key);
+}
+
+void HostWindowWidget::contextMenuEvent(QContextMenuEvent *event) {
+  if (rust_node_id_ == 0) {
+    QWidget::contextMenuEvent(event);
+    return;
+  }
+  // Keyboard-triggered context menu (Menu key, Shift+F10).
+  // Mouse-triggered context menus are handled in mouseReleaseEvent.
+  if (event->reason() == QContextMenuEvent::Keyboard) {
+    const QPoint local = event->pos();
+    const QPoint global = event->globalPos();
+    qt_solid_spike::qt::qt_canvas_context_menu_event(
+        rust_node_id_,
+        static_cast<double>(local.x()),
+        static_cast<double>(local.y()),
+        static_cast<double>(global.x()),
+        static_cast<double>(global.y()));
+  }
+  event->accept();
 }

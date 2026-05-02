@@ -129,3 +129,6 @@ export type { CommandBarProps, CommandBarItem } from "./components/CommandBar.ts
 
 export { SettingCard } from "./components/SettingCard.tsx"
 export type { SettingCardProps } from "./components/SettingCard.tsx"
+
+export { useContextMenu } from "./composables/useContextMenu.tsx"
+export type { UseContextMenuOptions, UseContextMenuResult, ContextMenuEvent } from "./composables/useContextMenu.tsx"

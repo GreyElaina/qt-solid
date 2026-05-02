@@ -22,7 +22,7 @@ export interface MenuProps {
 
 const ITEM_HEIGHT = 36
 
-const MenuItemRow: Component<{
+export const MenuItemRow: Component<{
   item: MenuItem
   onSelect: () => void
 }> = (props) => {

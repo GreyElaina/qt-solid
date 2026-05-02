@@ -162,6 +162,7 @@ export interface CanvasEventProps {
   onPointerMove?: (e: unknown) => void
   onPointerEnter?: (e: unknown) => void
   onPointerLeave?: (e: unknown) => void
+  onContextMenu?: (e: { x: number; y: number; screenX: number; screenY: number }) => void
   onKeyDown?: (e: unknown) => void
   onKeyUp?: (e: unknown) => void
   onWheel?: (e: WheelEventPayload) => void

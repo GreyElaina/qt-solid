@@ -198,6 +198,7 @@ pub(crate) mod bridge {
         fn emit_debug_event(name: &str);
         fn emit_inspect_event(node_id: u32);
         fn qt_canvas_pointer_event(node_id: u32, event_tag: u8, x: f64, y: f64);
+        fn qt_canvas_context_menu_event(node_id: u32, x: f64, y: f64, screen_x: f64, screen_y: f64);
         fn qt_canvas_key_event(
             node_id: u32,
             event_tag: u8,
@@ -465,6 +466,10 @@ pub(crate) fn emit_inspect_event(node_id: u32) {
 
 pub(crate) fn qt_canvas_pointer_event(node_id: u32, event_tag: u8, x: f64, y: f64) {
     super::runtime::emit_canvas_pointer_event(node_id, event_tag, x, y);
+}
+
+pub(crate) fn qt_canvas_context_menu_event(node_id: u32, x: f64, y: f64, screen_x: f64, screen_y: f64) {
+    super::runtime::emit_canvas_context_menu_event(node_id, x, y, screen_x, screen_y);
 }
 
 pub(crate) fn qt_canvas_key_event(

@@ -14,6 +14,10 @@ pub(crate) fn emit_canvas_pointer_event(node_id: u32, event_tag: u8, x: f64, y: 
     crate::runtime::emit_canvas_pointer_event(node_id, event_tag, x, y);
 }
 
+pub(crate) fn emit_canvas_context_menu_event(node_id: u32, x: f64, y: f64, screen_x: f64, screen_y: f64) {
+    crate::runtime::emit_canvas_context_menu_event(node_id, x, y, screen_x, screen_y);
+}
+
 pub(crate) fn emit_window_typed_event(node_id: u32, export_name: &str) {
     crate::runtime::emit_window_typed_event(node_id, export_name);
 }
