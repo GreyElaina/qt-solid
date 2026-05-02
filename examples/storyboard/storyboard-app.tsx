@@ -5,10 +5,18 @@ import {
   motion,
   AnimatePresence,
   defineIntrinsicComponent,
+  Router,
+  Outlet,
+  useNavigate,
+  useLocation,
+  useParams,
+  useBreadcrumbs,
+  useCanGoBack,
   type AppHandle,
   type WindowHandle,
   type CanvasRectProps,
   type CanvasGroupProps,
+  type RouteDefinition,
 } from "@qt-solid/solid"
 import {
   createSignal,
@@ -51,6 +59,7 @@ import {
   TitleLabel,
   DisplayLabel,
   useContextMenu,
+  Breadcrumb,
 } from "@qt-solid/fluent"
 
 // ---------------------------------------------------------------------------
@@ -627,6 +636,165 @@ const ContextMenuDemo: Component = () => {
 }
 
 // ---------------------------------------------------------------------------
+// Routing · Router + Outlet + Breadcrumb demo
+// ---------------------------------------------------------------------------
+
+const RoutingHomeView: Component = () => {
+  const theme = useTheme()
+  const nav = useNavigate()
+  return (
+    <group flexDirection="column" gap={12} padding={16}>
+      <SubtitleLabel text="Home" />
+      <BodyLabel text="Welcome to the routing demo. Pick a section:" />
+      <group flexDirection="row" gap={8}>
+        <Button onClick={() => nav.push("/settings/general")}>Settings</Button>
+        <Button onClick={() => nav.push("/users/42")}>User #42</Button>
+        <Button onClick={() => nav.push("/users/7")}>User #7</Button>
+      </group>
+    </group>
+  )
+}
+
+const RoutingSettingsView: Component = () => {
+  const theme = useTheme()
+  return (
+    <group flexDirection="column" gap={8} padding={16}>
+      <SubtitleLabel text="Settings" />
+      <Outlet />
+    </group>
+  )
+}
+
+const RoutingGeneralView: Component = () => (
+  <group flexDirection="column" gap={8}>
+    <BodyLabel text="General settings page" />
+    <group flexDirection="row" gap={8} alignItems="center">
+      <BodyLabel text="Notifications" />
+      <Toggle checked={true} />
+    </group>
+    <group flexDirection="row" gap={8} alignItems="center">
+      <BodyLabel text="Dark mode auto-switch" />
+      <Toggle checked={false} />
+    </group>
+  </group>
+)
+
+const RoutingAccountsView: Component = () => (
+  <group flexDirection="column" gap={8}>
+    <BodyLabel text="Accounts settings page" />
+    <BodyLabel text="user@example.com" />
+  </group>
+)
+
+const RoutingAboutView: Component = () => (
+  <group flexDirection="column" gap={8}>
+    <BodyLabel text="About this app" />
+    <CaptionLabel text="qt-solid storyboard v0.0.0" />
+  </group>
+)
+
+const RoutingUserView: Component = () => {
+  const params = useParams()
+  return (
+    <group flexDirection="column" gap={8} padding={16}>
+      <SubtitleLabel text={`User Profile: #${params().id ?? "?"}`} />
+      <BodyLabel text={`Viewing user with id = ${params().id ?? "unknown"}`} />
+    </group>
+  )
+}
+
+const ROUTING_DEMO_ROUTES: RouteDefinition[] = [
+  { path: "/", component: RoutingHomeView },
+  {
+    path: "/settings",
+    component: RoutingSettingsView,
+    children: [
+      { path: "/general", component: RoutingGeneralView },
+      { path: "/accounts", component: RoutingAccountsView },
+      { path: "/about", component: RoutingAboutView },
+    ],
+  },
+  { path: "/users/:id", component: RoutingUserView },
+]
+
+const RoutingDemo: Component = () => {
+  const theme = useTheme()
+
+  return (
+    <Router routes={ROUTING_DEMO_ROUTES} initial="/">
+      <RoutingDemoChrome />
+    </Router>
+  )
+}
+
+const RoutingDemoChrome: Component = () => {
+  const theme = useTheme()
+  const nav = useNavigate()
+  const location = useLocation()
+  const canGoBack = useCanGoBack()
+  const crumbs = useBreadcrumbs()
+
+  const breadcrumbItems = createMemo(() =>
+    crumbs().map((c) => ({ key: c.path, text: c.label })),
+  )
+
+  // Sidebar navigation items for the demo
+  const sidebarItems = [
+    { key: "/", label: "Home" },
+    { key: "/settings/general", label: "General" },
+    { key: "/settings/accounts", label: "Accounts" },
+    { key: "/settings/about", label: "About" },
+  ]
+
+  return (
+    <group flexDirection="column" gap={8}>
+      {/* Top bar: back button + breadcrumb */}
+      <group flexDirection="row" alignItems="center" gap={8}>
+        <Button
+          onClick={() => nav.pop()}
+          disabled={!canGoBack()}
+        >
+          ← Back
+        </Button>
+        <Breadcrumb
+          items={breadcrumbItems()}
+          onSelect={(key) => nav.push(key)}
+        />
+      </group>
+
+      <group flexDirection="row" gap={8}>
+        {/* Mini sidebar */}
+        <group flexDirection="column" gap={4} width={140}>
+          <For each={sidebarItems}>
+            {(item) => (
+              <Button
+                accent={location() === item.key || location().startsWith(item.key + "/")}
+                onClick={() => nav.push(item.key)}
+              >
+                {item.label}
+              </Button>
+            )}
+          </For>
+        </group>
+
+        {/* Outlet area */}
+        <rect
+          fill={theme().backgroundSecondary}
+          cornerRadius={8}
+          flexGrow={1}
+          minHeight={200}
+          flexDirection="column"
+        >
+          <Outlet />
+        </rect>
+      </group>
+
+      <CaptionLabel text={`Current location: ${location()}`} />
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Stories registry
 // ---------------------------------------------------------------------------
 
@@ -820,6 +988,12 @@ const STORIES: StoryDef[] = [
   {
     name: "Context Menu",
     render: () => <ContextMenuDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Routing",
+    render: () => <RoutingDemo />,
     axes: {},
     defaults: {},
   },

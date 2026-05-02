@@ -76,6 +76,28 @@ export type {
   ScreenDpi,
 } from "./platform/index.ts";
 
+// routing
+export {
+  Router,
+  Outlet,
+  useLocation,
+  useNavigate,
+  useParams,
+  useCanGoBack,
+  useStack,
+  useBreadcrumbs,
+  matchRoutes,
+} from "./routing/index.ts";
+export type {
+  RouteDefinition,
+  BranchEntry,
+  StackEntry,
+  NavigateFn,
+  RouterContextState,
+  OutletDepthState,
+  RouterProps,
+} from "./routing/index.ts";
+
 // app-level types
 export type {
   AppDefinition,
