@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use napi::Result;
 use crate::runtime::capture::WidgetCapture;
+use napi::Result;
 
 use crate::qt::ffi::bridge::{QtMotionMouseTarget, QtWindowCompositorDriveStatus};
 use crate::{
@@ -9,14 +9,10 @@ use crate::{
         QtCapturedWidgetComposingPart, QtDebugNodeBounds, QtWindowCaptureFrame,
         QtWindowCaptureGrouping,
     },
-    qt::{
-        self,
-        ffi::QtCompositorTarget,
-    },
+    qt::{self, ffi::QtCompositorTarget},
     runtime::{
-        current_app_generation, debug_node_bounds, ensure_live_node, invalid_arg,
+        NodeHandle, current_app_generation, debug_node_bounds, ensure_live_node, invalid_arg,
         node_by_id, qt_error, subtree_node_ids,
-        NodeHandle,
     },
 };
 
@@ -26,7 +22,6 @@ use super::{
     capture_qt_widget_exact_with_children, capture_widget_visible_rects,
     compositor_target_to_renderer,
 };
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowCaptureGrouping {
@@ -108,7 +103,6 @@ impl WindowCaptureComposingPart {
         })
     }
 }
-
 
 fn capture_window_part_exact(
     generation: u64,
@@ -248,7 +242,6 @@ pub(crate) fn capture_window_frame_exact(
     })
 }
 
-
 pub(crate) fn drive_frame(
     node_id: u32,
     target: QtCompositorTarget,
@@ -316,8 +309,8 @@ fn drive_fragment_surface_frame(
         return Ok(QtWindowCompositorDriveStatus::Idle);
     }
 
-    let layout = qt::qt_capture_widget_layout(node_id)
-        .map_err(|error| qt_error(error.what().to_owned()))?;
+    let layout =
+        qt::qt_capture_widget_layout(node_id).map_err(|error| qt_error(error.what().to_owned()))?;
 
     // Run taffy layout before painting so flex children get positioned.
     crate::canvas::fragment::fragment_store_compute_layout(
@@ -360,15 +353,20 @@ fn drive_fragment_surface_frame(
     let dirty_clips_logical: Vec<crate::canvas::vello::peniko::kurbo::Rect> = match &dirty_result {
         DirtyRectResult::Partial(rects) => {
             let sf = layout.scale_factor;
-            rects.iter().filter_map(|&(dx, dy, dw, dh)| {
-                if dw == 0 || dh == 0 { return None; }
-                Some(crate::canvas::vello::peniko::kurbo::Rect::new(
-                    dx as f64 / sf,
-                    dy as f64 / sf,
-                    (dx + dw) as f64 / sf,
-                    (dy + dh) as f64 / sf,
-                ))
-            }).collect()
+            rects
+                .iter()
+                .filter_map(|&(dx, dy, dw, dh)| {
+                    if dw == 0 || dh == 0 {
+                        return None;
+                    }
+                    Some(crate::canvas::vello::peniko::kurbo::Rect::new(
+                        dx as f64 / sf,
+                        dy as f64 / sf,
+                        (dx + dw) as f64 / sf,
+                        (dy + dh) as f64 / sf,
+                    ))
+                })
+                .collect()
         }
         _ => Vec::new(),
     };
@@ -380,10 +378,12 @@ fn drive_fragment_surface_frame(
         crate::canvas::fragment::fragment_store_set_dirty_clips(node_id, Vec::new());
 
         let backdrop_blurs = crate::canvas::fragment::fragment_store_collect_backdrop_blurs(
-            node_id, layout.scale_factor,
+            node_id,
+            layout.scale_factor,
         );
         let inner_shadows = crate::canvas::fragment::fragment_store_collect_inner_shadows(
-            node_id, layout.scale_factor,
+            node_id,
+            layout.scale_factor,
         );
 
         match render_plan {
@@ -416,8 +416,8 @@ fn drive_fragment_surface_frame(
 
         // Wrap each subtree with dirty clip layer if partial render.
         if !dirty_clips_logical.is_empty() {
-            use anyrender::PaintScene;
             use crate::canvas::vello::peniko::kurbo::{BezPath, Shape};
+            use anyrender::PaintScene;
             let mut clip_path = BezPath::new();
             for rect in &dirty_clips_logical {
                 clip_path.extend(rect.path_elements(0.0));
@@ -447,11 +447,12 @@ fn drive_fragment_surface_frame(
                 v => v == 1,
             };
             if enabled && !dirty_clips_logical.is_empty() {
-                use anyrender::PaintScene;
-                use crate::canvas::vello::peniko::kurbo::Stroke;
                 use crate::canvas::vello::peniko::Color;
+                use crate::canvas::vello::peniko::kurbo::Stroke;
+                use anyrender::PaintScene;
 
-                static FRAME_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                static FRAME_COUNTER: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
                 let frame = FRAME_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let colors = [
                     Color::from_rgba8(255, 0, 0, 128),
@@ -466,25 +467,40 @@ fn drive_fragment_surface_frame(
                     *dirty = true; // Force re-record since we modified it.
                     last
                 } else {
-                    subtrees.push((crate::canvas::fragment::FragmentId(u32::MAX - 1), crate::canvas::vello::Scene::new(), true));
+                    subtrees.push((
+                        crate::canvas::fragment::FragmentId(u32::MAX - 1),
+                        crate::canvas::vello::Scene::new(),
+                        true,
+                    ));
                     &mut subtrees.last_mut().unwrap().1
                 };
                 for (i, clip_rect) in dirty_clips_logical.iter().enumerate() {
                     let color = colors[(frame as usize + i) % colors.len()];
                     let fill_color = Color::from_rgba8(
-                        color.to_rgba8().r, color.to_rgba8().g, color.to_rgba8().b, 24,
+                        color.to_rgba8().r,
+                        color.to_rgba8().g,
+                        color.to_rgba8().b,
+                        24,
                     );
-                    debug_scene.fill(peniko::Fill::NonZero, Affine::IDENTITY, fill_color, None, clip_rect);
+                    debug_scene.fill(
+                        peniko::Fill::NonZero,
+                        Affine::IDENTITY,
+                        fill_color,
+                        None,
+                        clip_rect,
+                    );
                     debug_scene.stroke(&Stroke::new(2.0), Affine::IDENTITY, color, None, clip_rect);
                 }
             }
         }
 
         let backdrop_blurs = crate::canvas::fragment::fragment_store_collect_backdrop_blurs(
-            node_id, layout.scale_factor,
+            node_id,
+            layout.scale_factor,
         );
         let inner_shadows = crate::canvas::fragment::fragment_store_collect_inner_shadows(
-            node_id, layout.scale_factor,
+            node_id,
+            layout.scale_factor,
         );
 
         crate::renderer::compositor::render_and_present_subtrees(

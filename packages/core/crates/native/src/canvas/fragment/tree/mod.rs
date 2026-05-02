@@ -9,13 +9,14 @@ use std::collections::{HashMap, HashSet};
 
 use taffy::prelude::*;
 
-use crate::canvas::fragment::node::{FragmentData, FragmentNode, FragmentProps, LayoutResult, SemanticsData};
-use crate::canvas::fragment::types::{
-    FragmentId, FragmentLayerKey, FragmentLayoutChange,
-    FragmentListeners, FRAGMENT_LAYER_KEY_BASE,
+use crate::canvas::fragment::node::{
+    FragmentData, FragmentNode, FragmentProps, LayoutResult, SemanticsData,
 };
-use crate::vello::peniko::kurbo::{Rect, Vec2};
+use crate::canvas::fragment::types::{
+    FRAGMENT_LAYER_KEY_BASE, FragmentId, FragmentLayerKey, FragmentLayoutChange, FragmentListeners,
+};
 use crate::vello::Scene;
+use crate::vello::peniko::kurbo::{Rect, Vec2};
 
 // ---------------------------------------------------------------------------
 // SendTaffy — safe wrapper for TaffyTree (single-threaded access)
@@ -30,11 +31,15 @@ unsafe impl Sync for SendTaffy {}
 
 impl std::ops::Deref for SendTaffy {
     type Target = TaffyTree<()>;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl std::ops::DerefMut for SendTaffy {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl std::fmt::Debug for SendTaffy {
@@ -92,10 +97,12 @@ pub struct FragmentTree {
 impl Default for FragmentTree {
     fn default() -> Self {
         let mut taffy = SendTaffy(TaffyTree::new());
-        let taffy_root = taffy.new_leaf(taffy::Style {
-            flex_shrink: 0.0,
-            ..Default::default()
-        }).unwrap();
+        let taffy_root = taffy
+            .new_leaf(taffy::Style {
+                flex_shrink: 0.0,
+                ..Default::default()
+            })
+            .unwrap();
         Self {
             nodes: HashMap::new(),
             root_children: Vec::new(),
@@ -137,20 +144,27 @@ impl FragmentTree {
         for id in ids {
             let node = &self.nodes[&id];
             let (tag, w, h) = match &node.kind {
-                FragmentData::Rect(r) =>
-                    (format!("rect fill={}", r.fill.is_some()), r.width, r.height),
-                FragmentData::Text(t) =>
-                    (format!("text \"{}\"", &t.text[..t.text.len().min(16)]), 0.0, 0.0),
-                FragmentData::Group(_) =>
-                    ("group".into(), node.layout.width, node.layout.height),
+                FragmentData::Rect(r) => {
+                    (format!("rect fill={}", r.fill.is_some()), r.width, r.height)
+                }
+                FragmentData::Text(t) => (
+                    format!("text \"{}\"", &t.text[..t.text.len().min(16)]),
+                    0.0,
+                    0.0,
+                ),
+                FragmentData::Group(_) => ("group".into(), node.layout.width, node.layout.height),
                 _ => ("other".into(), 0.0, 0.0),
             };
             eprintln!(
                 "[frag-dump] id={:<4} par={:<6} x={:<8.1} y={:<8.1} w={:<8.1} h={:<8.1} clip={} vis={} ch={:?}  {}",
                 id.0,
                 node.parent.map_or("-".into(), |p| p.0.to_string()),
-                node.render_x(), node.render_y(), w, h,
-                node.props.clip as u8, node.props.visible as u8,
+                node.render_x(),
+                node.render_y(),
+                w,
+                h,
+                node.props.clip as u8,
+                node.props.visible as u8,
                 node.children.iter().map(|c| c.0).collect::<Vec<_>>(),
                 tag,
             );
@@ -173,16 +187,21 @@ impl FragmentTree {
         // Auto-infer semantics role from fragment kind
         let inferred_semantics = match &kind {
             FragmentData::Text(_) => Some(SemanticsData::with_role(accesskit::Role::Label)),
-            FragmentData::TextInput(_) => Some(SemanticsData::with_role(accesskit::Role::TextInput)),
+            FragmentData::TextInput(_) => {
+                Some(SemanticsData::with_role(accesskit::Role::TextInput))
+            }
             FragmentData::Image(_) => Some(SemanticsData::with_role(accesskit::Role::Image)),
             FragmentData::Group(_) => Some(SemanticsData::with_role(accesskit::Role::Group)),
             _ => None,
         };
 
-        let taffy_node = self.taffy.new_leaf(taffy::Style {
-            flex_shrink: 0.0,
-            ..Default::default()
-        }).ok();
+        let taffy_node = self
+            .taffy
+            .new_leaf(taffy::Style {
+                flex_shrink: 0.0,
+                ..Default::default()
+            })
+            .ok();
         self.nodes.insert(
             id,
             FragmentNode {
@@ -285,9 +304,7 @@ impl FragmentTree {
                 let taffy_parent = parent_node.and_then(|n| n.taffy_node);
                 (children, taffy_parent)
             }
-            None => {
-                (self.root_children.clone(), self.taffy_root)
-            }
+            None => (self.root_children.clone(), self.taffy_root),
         };
 
         if let Some(tp) = taffy_parent {
@@ -411,7 +428,11 @@ impl FragmentTree {
             match self.nodes.get(&cur).and_then(|n| n.parent) {
                 Some(p) => cur = p,
                 None => {
-                    return if self.root_children.contains(&cur) { Some(cur) } else { None };
+                    return if self.root_children.contains(&cur) {
+                        Some(cur)
+                    } else {
+                        None
+                    };
                 }
             }
         }
@@ -465,10 +486,14 @@ impl FragmentTree {
     /// so that layout passes produce correct sizes.
     fn sync_intrinsic_leaf_measures(&mut self) {
         // Sync fixed measure for text nodes with shaped cache.
-        let text_sizes: Vec<(taffy::tree::NodeId, f32, f32)> = self.nodes.values()
+        let text_sizes: Vec<(taffy::tree::NodeId, f32, f32)> = self
+            .nodes
+            .values()
             .filter_map(|node| {
                 if let (Some(tn), FragmentData::Text(text)) = (node.taffy_node, &node.kind) {
-                    text.shaped.as_ref().map(|s| (tn, s.width as f32, s.height as f32))
+                    text.shaped
+                        .as_ref()
+                        .map(|s| (tn, s.width as f32, s.height as f32))
                 } else {
                     None
                 }
@@ -484,10 +509,14 @@ impl FragmentTree {
         }
 
         // Sync fixed measure for text input nodes with layout cache.
-        let input_sizes: Vec<(taffy::tree::NodeId, f32, f32)> = self.nodes.values()
+        let input_sizes: Vec<(taffy::tree::NodeId, f32, f32)> = self
+            .nodes
+            .values()
             .filter_map(|node| {
                 if let (Some(tn), FragmentData::TextInput(ti)) = (node.taffy_node, &node.kind) {
-                    ti.layout.as_ref().map(|l| (tn, l.width as f32, l.height as f32))
+                    ti.layout
+                        .as_ref()
+                        .map(|l| (tn, l.width as f32, l.height as f32))
                 } else {
                     None
                 }
@@ -503,10 +532,15 @@ impl FragmentTree {
         }
 
         // Sync fixed measure for circle nodes from radius.
-        let circle_sizes: Vec<(taffy::tree::NodeId, f32)> = self.nodes.values()
+        let circle_sizes: Vec<(taffy::tree::NodeId, f32)> = self
+            .nodes
+            .values()
             .filter_map(|node| {
                 if let (Some(tn), FragmentData::Circle(circle)) = (node.taffy_node, &node.kind) {
-                    if circle.r > 0.0 && node.props.explicit_width.is_none() && node.props.explicit_height.is_none() {
+                    if circle.r > 0.0
+                        && node.props.explicit_width.is_none()
+                        && node.props.explicit_height.is_none()
+                    {
                         Some((tn, (circle.r * 2.0) as f32))
                     } else {
                         None
@@ -529,8 +563,14 @@ impl FragmentTree {
     }
 
     /// Run taffy layout and apply results to fragment nodes.
-    pub fn compute_layout(&mut self, available_width: f64, available_height: f64) -> Vec<FragmentLayoutChange> {
-        let Some(root) = self.taffy_root else { return Vec::new() };
+    pub fn compute_layout(
+        &mut self,
+        available_width: f64,
+        available_height: f64,
+    ) -> Vec<FragmentLayoutChange> {
+        let Some(root) = self.taffy_root else {
+            return Vec::new();
+        };
 
         let mut root_style = self.taffy.style(root).cloned().unwrap_or_default();
         root_style.size = taffy::geometry::Size {
@@ -573,8 +613,8 @@ impl FragmentTree {
             let node = self.nodes.get_mut(&id).unwrap();
             let has_listener = node.listeners.contains(FragmentListeners::LAYOUT);
 
-            let pos_changed = (node.layout.x - lx).abs() > 0.01
-                || (node.layout.y - ly).abs() > 0.01;
+            let pos_changed =
+                (node.layout.x - lx).abs() > 0.01 || (node.layout.y - ly).abs() > 0.01;
             if pos_changed {
                 node.layout.x = lx;
                 node.layout.y = ly;
@@ -587,8 +627,8 @@ impl FragmentTree {
                 }
             }
 
-            let layout_size_changed = (node.layout.width - lw).abs() > 0.01
-                || (node.layout.height - lh).abs() > 0.01;
+            let layout_size_changed =
+                (node.layout.width - lw).abs() > 0.01 || (node.layout.height - lh).abs() > 0.01;
             if layout_size_changed {
                 node.layout.width = lw;
                 node.layout.height = lh;
@@ -650,11 +690,7 @@ impl FragmentTree {
     }
 
     /// Modify taffy style for a fragment node.
-    pub fn with_taffy_style_mut(
-        &mut self,
-        id: FragmentId,
-        f: impl FnOnce(&mut taffy::Style),
-    ) {
+    pub fn with_taffy_style_mut(&mut self, id: FragmentId, f: impl FnOnce(&mut taffy::Style)) {
         let Some(taffy_node) = self.nodes.get(&id).and_then(|n| n.taffy_node) else {
             return;
         };
@@ -671,9 +707,9 @@ impl FragmentTree {
     // -----------------------------------------------------------------------
 
     pub(crate) fn sorted_children_by_z(&self, children: &[FragmentId]) -> Vec<FragmentId> {
-        let needs_sort = children.iter().any(|id| {
-            self.nodes.get(id).map_or(false, |n| n.props.z_index != 0)
-        });
+        let needs_sort = children
+            .iter()
+            .any(|id| self.nodes.get(id).map_or(false, |n| n.props.z_index != 0));
         if !needs_sort {
             return children.to_vec();
         }
@@ -682,10 +718,13 @@ impl FragmentTree {
         sorted
     }
 
-    fn sorted_children_by_z_static(nodes: &HashMap<FragmentId, FragmentNode>, children: &[FragmentId]) -> Vec<FragmentId> {
-        let needs_sort = children.iter().any(|id| {
-            nodes.get(id).map_or(false, |n| n.props.z_index != 0)
-        });
+    fn sorted_children_by_z_static(
+        nodes: &HashMap<FragmentId, FragmentNode>,
+        children: &[FragmentId],
+    ) -> Vec<FragmentId> {
+        let needs_sort = children
+            .iter()
+            .any(|id| nodes.get(id).map_or(false, |n| n.props.z_index != 0));
         if !needs_sort {
             return children.to_vec();
         }
@@ -693,5 +732,4 @@ impl FragmentTree {
         sorted.sort_by_key(|id| nodes.get(id).map_or(0, |n| n.props.z_index));
         sorted
     }
-
 }

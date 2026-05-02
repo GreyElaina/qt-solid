@@ -1,5 +1,5 @@
-use super::super::vello::peniko::kurbo::{Affine, Point, Rect, Shape};
 use super::super::vello::peniko::BlendMode;
+use super::super::vello::peniko::kurbo::{Affine, Point, Rect, Shape};
 use super::super::vello::{PaintScene, Scene};
 use super::types::{FragmentClipShape, PaintChunk, push_fragment_layer};
 
@@ -21,9 +21,26 @@ pub(crate) struct PaintCollector {
 }
 
 impl PaintCollector {
-    pub(crate) fn push_layer(&mut self, transform: Affine, clip: Option<FragmentClipShape>, opacity: f32, blend_mode: BlendMode) {
-        push_fragment_layer(&mut self.current_inline, transform, clip.as_ref(), opacity, blend_mode);
-        self.layer_stack.push(LayerEntry { transform, clip, opacity, blend_mode });
+    pub(crate) fn push_layer(
+        &mut self,
+        transform: Affine,
+        clip: Option<FragmentClipShape>,
+        opacity: f32,
+        blend_mode: BlendMode,
+    ) {
+        push_fragment_layer(
+            &mut self.current_inline,
+            transform,
+            clip.as_ref(),
+            opacity,
+            blend_mode,
+        );
+        self.layer_stack.push(LayerEntry {
+            transform,
+            clip,
+            opacity,
+            blend_mode,
+        });
     }
 
     pub(crate) fn pop_layer(&mut self) {
@@ -52,7 +69,13 @@ impl PaintCollector {
     pub(crate) fn resume_inline_after_split(&mut self) {
         self.current_inline = Scene::new();
         for entry in &self.layer_stack {
-            push_fragment_layer(&mut self.current_inline, entry.transform, entry.clip.as_ref(), entry.opacity, entry.blend_mode);
+            push_fragment_layer(
+                &mut self.current_inline,
+                entry.transform,
+                entry.clip.as_ref(),
+                entry.opacity,
+                entry.blend_mode,
+            );
         }
     }
 
@@ -97,8 +120,14 @@ pub(crate) fn transform_local_bounds_to_world(local_bounds: Rect, transform: Aff
     ];
     let min_x = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
     let min_y = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-    let max_x = corners.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-    let max_y = corners.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+    let max_x = corners
+        .iter()
+        .map(|p| p.x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let max_y = corners
+        .iter()
+        .map(|p| p.y)
+        .fold(f64::NEG_INFINITY, f64::max);
     Rect::new(min_x, min_y, max_x, max_y)
 }
 

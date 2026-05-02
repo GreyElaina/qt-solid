@@ -50,11 +50,19 @@ impl FragmentStore {
         }
     }
 
-    pub(crate) fn with<T>(&self, node_id: u32, run: impl FnOnce(&crate::canvas::fragment::FragmentTree) -> T) -> Option<T> {
+    pub(crate) fn with<T>(
+        &self,
+        node_id: u32,
+        run: impl FnOnce(&crate::canvas::fragment::FragmentTree) -> T,
+    ) -> Option<T> {
         self.trees.get(&node_id).map(run)
     }
 
-    pub(crate) fn with_mut<T>(&mut self, node_id: u32, run: impl FnOnce(&mut crate::canvas::fragment::FragmentTree) -> T) -> Option<T> {
+    pub(crate) fn with_mut<T>(
+        &mut self,
+        node_id: u32,
+        run: impl FnOnce(&mut crate::canvas::fragment::FragmentTree) -> T,
+    ) -> Option<T> {
         self.trees.get_mut(&node_id).map(run)
     }
 

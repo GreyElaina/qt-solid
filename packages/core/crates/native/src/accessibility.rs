@@ -22,10 +22,10 @@ mod platform {
     use objc2_app_kit::NSView;
     use once_cell::sync::Lazy;
 
+    use crate::canvas::fragment::FragmentData;
     use crate::canvas::fragment::accessibility::text::{
         char_index_to_utf16_offset, node_id_to_fragment_id,
     };
-    use crate::canvas::fragment::FragmentData;
 
     use crate::accessibility_bridge;
 
@@ -62,14 +62,18 @@ mod platform {
 
     unsafe extern "C" fn a11y_children(this: &NSView, _cmd: Sel) -> *mut AnyObject {
         let ptr = this as *const NSView as usize;
-        with_adapter(ptr, |adapter, handler| adapter.view_children(handler) as *mut AnyObject)
-            .unwrap_or(std::ptr::null_mut())
+        with_adapter(ptr, |adapter, handler| {
+            adapter.view_children(handler) as *mut AnyObject
+        })
+        .unwrap_or(std::ptr::null_mut())
     }
 
     unsafe extern "C" fn a11y_focused_element(this: &NSView, _cmd: Sel) -> *mut AnyObject {
         let ptr = this as *const NSView as usize;
-        with_adapter(ptr, |adapter, handler| adapter.focus(handler) as *mut AnyObject)
-            .unwrap_or(std::ptr::null_mut())
+        with_adapter(ptr, |adapter, handler| {
+            adapter.focus(handler) as *mut AnyObject
+        })
+        .unwrap_or(std::ptr::null_mut())
     }
 
     #[repr(C)]
@@ -86,7 +90,7 @@ mod platform {
             let ns_point = unsafe { std::mem::transmute::<CGPoint, _>(point) };
             adapter.hit_test(ns_point, handler) as *mut AnyObject
         })
-            .unwrap_or(std::ptr::null_mut())
+        .unwrap_or(std::ptr::null_mut())
     }
 
     // ── Patch accessibility methods onto QNSView class ─────────────────
@@ -116,20 +120,18 @@ mod platform {
             ffi::class_replaceMethod(
                 cls,
                 sel!(accessibilityChildren),
-                std::mem::transmute::<
-                    unsafe extern "C" fn(&NSView, Sel) -> *mut AnyObject,
-                    Imp,
-                >(a11y_children),
+                std::mem::transmute::<unsafe extern "C" fn(&NSView, Sel) -> *mut AnyObject, Imp>(
+                    a11y_children,
+                ),
                 c"@@:".as_ptr(),
             );
 
             ffi::class_replaceMethod(
                 cls,
                 sel!(accessibilityFocusedUIElement),
-                std::mem::transmute::<
-                    unsafe extern "C" fn(&NSView, Sel) -> *mut AnyObject,
-                    Imp,
-                >(a11y_focused_element),
+                std::mem::transmute::<unsafe extern "C" fn(&NSView, Sel) -> *mut AnyObject, Imp>(
+                    a11y_focused_element,
+                ),
                 c"@@:".as_ptr(),
             );
 
@@ -287,7 +289,9 @@ mod platform {
             Adapter::new(
                 nsview_ptr as *mut c_void,
                 false,
-                FragmentActionHandler { canvas_node_id: window_node_id },
+                FragmentActionHandler {
+                    canvas_node_id: window_node_id,
+                },
             )
         };
 
@@ -296,10 +300,13 @@ mod platform {
         });
 
         let view_key = nsview_ptr as usize;
-        VIEW_ADAPTERS.lock().unwrap().insert(view_key, AdapterEntry {
-            adapter,
-            activation_handler,
-        });
+        VIEW_ADAPTERS.lock().unwrap().insert(
+            view_key,
+            AdapterEntry {
+                adapter,
+                activation_handler,
+            },
+        );
 
         PlatformA11yState {
             view_ptr: view_key,
@@ -314,17 +321,13 @@ mod platform {
             return;
         };
         if let Some(events) = entry.adapter.update_if_active(|| {
-            crate::runtime::with_fragment_tree(canvas_id, |tree| {
-                tree.build_full_accesskit_update()
-            })
-            .unwrap_or_else(|| {
-                accesskit::TreeUpdate {
+            crate::runtime::with_fragment_tree(canvas_id, |tree| tree.build_full_accesskit_update())
+                .unwrap_or_else(|| accesskit::TreeUpdate {
                     nodes: vec![],
                     tree: None,
                     tree_id: accesskit::TreeId::ROOT,
                     focus: accesskit::NodeId(u64::MAX),
-                }
-            })
+                })
         }) {
             events.raise();
         }

@@ -15,12 +15,8 @@ pub(crate) fn spec() -> QtWgpuRendererBuildSpec {
             "../qt-compositor/src/cpp/qt_wgpu_platform_macos.mm",
         ],
         include_dirs: &["../qt-compositor/include"],
-        cpp_sources: &[
-            "../qt-compositor/src/cpp/qt_wgpu_platform.cpp",
-        ],
-        objc_sources: &[
-            "../qt-compositor/src/cpp/qt_wgpu_platform_macos.mm",
-        ],
+        cpp_sources: &["../qt-compositor/src/cpp/qt_wgpu_platform.cpp"],
+        objc_sources: &["../qt-compositor/src/cpp/qt_wgpu_platform_macos.mm"],
     }
 }
 

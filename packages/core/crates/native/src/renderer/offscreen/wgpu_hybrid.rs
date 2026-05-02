@@ -1,18 +1,13 @@
 use std::{collections::HashMap, sync::Mutex, time::Instant};
 
-use once_cell::sync::Lazy;
 use crate::canvas::vello::{Scene, peniko::kurbo::Affine};
 use crate::hybrid_image_cache::{HybridImageCache, sweep_stale_images};
-use anyrender::PaintScene;
 #[cfg(not(target_os = "macos"))]
 use crate::runtime::capture::{WidgetCapture, WidgetCaptureFormat};
+use anyrender::PaintScene;
+use once_cell::sync::Lazy;
 use vello::wgpu;
-use vello_hybrid::{
-    RenderSize,
-    RenderTargetConfig,
-    Renderer,
-    Scene as HybridScene,
-};
+use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene};
 
 use crate::runtime::qt_error;
 
@@ -55,17 +50,17 @@ fn hybrid_scene_from_logical_scene(
     image_cache: &mut HybridImageCache,
 ) -> qt_compositor::Result<HybridScene> {
     let started = Instant::now();
-    let width_u16 = u16::try_from(width_px)
-        .map_err(|_| qt_compositor::QtCompositorError::new("scene width exceeds vello_hybrid range"))?;
-    let height_u16 = u16::try_from(height_px)
-        .map_err(|_| qt_compositor::QtCompositorError::new("scene height exceeds vello_hybrid range"))?;
+    let width_u16 = u16::try_from(width_px).map_err(|_| {
+        qt_compositor::QtCompositorError::new("scene width exceeds vello_hybrid range")
+    })?;
+    let height_u16 = u16::try_from(height_px).map_err(|_| {
+        qt_compositor::QtCompositorError::new("scene height exceeds vello_hybrid range")
+    })?;
     let mut hybrid_scene = HybridScene::new(width_u16, height_u16);
-    let image_manager = anyrender_vello_hybrid::ImageManager::new(
-        renderer, device, queue, encoder, image_cache,
-    );
-    let mut painter = anyrender_vello_hybrid::VelloHybridScenePainter::new(
-        &mut hybrid_scene, image_manager,
-    );
+    let image_manager =
+        anyrender_vello_hybrid::ImageManager::new(renderer, device, queue, encoder, image_cache);
+    let mut painter =
+        anyrender_vello_hybrid::VelloHybridScenePainter::new(&mut hybrid_scene, image_manager);
     painter.append_scene(scene.clone(), Affine::scale(scale_factor));
     record_append_scene_metric(started.elapsed());
     Ok(hybrid_scene)
@@ -83,19 +78,21 @@ fn with_cached_renderer<T>(
     let mut renderers = HYBRID_RENDERERS
         .lock()
         .expect("vello_hybrid renderer cache mutex poisoned");
-    let entry = renderers.entry(key).or_insert_with(|| HybridRendererCacheEntry {
-        width_px,
-        height_px,
-        renderer: Renderer::new(
-            device,
-            &RenderTargetConfig {
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                width: width_px,
-                height: height_px,
-            },
-        ),
-        image_cache: HybridImageCache::default(),
-    });
+    let entry = renderers
+        .entry(key)
+        .or_insert_with(|| HybridRendererCacheEntry {
+            width_px,
+            height_px,
+            renderer: Renderer::new(
+                device,
+                &RenderTargetConfig {
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    width: width_px,
+                    height: height_px,
+                },
+            ),
+            image_cache: HybridImageCache::default(),
+        });
     if entry.width_px != width_px || entry.height_px != height_px {
         entry.width_px = width_px;
         entry.height_px = height_px;
@@ -172,7 +169,9 @@ fn read_rgba_texture(
         .map_err(|error| qt_compositor::QtCompositorError::new(error.to_string()))?;
     receiver
         .recv()
-        .map_err(|_| qt_compositor::QtCompositorError::new("qt hybrid readback map channel closed"))?
+        .map_err(|_| {
+            qt_compositor::QtCompositorError::new("qt hybrid readback map channel closed")
+        })?
         .map_err(|error| qt_compositor::QtCompositorError::new(error.to_string()))?;
     let mapped = slice.get_mapped_range();
     let mut bytes = vec![0; bytes_per_row * height_px as usize];
@@ -234,12 +233,22 @@ pub(crate) fn render_scene_to_capture(
         }
         with_cached_renderer(target, node_id, width_px, height_px, device, |entry| {
             let hybrid_scene = hybrid_scene_from_logical_scene(
-                width_px, height_px, scale_factor, scene,
-                &mut entry.renderer, device, queue, &mut encoder,
+                width_px,
+                height_px,
+                scale_factor,
+                scene,
+                &mut entry.renderer,
+                device,
+                queue,
+                &mut encoder,
                 &mut entry.image_cache,
             )?;
             sweep_stale_images(
-                scene, &mut entry.renderer, device, queue, &mut encoder,
+                scene,
+                &mut entry.renderer,
+                device,
+                queue,
+                &mut encoder,
                 &mut entry.image_cache,
             );
             entry

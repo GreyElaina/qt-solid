@@ -7,9 +7,7 @@ pub(crate) struct QtTaffyLayoutBuildSpec {
 
 pub(crate) fn spec() -> QtTaffyLayoutBuildSpec {
     QtTaffyLayoutBuildSpec {
-        rerun_if_changed: &[
-            "include/qt/layout.h",
-        ],
+        rerun_if_changed: &["include/qt/layout.h"],
         include_dirs: &[],
     }
 }

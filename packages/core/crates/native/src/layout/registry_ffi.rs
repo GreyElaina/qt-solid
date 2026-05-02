@@ -46,16 +46,42 @@ pub mod registry_bridge {
         fn engine_set_justify_content(engine_id: u32, handle: u32, tag: u8);
 
         fn engine_set_gap_px(engine_id: u32, handle: u32, row: f32, column: f32);
-        fn engine_set_padding_px(engine_id: u32, handle: u32, top: f32, right: f32, bottom: f32, left: f32);
-        fn engine_set_margin_px(engine_id: u32, handle: u32, top: f32, right: f32, bottom: f32, left: f32);
+        fn engine_set_padding_px(
+            engine_id: u32,
+            handle: u32,
+            top: f32,
+            right: f32,
+            bottom: f32,
+            left: f32,
+        );
+        fn engine_set_margin_px(
+            engine_id: u32,
+            handle: u32,
+            top: f32,
+            right: f32,
+            bottom: f32,
+            left: f32,
+        );
         fn engine_set_margin_auto(engine_id: u32, handle: u32);
 
         fn engine_set_position_type(engine_id: u32, handle: u32, tag: u8);
-        fn engine_set_inset_px(engine_id: u32, handle: u32, top: f32, right: f32, bottom: f32, left: f32);
+        fn engine_set_inset_px(
+            engine_id: u32,
+            handle: u32,
+            top: f32,
+            right: f32,
+            bottom: f32,
+            left: f32,
+        );
         fn engine_set_aspect_ratio(engine_id: u32, handle: u32, ratio: f32);
 
         fn engine_set_fixed_measure(engine_id: u32, handle: u32, width: f32, height: f32);
-        fn engine_compute_layout(engine_id: u32, root: u32, available_width: f32, available_height: f32);
+        fn engine_compute_layout(
+            engine_id: u32,
+            root: u32,
+            available_width: f32,
+            available_height: f32,
+        );
         fn engine_get_layout(engine_id: u32, handle: u32) -> RegistryTaffyRect;
 
         fn child_layout_register(widget_id: u32);
@@ -70,7 +96,10 @@ pub mod registry_bridge {
 pub fn engine_create() -> registry_bridge::EngineHandle {
     with_layout(|r| {
         let (engine_id, root_node) = r.create_engine();
-        registry_bridge::EngineHandle { engine_id, root_node }
+        registry_bridge::EngineHandle {
+            engine_id,
+            root_node,
+        }
     })
 }
 
@@ -127,8 +156,16 @@ engine_op!(engine_set_inset_px => set_inset_px(handle: u32, top: f32, right: f32
 engine_op!(engine_set_aspect_ratio => set_aspect_ratio(handle: u32, ratio: f32));
 engine_op!(engine_set_fixed_measure => set_fixed_measure(handle: u32, width: f32, height: f32));
 
-pub fn engine_compute_layout(engine_id: u32, root: u32, available_width: f32, available_height: f32) {
-    with_layout(|r| r.engine_mut(engine_id).compute_layout(root, available_width, available_height));
+pub fn engine_compute_layout(
+    engine_id: u32,
+    root: u32,
+    available_width: f32,
+    available_height: f32,
+) {
+    with_layout(|r| {
+        r.engine_mut(engine_id)
+            .compute_layout(root, available_width, available_height)
+    });
 }
 
 pub fn engine_get_layout(engine_id: u32, handle: u32) -> registry_bridge::RegistryTaffyRect {
@@ -167,5 +204,7 @@ pub fn child_layout_set_taffy_handle(widget_id: u32, handle: u32, engine_id: u32
 }
 
 pub fn child_layout_clear_taffy_handle(widget_id: u32) {
-    with_layout(|r| r.child_layout_mut(widget_id).taffy_child_handle = layout_state::NO_TAFFY_HANDLE);
+    with_layout(|r| {
+        r.child_layout_mut(widget_id).taffy_child_handle = layout_state::NO_TAFFY_HANDLE
+    });
 }

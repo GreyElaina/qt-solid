@@ -1,8 +1,5 @@
+use super::super::vello::peniko::{BlendMode, Color, Fill, kurbo::RoundedRectRadii};
 use super::decl::{FragmentBlendMode, FragmentValue};
-use super::super::vello::peniko::{
-    kurbo::RoundedRectRadii,
-    BlendMode, Color, Fill,
-};
 use super::types::{BorderSide, FillPaint, FragmentBoxShadow, FragmentBrush, GradientStop};
 
 // ---------------------------------------------------------------------------
@@ -40,7 +37,9 @@ pub(crate) fn parse_css_hex_color(s: &str) -> Option<Color> {
 }
 
 pub(crate) fn parse_gradient_stops(offsets: &[f64], colors: &[String]) -> Vec<GradientStop> {
-    offsets.iter().zip(colors.iter())
+    offsets
+        .iter()
+        .zip(colors.iter())
         .filter_map(|(&offset, color_str)| {
             parse_css_hex_color(color_str).map(|color| GradientStop { offset, color })
         })
@@ -49,26 +48,72 @@ pub(crate) fn parse_gradient_stops(offsets: &[f64], colors: &[String]) -> Vec<Gr
 
 pub fn parse_brush_from_wire(value: &FragmentValue) -> Option<FragmentBrush> {
     match value {
-        FragmentValue::Str { value: s } => {
-            parse_css_hex_color(s).map(|color| FragmentBrush::Solid(FillPaint {
+        FragmentValue::Str { value: s } => parse_css_hex_color(s).map(|color| {
+            FragmentBrush::Solid(FillPaint {
                 color,
                 rule: Fill::NonZero,
-            }))
-        }
-        FragmentValue::LinearGradient { start_x, start_y, end_x, end_y, stop_offsets, stop_colors } => {
+            })
+        }),
+        FragmentValue::LinearGradient {
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            stop_offsets,
+            stop_colors,
+        } => {
             let stops = parse_gradient_stops(stop_offsets, stop_colors);
-            if stops.is_empty() { None }
-            else { Some(FragmentBrush::LinearGradient { start_x: *start_x, start_y: *start_y, end_x: *end_x, end_y: *end_y, stops }) }
+            if stops.is_empty() {
+                None
+            } else {
+                Some(FragmentBrush::LinearGradient {
+                    start_x: *start_x,
+                    start_y: *start_y,
+                    end_x: *end_x,
+                    end_y: *end_y,
+                    stops,
+                })
+            }
         }
-        FragmentValue::RadialGradient { center_x, center_y, radius, stop_offsets, stop_colors } => {
+        FragmentValue::RadialGradient {
+            center_x,
+            center_y,
+            radius,
+            stop_offsets,
+            stop_colors,
+        } => {
             let stops = parse_gradient_stops(stop_offsets, stop_colors);
-            if stops.is_empty() { None }
-            else { Some(FragmentBrush::RadialGradient { center_x: *center_x, center_y: *center_y, radius: *radius, stops }) }
+            if stops.is_empty() {
+                None
+            } else {
+                Some(FragmentBrush::RadialGradient {
+                    center_x: *center_x,
+                    center_y: *center_y,
+                    radius: *radius,
+                    stops,
+                })
+            }
         }
-        FragmentValue::SweepGradient { center_x, center_y, start_angle, end_angle, stop_offsets, stop_colors } => {
+        FragmentValue::SweepGradient {
+            center_x,
+            center_y,
+            start_angle,
+            end_angle,
+            stop_offsets,
+            stop_colors,
+        } => {
             let stops = parse_gradient_stops(stop_offsets, stop_colors);
-            if stops.is_empty() { None }
-            else { Some(FragmentBrush::SweepGradient { center_x: *center_x, center_y: *center_y, start_angle: *start_angle, end_angle: *end_angle, stops }) }
+            if stops.is_empty() {
+                None
+            } else {
+                Some(FragmentBrush::SweepGradient {
+                    center_x: *center_x,
+                    center_y: *center_y,
+                    start_angle: *start_angle,
+                    end_angle: *end_angle,
+                    stops,
+                })
+            }
         }
         _ => None,
     }
@@ -76,31 +121,36 @@ pub fn parse_brush_from_wire(value: &FragmentValue) -> Option<FragmentBrush> {
 
 pub fn parse_shadow_from_wire(value: &FragmentValue) -> Option<FragmentBoxShadow> {
     match value {
-        FragmentValue::BoxShadow { offset_x, offset_y, blur, color, inset } => {
-            parse_css_hex_color(color).map(|c| FragmentBoxShadow {
-                offset_x: *offset_x,
-                offset_y: *offset_y,
-                blur: *blur,
-                color: c,
-                inset: *inset,
-            })
-        }
+        FragmentValue::BoxShadow {
+            offset_x,
+            offset_y,
+            blur,
+            color,
+            inset,
+        } => parse_css_hex_color(color).map(|c| FragmentBoxShadow {
+            offset_x: *offset_x,
+            offset_y: *offset_y,
+            blur: *blur,
+            color: c,
+            inset: *inset,
+        }),
         _ => None,
     }
 }
 
 pub fn parse_border_from_wire(value: &FragmentValue) -> Option<BorderSide> {
     match value {
-        FragmentValue::Border { width, color } => {
-            parse_css_hex_color(color).map(|c| BorderSide { width: *width, color: c })
-        }
+        FragmentValue::Border { width, color } => parse_css_hex_color(color).map(|c| BorderSide {
+            width: *width,
+            color: c,
+        }),
         _ => None,
     }
 }
 
 impl From<FragmentBlendMode> for BlendMode {
     fn from(mode: FragmentBlendMode) -> Self {
-        use super::super::vello::peniko::{Mix, Compose};
+        use super::super::vello::peniko::{Compose, Mix};
         let mix = match mode {
             FragmentBlendMode::Normal => return BlendMode::default(),
             FragmentBlendMode::Multiply => Mix::Multiply,
@@ -119,16 +169,27 @@ impl From<FragmentBlendMode> for BlendMode {
             FragmentBlendMode::Color => Mix::Color,
             FragmentBlendMode::Luminosity => Mix::Luminosity,
         };
-        BlendMode { mix, compose: Compose::SrcOver }
+        BlendMode {
+            mix,
+            compose: Compose::SrcOver,
+        }
     }
 }
 
 pub fn parse_radii_from_wire(value: &FragmentValue) -> Option<RoundedRectRadii> {
     match value {
         FragmentValue::F64 { value } => Some(RoundedRectRadii::from_single_radius(*value)),
-        FragmentValue::Radii { top_left, top_right, bottom_right, bottom_left } => {
-            Some(RoundedRectRadii::new(*top_left, *top_right, *bottom_right, *bottom_left))
-        }
+        FragmentValue::Radii {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        } => Some(RoundedRectRadii::new(
+            *top_left,
+            *top_right,
+            *bottom_right,
+            *bottom_left,
+        )),
         _ => None,
     }
 }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use napi::Result;
 use crate::canvas::vello::FrameTime as VelloFrameTime;
+use napi::Result;
 
 use crate::runtime::{NodeHandle, node_by_id, node_parent_id, wrap_node_id};
 
@@ -38,5 +38,7 @@ pub(crate) fn qt_window_frame_tick(node_id: u32) -> Result<()> {
 pub(crate) fn qt_window_frame_take_next_frame_request(node_id: u32) -> Result<bool> {
     let node = wrap_node_id(node_id)?;
     let window_id = node.inner().id;
-    Ok(crate::renderer::with_renderer_mut(|r| r.scheduler.take_next_frame_request(window_id)))
+    Ok(crate::renderer::with_renderer_mut(|r| {
+        r.scheduler.take_next_frame_request(window_id)
+    }))
 }

@@ -1,6 +1,6 @@
-use napi::Result;
 use crate::canvas::vello::Scene;
 use crate::runtime::capture::WidgetCapture;
+use napi::Result;
 
 mod cpu;
 #[cfg(not(target_os = "macos"))]

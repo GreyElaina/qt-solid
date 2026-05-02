@@ -144,12 +144,18 @@ impl WidgetCapture {
                     continue;
                 }
                 let (r, g, b, a) = match self.format {
-                    WidgetCaptureFormat::Argb32Premultiplied => {
-                        (self.bytes[off + 1], self.bytes[off + 2], self.bytes[off + 3], self.bytes[off])
-                    }
-                    WidgetCaptureFormat::Rgba8Premultiplied => {
-                        (self.bytes[off], self.bytes[off + 1], self.bytes[off + 2], self.bytes[off + 3])
-                    }
+                    WidgetCaptureFormat::Argb32Premultiplied => (
+                        self.bytes[off + 1],
+                        self.bytes[off + 2],
+                        self.bytes[off + 3],
+                        self.bytes[off],
+                    ),
+                    WidgetCaptureFormat::Rgba8Premultiplied => (
+                        self.bytes[off],
+                        self.bytes[off + 1],
+                        self.bytes[off + 2],
+                        self.bytes[off + 3],
+                    ),
                 };
                 let pixel = if a == 0 {
                     [0, 0, 0, 0]

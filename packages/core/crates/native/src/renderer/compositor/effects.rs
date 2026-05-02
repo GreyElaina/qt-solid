@@ -31,7 +31,10 @@ fn effect_pipeline(device: &wgpu::Device) -> &'static EffectPipelineState {
 }
 
 fn create_pipeline(device: &wgpu::Device) -> EffectPipelineState {
-    let shader_source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/inner_shadow.wgsl"));
+    let shader_source = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/inner_shadow.wgsl"
+    ));
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("inner-shadow-shader"),
         source: wgpu::ShaderSource::Wgsl(shader_source.into()),
@@ -97,9 +100,7 @@ fn create_pipeline(device: &wgpu::Device) -> EffectPipelineState {
         cache: None,
     });
 
-    EffectPipelineState {
-        pipeline,
-    }
+    EffectPipelineState { pipeline }
 }
 
 /// Apply inner shadow effects to the given render target.
@@ -218,7 +219,10 @@ fn blur_pipeline(device: &wgpu::Device) -> &'static BlurPipelineState {
 }
 
 fn create_blur_pipeline(device: &wgpu::Device) -> BlurPipelineState {
-    let shader_source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/backdrop_blur.wgsl"));
+    let shader_source = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/shaders/backdrop_blur.wgsl"
+    ));
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("backdrop-blur-shader"),
         source: wgpu::ShaderSource::Wgsl(shader_source.into()),
@@ -382,8 +386,7 @@ pub fn apply_backdrop_blurs(
     let scratch = scratch_guard.as_ref().unwrap();
 
     // Create a separate view of the target texture for sampling.
-    let target_sample_view =
-        target_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let target_sample_view = target_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     for effect in effects {
         // Horizontal uniform: direction = (1, 0)

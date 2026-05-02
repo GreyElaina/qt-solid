@@ -25,7 +25,10 @@ impl FragmentTree {
         let Some(node) = self.nodes.get_mut(&id) else {
             return false;
         };
-        let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
+        let mut timeline = node
+            .timeline
+            .take()
+            .unwrap_or_else(motion::NodeTimeline::new);
         timeline.set_targets(targets, default_transition, per_property, now, delay_secs);
         let (sampled, animating) = timeline.sample_pose(now);
         apply_sampled_pose_to_fragment(node, &sampled, &timeline);
@@ -53,8 +56,18 @@ impl FragmentTree {
         let Some(node) = self.nodes.get_mut(&id) else {
             return false;
         };
-        let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
-        timeline.set_targets_keyframes(targets, times, default_transition, per_property, now, delay_secs);
+        let mut timeline = node
+            .timeline
+            .take()
+            .unwrap_or_else(motion::NodeTimeline::new);
+        timeline.set_targets_keyframes(
+            targets,
+            times,
+            default_transition,
+            per_property,
+            now,
+            delay_secs,
+        );
         let (sampled, animating) = timeline.sample_pose(now);
         apply_sampled_pose_to_fragment(node, &sampled, &timeline);
         if !animating {
@@ -117,7 +130,9 @@ impl FragmentTree {
         }
         if any_non_promoted_sampled {
             // Collect animated non-promoted IDs for targeted cache invalidation.
-            let animated_ids: Vec<FragmentId> = self.nodes.values()
+            let animated_ids: Vec<FragmentId> = self
+                .nodes
+                .values()
                 .filter(|n| n.timeline.as_ref().map_or(false, |t| t.is_animating()) && !n.promoted)
                 .map(|n| n.id)
                 .collect();
@@ -171,7 +186,10 @@ impl FragmentTree {
         let Some(node) = self.nodes.get_mut(&id) else {
             return;
         };
-        let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
+        let mut timeline = node
+            .timeline
+            .take()
+            .unwrap_or_else(motion::NodeTimeline::new);
         let instant = motion::TransitionSpec::Instant;
         let targets: Vec<(motion::PropertyKey, f64)> = vec![
             (motion::PropertyKey::ScrollX, x),
@@ -209,7 +227,10 @@ impl FragmentTree {
         let Some(node) = self.nodes.get_mut(&id) else {
             return false;
         };
-        let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
+        let mut timeline = node
+            .timeline
+            .take()
+            .unwrap_or_else(motion::NodeTimeline::new);
         let targets: Vec<(motion::PropertyKey, f64)> = vec![
             (motion::PropertyKey::ScrollX, clamped_x),
             (motion::PropertyKey::ScrollY, clamped_y),
@@ -241,7 +262,10 @@ impl FragmentTree {
         let node = self.nodes.get(&id)?;
         let taffy_node = node.taffy_node?;
         let layout = self.taffy.layout(taffy_node).ok()?;
-        Some((layout.content_size.width as f64, layout.content_size.height as f64))
+        Some((
+            layout.content_size.width as f64,
+            layout.content_size.height as f64,
+        ))
     }
 
     /// Compute intrinsic (max-content) size of the fragment tree.
@@ -267,7 +291,10 @@ impl FragmentTree {
         };
         let _ = self.taffy.compute_layout(root, available);
         let layout = self.taffy.layout(root).ok()?;
-        Some((layout.size.width.ceil() as f64, layout.size.height.ceil() as f64))
+        Some((
+            layout.size.width.ceil() as f64,
+            layout.size.height.ceil() as f64,
+        ))
     }
 
     /// Start a layout FLIP animation: instantly set layout channels to the
@@ -285,7 +312,10 @@ impl FragmentTree {
         let Some(node) = self.nodes.get_mut(&id) else {
             return false;
         };
-        let mut timeline = node.timeline.take().unwrap_or_else(motion::NodeTimeline::new);
+        let mut timeline = node
+            .timeline
+            .take()
+            .unwrap_or_else(motion::NodeTimeline::new);
 
         let invert_targets = [
             (motion::PropertyKey::LayoutX, dx),

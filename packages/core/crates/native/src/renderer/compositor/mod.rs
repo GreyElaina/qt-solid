@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::Mutex,
-};
+use std::{collections::HashMap, sync::Mutex};
 #[cfg(target_os = "macos")]
 use std::{ffi::c_void, ptr::NonNull};
 
@@ -9,14 +6,16 @@ use once_cell::sync::Lazy;
 pub(crate) mod effects;
 use crate::canvas::fragment::{FragmentId, FragmentLayerKey, RenderPlan};
 use crate::image::{HybridImageCache, sweep_stale_images};
-use vello::wgpu;
-use vello_hybrid::{AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene};
 use anyrender_vello_hybrid::Recording;
+use vello::wgpu;
+use vello_hybrid::{
+    AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene,
+};
 
 use crate::canvas::vello::Scene;
 use crate::canvas::vello::peniko::kurbo::Affine;
-use anyrender::PaintScene;
 use crate::runtime::qt_error;
+use anyrender::PaintScene;
 
 /// Per-promoted-layer GPU texture state.
 struct LayerTextureState {
@@ -106,8 +105,14 @@ enum SurfaceCreationError {
 static WINDOW_SURFACES: Lazy<Mutex<HashMap<u32, WindowRenderMode>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-const BLIT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/blit_shader.wgsl"));
-const COMPOSITE_LAYER_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/composite_layer.wgsl"));
+const BLIT_SHADER: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/shaders/blit_shader.wgsl"
+));
+const COMPOSITE_LAYER_SHADER: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/shaders/composite_layer.wgsl"
+));
 
 /// Like `render_and_present` but accepts per-subtree scenes with dirty flags
 /// for Recording-based strip caching. GPU path only (CPU falls back to merged).
@@ -185,7 +190,9 @@ pub(crate) fn render_and_present_subtrees(
         };
         drop(surfaces);
         let cached = render_cpu_and_present(node_id, target, scale_factor, &merged, cached)?;
-        let mut surfaces = WINDOW_SURFACES.lock().expect("surface_renderer mutex poisoned");
+        let mut surfaces = WINDOW_SURFACES
+            .lock()
+            .expect("surface_renderer mutex poisoned");
         if let Some(WindowRenderMode::Cpu(slot)) = surfaces.get_mut(&node_id) {
             *slot = Some(cached);
         }
@@ -201,7 +208,17 @@ pub(crate) fn render_and_present_subtrees(
         ws.surface.configure(&ws.device, &ws.config);
         recreate_render_textures(ws, width_px, height_px);
     }
-    render_gpu_and_present_subtrees(ws, width_px, height_px, scale_factor, &subtrees, backdrop_blurs, inner_shadows, dirty_rects, drawable_handle)?;
+    render_gpu_and_present_subtrees(
+        ws,
+        width_px,
+        height_px,
+        scale_factor,
+        &subtrees,
+        backdrop_blurs,
+        inner_shadows,
+        dirty_rects,
+        drawable_handle,
+    )?;
     Ok(true)
 }
 
@@ -240,8 +257,10 @@ fn render_cpu_and_present(
 
     let pixels = state.pixmap.data_as_u8_slice();
     let stride = width_px * 4;
-    crate::qt::ffi::bridge::qt_window_present_cpu_frame(node_id, pixels, width_px, height_px, stride)
-        .map_err(|e| qt_error(e.to_string()))?;
+    crate::qt::ffi::bridge::qt_window_present_cpu_frame(
+        node_id, pixels, width_px, height_px, stride,
+    )
+    .map_err(|e| qt_error(e.to_string()))?;
     Ok(state)
 }
 
@@ -263,9 +282,11 @@ fn render_gpu_and_present_subtrees(
     dirty_rects: Option<&[(u32, u32, u32, u32)]>,
     drawable_handle: u64,
 ) -> napi::Result<()> {
-    let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("qt-solid-surface-renderer-encoder"),
-    });
+    let mut encoder = ws
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("qt-solid-surface-renderer-encoder"),
+        });
 
     let is_noop = matches!(dirty_rects, Some(rects) if rects.is_empty());
     let partial_rects = dirty_rects.filter(|r| !r.is_empty());
@@ -280,9 +301,18 @@ fn render_gpu_and_present_subtrees(
         #[cfg(target_os = "macos")]
         if drawable_handle != 0 {
             ws.queue.submit([encoder.finish()]);
-            let source = if has_effects { &ws.output_texture } else { &ws.base_texture };
+            let source = if has_effects {
+                &ws.output_texture
+            } else {
+                &ws.base_texture
+            };
             raw_metal_present_to_drawable(
-                &mut ws.metal_present, &ws.queue, source, width_px, height_px, drawable_handle,
+                &mut ws.metal_present,
+                &ws.queue,
+                source,
+                width_px,
+                height_px,
+                drawable_handle,
             )?;
             return Ok(());
         }
@@ -293,7 +323,11 @@ fn render_gpu_and_present_subtrees(
         let surface_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let noop_bind_group = if has_effects { &ws.output_bind_group } else { &ws.base_bind_group };
+        let noop_bind_group = if has_effects {
+            &ws.output_bind_group
+        } else {
+            &ws.base_bind_group
+        };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("qt-solid-surface-blit-noop"),
@@ -344,8 +378,14 @@ fn render_gpu_and_present_subtrees(
             let dw = dw.min(width_px.saturating_sub(dx));
             let dh = dh.min(height_px.saturating_sub(dy));
             clear_texture_rect(
-                &ws.device, &mut encoder, &ws.base_texture,
-                &mut ws.zero_buffer, dx, dy, dw, dh,
+                &ws.device,
+                &mut encoder,
+                &ws.base_texture,
+                &mut ws.zero_buffer,
+                dx,
+                dy,
+                dw,
+                dh,
             );
         }
     }
@@ -353,8 +393,14 @@ fn render_gpu_and_present_subtrees(
     // Build hybrid scene using per-subtree Recording cache.
     let retained = ws.retained_hybrid_scene.take();
     let hybrid_scene = build_hybrid_scene_from_subtrees(
-        width_px, height_px, scale_factor, subtrees,
-        &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+        width_px,
+        height_px,
+        scale_factor,
+        subtrees,
+        &mut ws.renderer,
+        &ws.device,
+        &ws.queue,
+        &mut encoder,
         &mut ws.image_cache,
         retained,
         &mut ws.subtree_recordings,
@@ -363,7 +409,11 @@ fn render_gpu_and_present_subtrees(
     // Sweep stale images across all subtrees.
     for (_, sub_scene, _) in subtrees {
         sweep_stale_images(
-            sub_scene, &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            sub_scene,
+            &mut ws.renderer,
+            &ws.device,
+            &ws.queue,
+            &mut encoder,
             &mut ws.image_cache,
         );
     }
@@ -387,9 +437,11 @@ fn render_gpu_and_present_subtrees(
 
     let has_effects = if has_effects {
         ws.queue.submit([encoder.finish()]);
-        let mut fx_encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("qt-solid-surface-effect-encoder"),
-        });
+        let mut fx_encoder = ws
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("qt-solid-surface-effect-encoder"),
+            });
         fx_encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &ws.base_texture,
@@ -410,13 +462,21 @@ fn render_gpu_and_present_subtrees(
             },
         );
         effects::apply_backdrop_blurs(
-            &ws.device, &ws.queue, &mut fx_encoder,
-            &ws.output_texture, &ws.output_view,
-            tex_size, backdrop_blurs,
+            &ws.device,
+            &ws.queue,
+            &mut fx_encoder,
+            &ws.output_texture,
+            &ws.output_view,
+            tex_size,
+            backdrop_blurs,
         );
         effects::apply_inner_shadows(
-            &ws.device, &ws.queue, &mut fx_encoder,
-            &ws.output_view, tex_size, inner_shadows,
+            &ws.device,
+            &ws.queue,
+            &mut fx_encoder,
+            &ws.output_view,
+            tex_size,
+            inner_shadows,
         );
         encoder = fx_encoder;
         true
@@ -429,8 +489,19 @@ fn render_gpu_and_present_subtrees(
     if drawable_handle != 0 {
         ws.queue.submit([encoder.finish()]);
         ws.retained_hybrid_scene = Some(hybrid_scene);
-        let source = if has_effects { &ws.output_texture } else { &ws.base_texture };
-        raw_metal_present_to_drawable(&mut ws.metal_present, &ws.queue, source, width_px, height_px, drawable_handle)?;
+        let source = if has_effects {
+            &ws.output_texture
+        } else {
+            &ws.base_texture
+        };
+        raw_metal_present_to_drawable(
+            &mut ws.metal_present,
+            &ws.queue,
+            source,
+            width_px,
+            height_px,
+            drawable_handle,
+        )?;
         return Ok(());
     }
 
@@ -504,7 +575,9 @@ pub(crate) fn render_composited_and_present(
     if !surfaces.contains_key(&node_id) {
         if cfg!(target_os = "macos") || crate::renderer::with_renderer(|r| r.gpu_enabled(node_id)) {
             match create_window_surface(target) {
-                Ok(ws) => { surfaces.insert(node_id, WindowRenderMode::Gpu(ws)); }
+                Ok(ws) => {
+                    surfaces.insert(node_id, WindowRenderMode::Gpu(ws));
+                }
                 Err(SurfaceCreationError::NotReady(e)) => {
                     eprintln!("[qt-solid] surface not ready: {e}");
                     return Ok(false);
@@ -537,9 +610,11 @@ pub(crate) fn render_composited_and_present(
 
     let pose_only = render_plan.pose_only;
 
-    let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("qt-solid-composited-encoder"),
-    });
+    let mut encoder = ws
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("qt-solid-composited-encoder"),
+        });
 
     // --- Step 1: Render base scene into base_texture (unless pose-only) ---
     if !pose_only {
@@ -548,9 +623,12 @@ pub(crate) fn render_composited_and_present(
 
         if is_noop && render_plan.composited_layers.is_empty() {
             // Nothing dirty, no layers — just re-present.
-            let surface_texture = ws.surface.get_current_texture()
+            let surface_texture = ws
+                .surface
+                .get_current_texture()
                 .map_err(|e| qt_error(format!("surface acquire: {e}")))?;
-            let surface_view = surface_texture.texture
+            let surface_view = surface_texture
+                .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -603,8 +681,14 @@ pub(crate) fn render_composited_and_present(
                 let dw = dw.min(width_px.saturating_sub(dx));
                 let dh = dh.min(height_px.saturating_sub(dy));
                 clear_texture_rect(
-                    &ws.device, &mut encoder, &ws.base_texture,
-                    &mut ws.zero_buffer, dx, dy, dw, dh,
+                    &ws.device,
+                    &mut encoder,
+                    &ws.base_texture,
+                    &mut ws.zero_buffer,
+                    dx,
+                    dy,
+                    dw,
+                    dh,
                 );
             }
         }
@@ -612,20 +696,38 @@ pub(crate) fn render_composited_and_present(
         // Vello render base scene into base_texture.
         let retained = ws.retained_hybrid_scene.take();
         let hybrid_scene = build_hybrid_scene(
-            width_px, height_px, scale_factor, &render_plan.base_scene,
-            &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            width_px,
+            height_px,
+            scale_factor,
+            &render_plan.base_scene,
+            &mut ws.renderer,
+            &ws.device,
+            &ws.queue,
+            &mut encoder,
             &mut ws.image_cache,
             retained,
         )?;
         sweep_stale_images(
-            &render_plan.base_scene, &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            &render_plan.base_scene,
+            &mut ws.renderer,
+            &ws.device,
+            &ws.queue,
+            &mut encoder,
             &mut ws.image_cache,
         );
-        ws.renderer.render(
-            &hybrid_scene, &ws.device, &ws.queue, &mut encoder,
-            &RenderSize { width: width_px, height: height_px },
-            &ws.base_view,
-        ).map_err(|e| qt_error(format!("vello base render: {e}")))?;
+        ws.renderer
+            .render(
+                &hybrid_scene,
+                &ws.device,
+                &ws.queue,
+                &mut encoder,
+                &RenderSize {
+                    width: width_px,
+                    height: height_px,
+                },
+                &ws.base_view,
+            )
+            .map_err(|e| qt_error(format!("vello base render: {e}")))?;
         ws.retained_hybrid_scene = Some(hybrid_scene);
     }
 
@@ -640,12 +742,18 @@ pub(crate) fn render_composited_and_present(
         let lh = ((layer.bounds.height() * scale_factor).ceil() as u32).max(1);
 
         // Recreate texture if size changed or new layer.
-        let needs_recreate = ws.layer_textures.get(&layer.layer_key)
+        let needs_recreate = ws
+            .layer_textures
+            .get(&layer.layer_key)
             .map_or(true, |t| t.width != lw || t.height != lh);
         if needs_recreate {
             let texture = ws.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("qt-solid-layer-texture"),
-                size: wgpu::Extent3d { width: lw, height: lh, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: lw,
+                    height: lh,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -679,10 +787,16 @@ pub(crate) fn render_composited_and_present(
                     },
                 ],
             });
-            ws.layer_textures.insert(layer.layer_key, LayerTextureState {
-                view, width: lw, height: lh,
-                uniform_buffer, composite_bind_group,
-            });
+            ws.layer_textures.insert(
+                layer.layer_key,
+                LayerTextureState {
+                    view,
+                    width: lw,
+                    height: lh,
+                    uniform_buffer,
+                    composite_bind_group,
+                },
+            );
         }
 
         let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
@@ -709,20 +823,38 @@ pub(crate) fn render_composited_and_present(
 
         // Vello render layer scene into layer texture.
         let hybrid_scene = build_hybrid_scene(
-            lw, lh, scale_factor, &layer.scene,
-            &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            lw,
+            lh,
+            scale_factor,
+            &layer.scene,
+            &mut ws.renderer,
+            &ws.device,
+            &ws.queue,
+            &mut encoder,
             &mut ws.image_cache,
             None,
         )?;
         sweep_stale_images(
-            &layer.scene, &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            &layer.scene,
+            &mut ws.renderer,
+            &ws.device,
+            &ws.queue,
+            &mut encoder,
             &mut ws.image_cache,
         );
-        ws.renderer.render(
-            &hybrid_scene, &ws.device, &ws.queue, &mut encoder,
-            &RenderSize { width: lw, height: lh },
-            &lt.view,
-        ).map_err(|e| qt_error(format!("vello layer render: {e}")))?;
+        ws.renderer
+            .render(
+                &hybrid_scene,
+                &ws.device,
+                &ws.queue,
+                &mut encoder,
+                &RenderSize {
+                    width: lw,
+                    height: lh,
+                },
+                &lt.view,
+            )
+            .map_err(|e| qt_error(format!("vello layer render: {e}")))?;
     }
 
     // --- Step 3: Effects pass on base_texture → output_texture ---
@@ -741,16 +873,28 @@ pub(crate) fn render_composited_and_present(
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::Extent3d { width: width_px, height: height_px, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: width_px,
+                height: height_px,
+                depth_or_array_layers: 1,
+            },
         );
         effects::apply_backdrop_blurs(
-            &ws.device, &ws.queue, &mut encoder,
-            &ws.output_texture, &ws.output_view,
-            (width_px, height_px), backdrop_blurs,
+            &ws.device,
+            &ws.queue,
+            &mut encoder,
+            &ws.output_texture,
+            &ws.output_view,
+            (width_px, height_px),
+            backdrop_blurs,
         );
         effects::apply_inner_shadows(
-            &ws.device, &ws.queue, &mut encoder,
-            &ws.output_view, (width_px, height_px), inner_shadows,
+            &ws.device,
+            &ws.queue,
+            &mut encoder,
+            &ws.output_view,
+            (width_px, height_px),
+            inner_shadows,
         );
         &ws.output_bind_group
     } else {
@@ -758,9 +902,12 @@ pub(crate) fn render_composited_and_present(
     };
 
     // --- Step 4: Composite pass → surface ---
-    let surface_texture = ws.surface.get_current_texture()
+    let surface_texture = ws
+        .surface
+        .get_current_texture()
         .map_err(|e| qt_error(format!("surface acquire: {e}")))?;
-    let surface_view = surface_texture.texture
+    let surface_view = surface_texture
+        .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
     {
@@ -814,9 +961,13 @@ pub(crate) fn render_composited_and_present(
             // Update retained uniform buffer (zero alloc).
             let coeffs = layer.transform.as_coeffs();
             let uniform_data = make_layer_uniform(
-                &coeffs, layer.bounds.x0, layer.bounds.y0,
-                layer.bounds.width(), layer.bounds.height(),
-                width_px as f64 / scale_factor, height_px as f64 / scale_factor,
+                &coeffs,
+                layer.bounds.x0,
+                layer.bounds.y0,
+                layer.bounds.width(),
+                layer.bounds.height(),
+                width_px as f64 / scale_factor,
+                height_px as f64 / scale_factor,
                 layer.opacity,
             );
             ws.queue.write_buffer(&lt.uniform_buffer, 0, &uniform_data);
@@ -868,9 +1019,11 @@ pub(crate) fn blit_and_present(node_id: u32) -> napi::Result<()> {
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("qt-solid-surface-blit-only-encoder"),
-    });
+    let mut encoder = ws
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("qt-solid-surface-blit-only-encoder"),
+        });
 
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -970,21 +1123,17 @@ fn create_window_surface_with_backends(
                 .map_err(|e| SurfaceCreationError::NoGpu(format!("create surface: {e}")))?
         }
     };
-    let adapter = pollster::block_on(
-        instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-        }),
-    )
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        force_fallback_adapter: false,
+        compatible_surface: Some(&surface),
+    }))
     .map_err(|e| SurfaceCreationError::NoGpu(format!("request adapter: {e}")))?;
 
-    let (device, queue) = pollster::block_on(
-        adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("qt-solid-surface-renderer-device"),
-            ..Default::default()
-        }),
-    )
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("qt-solid-surface-renderer-device"),
+        ..Default::default()
+    }))
     .map_err(|e| SurfaceCreationError::NoGpu(format!("request device: {e}")))?;
 
     let capabilities = surface.get_capabilities(&adapter);
@@ -999,9 +1148,9 @@ fn create_window_surface_with_backends(
 
     let config = surface
         .get_default_config(&adapter, width_px, height_px)
-        .ok_or_else(|| SurfaceCreationError::NotReady(
-            "surface.get_default_config returned None".into(),
-        ))?;
+        .ok_or_else(|| {
+            SurfaceCreationError::NotReady("surface.get_default_config returned None".into())
+        })?;
 
     // Override format: vello outputs sRGB-encoded values into Rgba8Unorm.
     // Use a non-sRGB surface format so the blit pass copies verbatim without
@@ -1044,7 +1193,8 @@ fn create_window_surface_with_backends(
     if configure_failed.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(SurfaceCreationError::NotReady(format!(
             "surface.configure failed for hwnd=0x{:x} adapter={:?}",
-            target.primary_handle, adapter.get_info().name,
+            target.primary_handle,
+            adapter.get_info().name,
         )));
     }
 
@@ -1132,10 +1282,22 @@ fn create_window_surface_with_backends(
         ..Default::default()
     });
 
-    let (base_texture, base_view, base_bind_group) =
-        create_render_texture(&device, &blit_bind_group_layout, &blit_sampler, width_px, height_px, "base");
-    let (output_texture, output_view, output_bind_group) =
-        create_render_texture(&device, &blit_bind_group_layout, &blit_sampler, width_px, height_px, "output");
+    let (base_texture, base_view, base_bind_group) = create_render_texture(
+        &device,
+        &blit_bind_group_layout,
+        &blit_sampler,
+        width_px,
+        height_px,
+        "base",
+    );
+    let (output_texture, output_view, output_bind_group) = create_render_texture(
+        &device,
+        &blit_bind_group_layout,
+        &blit_sampler,
+        width_px,
+        height_px,
+        "output",
+    );
 
     // Composite pipeline: draw promoted layer textures with transform/opacity.
     let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -1174,11 +1336,12 @@ fn create_window_surface_with_backends(
                 },
             ],
         });
-    let composite_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("qt-solid-composite-layer-pl"),
-        bind_group_layouts: &[&composite_bind_group_layout],
-        immediate_size: 0,
-    });
+    let composite_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("qt-solid-composite-layer-pl"),
+            bind_group_layouts: &[&composite_bind_group_layout],
+            immediate_size: 0,
+        });
     let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("qt-solid-composite-layer-pipeline"),
         layout: Some(&composite_pipeline_layout),
@@ -1246,7 +1409,9 @@ fn create_render_texture(
     label_suffix: &str,
 ) -> (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(Box::leak(format!("qt-solid-surface-{label_suffix}-texture").into_boxed_str())),
+        label: Some(Box::leak(
+            format!("qt-solid-surface-{label_suffix}-texture").into_boxed_str(),
+        )),
         size: wgpu::Extent3d {
             width: width_px.max(1),
             height: height_px.max(1),
@@ -1264,7 +1429,9 @@ fn create_render_texture(
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(Box::leak(format!("qt-solid-surface-{label_suffix}-blit-bg").into_boxed_str())),
+        label: Some(Box::leak(
+            format!("qt-solid-surface-{label_suffix}-blit-bg").into_boxed_str(),
+        )),
         layout: bgl,
         entries: &[
             wgpu::BindGroupEntry {
@@ -1321,8 +1488,8 @@ fn build_hybrid_scene(
     image_cache: &mut HybridImageCache,
     retained: Option<HybridScene>,
 ) -> napi::Result<HybridScene> {
-    let width_u16 = u16::try_from(width_px)
-        .map_err(|_| qt_error("scene width exceeds vello_hybrid range"))?;
+    let width_u16 =
+        u16::try_from(width_px).map_err(|_| qt_error("scene width exceeds vello_hybrid range"))?;
     let height_u16 = u16::try_from(height_px)
         .map_err(|_| qt_error("scene height exceeds vello_hybrid range"))?;
     // Reuse retained scene if viewport size matches, else allocate new.
@@ -1333,12 +1500,10 @@ fn build_hybrid_scene(
         }
         _ => HybridScene::new(width_u16, height_u16),
     };
-    let image_manager = anyrender_vello_hybrid::ImageManager::new(
-        renderer, device, queue, encoder, image_cache,
-    );
-    let mut painter = anyrender_vello_hybrid::VelloHybridScenePainter::new(
-        &mut hybrid_scene, image_manager,
-    );
+    let image_manager =
+        anyrender_vello_hybrid::ImageManager::new(renderer, device, queue, encoder, image_cache);
+    let mut painter =
+        anyrender_vello_hybrid::VelloHybridScenePainter::new(&mut hybrid_scene, image_manager);
     painter.append_scene(scene.clone(), Affine::scale(scale_factor));
     Ok(hybrid_scene)
 }
@@ -1360,8 +1525,8 @@ fn build_hybrid_scene_from_subtrees(
 ) -> napi::Result<HybridScene> {
     use vello_common::recording::Recordable;
 
-    let width_u16 = u16::try_from(width_px)
-        .map_err(|_| qt_error("scene width exceeds vello_hybrid range"))?;
+    let width_u16 =
+        u16::try_from(width_px).map_err(|_| qt_error("scene width exceeds vello_hybrid range"))?;
     let height_u16 = u16::try_from(height_px)
         .map_err(|_| qt_error("scene height exceeds vello_hybrid range"))?;
     let mut hybrid_scene = match retained {
@@ -1387,7 +1552,11 @@ fn build_hybrid_scene_from_subtrees(
             recording.clear();
 
             let mut image_manager = anyrender_vello_hybrid::ImageManager::new(
-                renderer, device, queue, encoder, image_cache,
+                renderer,
+                device,
+                queue,
+                encoder,
+                image_cache,
             );
             anyrender_vello_hybrid::record_anyrender_scene(
                 &mut hybrid_scene,
@@ -1413,9 +1582,12 @@ fn build_hybrid_scene_from_subtrees(
 /// Build 64-byte uniform for composite_layer.wgsl LayerUniforms.
 fn make_layer_uniform(
     affine_coeffs: &[f64; 6],
-    bounds_x: f64, bounds_y: f64,
-    bounds_w: f64, bounds_h: f64,
-    viewport_w: f64, viewport_h: f64,
+    bounds_x: f64,
+    bounds_y: f64,
+    bounds_w: f64,
+    bounds_h: f64,
+    viewport_w: f64,
+    viewport_h: f64,
     opacity: f32,
 ) -> [u8; 64] {
     let mut data = [0u8; 64];
@@ -1447,16 +1619,23 @@ fn clear_texture_rect(
     encoder: &mut wgpu::CommandEncoder,
     texture: &wgpu::Texture,
     zero_buffer: &mut Option<(wgpu::Buffer, usize)>,
-    dx: u32, dy: u32, dw: u32, dh: u32,
+    dx: u32,
+    dy: u32,
+    dw: u32,
+    dh: u32,
 ) {
-    if dw == 0 || dh == 0 { return; }
+    if dw == 0 || dh == 0 {
+        return;
+    }
     let row_bytes = (dw as usize) * 4;
     // wgpu requires bytes_per_row aligned to 256 for copy_buffer_to_texture.
     let aligned_row = ((row_bytes + 255) & !255) as u32;
     let total_bytes = (aligned_row as usize) * (dh as usize);
 
     // Grow retained zero buffer if needed.
-    let needs_new = zero_buffer.as_ref().map_or(true, |&(_, sz)| sz < total_bytes);
+    let needs_new = zero_buffer
+        .as_ref()
+        .map_or(true, |&(_, sz)| sz < total_bytes);
     if needs_new {
         let alloc_size = (total_bytes * 2).next_power_of_two().max(4096);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1485,7 +1664,11 @@ fn clear_texture_rect(
             origin: wgpu::Origin3d { x: dx, y: dy, z: 0 },
             aspect: wgpu::TextureAspect::All,
         },
-        wgpu::Extent3d { width: dw, height: dh, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width: dw,
+            height: dh,
+            depth_or_array_layers: 1,
+        },
     );
 }
 
@@ -1500,16 +1683,16 @@ mod metal_present {
     use foreign_types::ForeignType;
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
+    use objc2_foundation::NSString;
     use objc2_metal::{
         MTLBlendFactor, MTLBlendOperation, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder,
-        MTLCommandQueue, MTLCompileOptions, MTLDevice, MTLDrawable, MTLLibrary,
-        MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
-        MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState,
-        MTLResource, MTLSamplerAddressMode, MTLSamplerDescriptor, MTLSamplerMinMagFilter,
-        MTLSamplerMipFilter, MTLSamplerState, MTLScissorRect, MTLStoreAction, MTLTexture,
+        MTLCommandQueue, MTLCompileOptions, MTLDevice, MTLDrawable, MTLLibrary, MTLLoadAction,
+        MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder, MTLRenderPassDescriptor,
+        MTLRenderPipelineDescriptor, MTLRenderPipelineState, MTLResource, MTLSamplerAddressMode,
+        MTLSamplerDescriptor, MTLSamplerMinMagFilter, MTLSamplerMipFilter, MTLSamplerState,
+        MTLScissorRect, MTLStoreAction, MTLTexture,
     };
     use objc2_quartz_core::CAMetalDrawable;
-    use objc2_foundation::NSString;
     use vello::wgpu;
 
     use crate::runtime::qt_error;
@@ -1625,10 +1808,7 @@ fragment float4 blit_fragment(VertexOut in [[stage_in]],
             .newSamplerStateWithDescriptor(&sampler_desc)
             .ok_or_else(|| qt_error("raw metal present: sampler creation failed"))?;
 
-        Ok(MetalPresentState {
-            pipeline,
-            sampler,
-        })
+        Ok(MetalPresentState { pipeline, sampler })
     }
 
     /// Present `source_texture` (a wgpu::Texture backed by Metal) to the
@@ -1647,9 +1827,7 @@ fragment float4 blit_fragment(VertexOut in [[stage_in]],
     ) -> napi::Result<()> {
         // Take ownership of the drawable. Drop guard ensures release on error.
         let drawable = unsafe {
-            Retained::from_raw(
-                drawable_handle as *mut ProtocolObject<dyn CAMetalDrawable>,
-            )
+            Retained::from_raw(drawable_handle as *mut ProtocolObject<dyn CAMetalDrawable>)
         }
         .ok_or_else(|| qt_error("raw metal present: drawable handle is null"))?;
 
@@ -1664,14 +1842,11 @@ fragment float4 blit_fragment(VertexOut in [[stage_in]],
         }
 
         // Extract raw Metal texture from the wgpu source texture.
-        let raw_source_texture = unsafe {
-            source_texture.as_hal::<wgpu_hal::metal::Api>()
-        }
-        .ok_or_else(|| qt_error("raw metal present: source texture is not Metal-backed"))?;
+        let raw_source_texture = unsafe { source_texture.as_hal::<wgpu_hal::metal::Api>() }
+            .ok_or_else(|| qt_error("raw metal present: source texture is not Metal-backed"))?;
 
         let raw_mtl_texture_ptr = unsafe {
-            raw_source_texture.raw_handle().as_ptr()
-                as *mut ProtocolObject<dyn MTLTexture>
+            raw_source_texture.raw_handle().as_ptr() as *mut ProtocolObject<dyn MTLTexture>
         };
         // Borrow (do not take ownership of) the wgpu-owned Metal texture.
         let source_mtl = unsafe { &*raw_mtl_texture_ptr };
@@ -1684,9 +1859,7 @@ fragment float4 blit_fragment(VertexOut in [[stage_in]],
         // Ensure Metal present state is cached.
         if metal_present.is_none() {
             let device = drawable_texture.device();
-            *metal_present = Some(create_metal_present_state(
-                &device, present_format,
-            )?);
+            *metal_present = Some(create_metal_present_state(&device, present_format)?);
         }
         let mp = metal_present.as_ref().unwrap();
 
@@ -1695,19 +1868,20 @@ fragment float4 blit_fragment(VertexOut in [[stage_in]],
         let hal_queue = unsafe { wgpu_queue.as_hal::<wgpu_hal::metal::Api>() }
             .ok_or_else(|| qt_error("raw metal present: wgpu queue is not Metal-backed"))?;
         let raw_queue_guard = hal_queue.as_raw().lock();
-        let raw_queue_ptr = ForeignType::as_ptr(&*raw_queue_guard)
-            as *mut ProtocolObject<dyn MTLCommandQueue>;
+        let raw_queue_ptr =
+            ForeignType::as_ptr(&*raw_queue_guard) as *mut ProtocolObject<dyn MTLCommandQueue>;
         let raw_queue: &ProtocolObject<dyn MTLCommandQueue> = unsafe { &*raw_queue_ptr };
 
         // Create command buffer on the same queue as wgpu.
-        let command_buffer = raw_queue.commandBuffer().ok_or_else(|| {
-            qt_error("raw metal present: command buffer allocation failed")
-        })?;
+        let command_buffer = raw_queue
+            .commandBuffer()
+            .ok_or_else(|| qt_error("raw metal present: command buffer allocation failed"))?;
 
         // Create a non-sRGB texture view of the drawable texture to render
         // into without automatic linear→sRGB conversion.
-        let target_view = drawable_texture.newTextureViewWithPixelFormat(present_format)
-        .ok_or_else(|| qt_error("raw metal present: failed to create non-sRGB texture view"))?;
+        let target_view = drawable_texture
+            .newTextureViewWithPixelFormat(present_format)
+            .ok_or_else(|| qt_error("raw metal present: failed to create non-sRGB texture view"))?;
 
         // Set up render pass targeting the non-sRGB view.
         let render_pass_descriptor = MTLRenderPassDescriptor::renderPassDescriptor();
@@ -1740,12 +1914,54 @@ fragment float4 blit_fragment(VertexOut in [[stage_in]],
 
         // Fullscreen quad: two triangles covering NDC [-1,1].
         let vertices = [
-            QuadVertex { px: -1.0, py:  1.0, u: 0.0, v: 0.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px:  1.0, py:  1.0, u: 1.0, v: 0.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px: -1.0, py: -1.0, u: 0.0, v: 1.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px: -1.0, py: -1.0, u: 0.0, v: 1.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px:  1.0, py:  1.0, u: 1.0, v: 0.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px:  1.0, py: -1.0, u: 1.0, v: 1.0, opacity: 1.0, padding: 0.0 },
+            QuadVertex {
+                px: -1.0,
+                py: 1.0,
+                u: 0.0,
+                v: 0.0,
+                opacity: 1.0,
+                padding: 0.0,
+            },
+            QuadVertex {
+                px: 1.0,
+                py: 1.0,
+                u: 1.0,
+                v: 0.0,
+                opacity: 1.0,
+                padding: 0.0,
+            },
+            QuadVertex {
+                px: -1.0,
+                py: -1.0,
+                u: 0.0,
+                v: 1.0,
+                opacity: 1.0,
+                padding: 0.0,
+            },
+            QuadVertex {
+                px: -1.0,
+                py: -1.0,
+                u: 0.0,
+                v: 1.0,
+                opacity: 1.0,
+                padding: 0.0,
+            },
+            QuadVertex {
+                px: 1.0,
+                py: 1.0,
+                u: 1.0,
+                v: 0.0,
+                opacity: 1.0,
+                padding: 0.0,
+            },
+            QuadVertex {
+                px: 1.0,
+                py: -1.0,
+                u: 1.0,
+                v: 1.0,
+                opacity: 1.0,
+                padding: 0.0,
+            },
         ];
 
         unsafe {
@@ -1785,5 +2001,12 @@ fn raw_metal_present_to_drawable(
     height_px: u32,
     drawable_handle: u64,
 ) -> napi::Result<()> {
-    metal_present::raw_metal_present_to_drawable(metal_present, wgpu_queue, source_texture, width_px, height_px, drawable_handle)
+    metal_present::raw_metal_present_to_drawable(
+        metal_present,
+        wgpu_queue,
+        source_texture,
+        width_px,
+        height_px,
+        drawable_handle,
+    )
 }

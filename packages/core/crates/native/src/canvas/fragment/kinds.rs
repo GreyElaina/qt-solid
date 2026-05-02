@@ -1,10 +1,10 @@
 use fragment_derive::Fragment;
 
-use super::decl::{FragmentMutation, FragmentPropDecl};
 use super::super::vello::peniko::{
-    kurbo::{BezPath, RoundedRectRadii},
     Color, ImageData,
+    kurbo::{BezPath, RoundedRectRadii},
 };
+use super::decl::{FragmentMutation, FragmentPropDecl};
 use super::types::{
     BorderSide, FillPaint, FragmentBoxShadow, FragmentBrush, ShapedTextCache, ShapedTextLayout,
     StrokePaint,
@@ -16,8 +16,7 @@ use super::types::{
 
 #[derive(Fragment, Debug, Clone, Default)]
 #[fragment(tag = "group", bounds = none)]
-pub struct GroupFragment {
-}
+pub struct GroupFragment {}
 
 #[derive(Fragment, Debug, Clone, Default)]
 #[fragment(tag = "rect", bounds = rect)]

@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use crate::canvas::fragment::paint::transform_local_bounds_to_world;
 use crate::canvas::fragment::types::FragmentId;
-use crate::vello::peniko::kurbo::{Rect, Shape};
 use crate::vello::Scene;
+use crate::vello::peniko::kurbo::{Rect, Shape};
 
 use super::FragmentTree;
 use anyrender::recording::RenderCommand;
@@ -93,7 +93,6 @@ impl FragmentTree {
         self.dirty_node_ids.clear();
         self.force_full_repaint = false;
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -126,14 +125,24 @@ pub(crate) fn scene_bounds(scene: &Scene) -> Option<Rect> {
                     None
                 } else {
                     let fs = gr.font_size as f64;
-                    let min_x = gr.glyphs.iter().map(|g| g.x as f64).fold(f64::INFINITY, f64::min);
-                    let max_x = gr.glyphs.iter().map(|g| g.x as f64).fold(f64::NEG_INFINITY, f64::max);
+                    let min_x = gr
+                        .glyphs
+                        .iter()
+                        .map(|g| g.x as f64)
+                        .fold(f64::INFINITY, f64::min);
+                    let max_x = gr
+                        .glyphs
+                        .iter()
+                        .map(|g| g.x as f64)
+                        .fold(f64::NEG_INFINITY, f64::max);
                     // Last glyph advance approximated as 0.6 * font_size.
                     let local = Rect::new(min_x, -fs * 0.8, max_x + fs * 0.6, fs * 0.2);
                     Some(transform_local_bounds_to_world(local, gr.transform))
                 }
             }
-            RenderCommand::PushLayer(_) | RenderCommand::PushClipLayer(_) | RenderCommand::PopLayer => None,
+            RenderCommand::PushLayer(_)
+            | RenderCommand::PushClipLayer(_)
+            | RenderCommand::PopLayer => None,
         };
 
         if let Some(b) = cmd_bounds {
@@ -177,10 +186,7 @@ fn wide_tile_count(x: u32, y: u32, w: u32, h: u32) -> u32 {
 }
 
 /// Union two device-pixel rects.
-fn union_device_rect(
-    a: (u32, u32, u32, u32),
-    b: (u32, u32, u32, u32),
-) -> (u32, u32, u32, u32) {
+fn union_device_rect(a: (u32, u32, u32, u32), b: (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
     let x0 = a.0.min(b.0);
     let y0 = a.1.min(b.1);
     let x1 = (a.0 + a.2).max(b.0 + b.2);
@@ -238,9 +244,8 @@ fn merge_dirty_rects_tile_aware(rects: &mut Vec<(u32, u32, u32, u32)>) {
             let mut j = i + 1;
             while j < rects.len() {
                 let merged = union_device_rect(rects[i], rects[j]);
-                let cost_separate =
-                    wide_tile_count(rects[i].0, rects[i].1, rects[i].2, rects[i].3)
-                        + wide_tile_count(rects[j].0, rects[j].1, rects[j].2, rects[j].3);
+                let cost_separate = wide_tile_count(rects[i].0, rects[i].1, rects[i].2, rects[i].3)
+                    + wide_tile_count(rects[j].0, rects[j].1, rects[j].2, rects[j].3);
                 let cost_merged = wide_tile_count(merged.0, merged.1, merged.2, merged.3);
                 if cost_merged <= cost_separate {
                     rects[i] = merged;

@@ -1,14 +1,14 @@
 pub mod ffi;
-pub mod state;
 pub mod registry_ffi;
+pub mod state;
 
 use ffi::bridge::TaffyRect;
+use taffy::geometry::{Rect, Size};
 use taffy::prelude::*;
 use taffy::style::{
-    AlignItems, AlignSelf, Dimension, FlexDirection, FlexWrap, JustifyContent,
-    LengthPercentage, LengthPercentageAuto, Position,
+    AlignItems, AlignSelf, Dimension, FlexDirection, FlexWrap, JustifyContent, LengthPercentage,
+    LengthPercentageAuto, Position,
 };
-use taffy::geometry::{Rect, Size};
 
 pub struct TaffyEngine {
     tree: TaffyTree<Size<f32>>,
@@ -48,10 +48,13 @@ impl TaffyEngine {
     }
 
     pub fn create_node(&mut self) -> u32 {
-        let node_id = self.tree.new_leaf(Style {
-            flex_shrink: 0.0,
-            ..Style::default()
-        }).unwrap();
+        let node_id = self
+            .tree
+            .new_leaf(Style {
+                flex_shrink: 0.0,
+                ..Style::default()
+            })
+            .unwrap();
         self.alloc_slot(node_id)
     }
 
@@ -162,7 +165,7 @@ impl TaffyEngine {
     pub fn set_align_self(&mut self, handle: u32, tag: u8) {
         self.with_style_mut(handle, |s| {
             s.align_self = match tag {
-                1 => None,              // Auto
+                1 => None, // Auto
                 2 => Some(AlignSelf::FlexStart),
                 3 => Some(AlignSelf::FlexEnd),
                 4 => Some(AlignSelf::Center),

@@ -3,8 +3,8 @@ pub(crate) mod pipeline;
 pub(crate) mod state;
 pub(crate) mod texture_widget;
 
-use napi::Result;
 use crate::runtime::capture::{WidgetCapture, WidgetCaptureFormat};
+use napi::Result;
 
 use crate::{
     qt::{self, ffi::QtCompositorTarget},
@@ -19,9 +19,7 @@ pub(crate) use state::Scheduler;
 pub(crate) use texture_widget::capture_painted_widget_exact_with_children;
 pub(crate) use texture_widget::capture_vello_widget_exact;
 
-fn compositor_surface_kind_to_renderer(
-    kind: qt::ffi::QtCompositorSurfaceKind,
-) -> Result<u8> {
+fn compositor_surface_kind_to_renderer(kind: qt::ffi::QtCompositorSurfaceKind) -> Result<u8> {
     let surface_kind = match kind {
         qt::ffi::QtCompositorSurfaceKind::AppKitNsView => {
             qt_compositor::QT_COMPOSITOR_SURFACE_APPKIT_NS_VIEW

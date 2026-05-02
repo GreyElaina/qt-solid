@@ -13,15 +13,15 @@
 //! `NSView setFrameSize:` when AppKit's dependent-key caching tries to
 //! introspect accessibility-related selectors.
 
-use std::cell::Cell;
-use std::ffi::c_void;
-use std::ptr;
 use objc2::ffi;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Imp, NSObject, Sel};
 use objc2::{msg_send, sel};
 use objc2_app_kit::NSView;
 use objc2_foundation::NSArray;
+use std::cell::Cell;
+use std::ffi::c_void;
+use std::ptr;
 
 // ── accessibilityParent override for the content view ──────────────────
 
@@ -42,10 +42,7 @@ thread_local! {
 /// IMP for `accessibilityChildren` on the window class.
 /// Merges super's children (title bar buttons etc.) with the content view's
 /// accesskit-provided children.
-unsafe extern "C" fn window_accessibility_children(
-    this: &NSObject,
-    _cmd: Sel,
-) -> *mut AnyObject {
+unsafe extern "C" fn window_accessibility_children(this: &NSObject, _cmd: Sel) -> *mut AnyObject {
     // Re-entrancy guard: NSWindow's default accessibilityChildren walks
     // accessibilityAttributeValue: which may call accessibilityChildren again.
     let reentrant = IN_PROGRESS.with(|f| {
@@ -63,7 +60,8 @@ unsafe extern "C" fn window_accessibility_children(
     // Call super's accessibilityChildren via objc_msgSendSuper.
     // We pass the *superclass* of the window's class so lookup starts
     // from the right level (skipping our added override).
-    let this_class: *const AnyClass = unsafe { ffi::object_getClass(ptr::from_ref(this) as *const AnyObject) };
+    let this_class: *const AnyClass =
+        unsafe { ffi::object_getClass(ptr::from_ref(this) as *const AnyObject) };
     let superclass: *const AnyClass = unsafe { ffi::class_getSuperclass(this_class) };
     let mut super_info = ffi::objc_super {
         receiver: ptr::from_ref(this) as *mut AnyObject,
@@ -92,7 +90,9 @@ unsafe extern "C" fn window_accessibility_children(
         let count: usize = ak_arr.len();
         for i in 0..count {
             let child: *mut AnyObject = unsafe { msg_send![ak_arr, objectAtIndex: i] };
-            if child.is_null() { continue; }
+            if child.is_null() {
+                continue;
+            }
             let responds: bool =
                 unsafe { msg_send![&*child, respondsToSelector: sel!(setAccessibilityParent:)] };
             if responds {
@@ -102,10 +102,11 @@ unsafe extern "C" fn window_accessibility_children(
         }
     }
 
-    let ak_empty = ak_children.is_null()
-        || (!ak_children.is_null() && unsafe { (*ak_children).len() } == 0);
-    let orig_empty =
-        original.is_null() || (!original.is_null() && unsafe { (*(original as *const NSArray<AnyObject>)).len() } == 0);
+    let ak_empty =
+        ak_children.is_null() || (!ak_children.is_null() && unsafe { (*ak_children).len() } == 0);
+    let orig_empty = original.is_null()
+        || (!original.is_null()
+            && unsafe { (*(original as *const NSArray<AnyObject>)).len() } == 0);
 
     if ak_empty {
         if original.is_null() {
@@ -157,10 +158,9 @@ pub(crate) unsafe fn bridge_nswindow_accessibility(nsview_ptr: *mut c_void) -> b
             ffi::class_addMethod(
                 view_cls as *mut AnyClass,
                 parent_sel,
-                std::mem::transmute::<
-                    unsafe extern "C" fn(&NSObject, Sel) -> *mut AnyObject,
-                    Imp,
-                >(view_accessibility_parent),
+                std::mem::transmute::<unsafe extern "C" fn(&NSObject, Sel) -> *mut AnyObject, Imp>(
+                    view_accessibility_parent,
+                ),
                 c"@@:".as_ptr(),
             );
         }
@@ -177,10 +177,9 @@ pub(crate) unsafe fn bridge_nswindow_accessibility(nsview_ptr: *mut c_void) -> b
             ffi::class_addMethod(
                 win_cls as *mut AnyClass,
                 sel,
-                std::mem::transmute::<
-                    unsafe extern "C" fn(&NSObject, Sel) -> *mut AnyObject,
-                    Imp,
-                >(window_accessibility_children),
+                std::mem::transmute::<unsafe extern "C" fn(&NSObject, Sel) -> *mut AnyObject, Imp>(
+                    window_accessibility_children,
+                ),
                 c"@@:".as_ptr(),
             );
         }

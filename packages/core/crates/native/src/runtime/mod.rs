@@ -5,16 +5,16 @@ pub mod types;
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
     },
     thread::{self, ThreadId},
 };
 
 use napi::{
+    Env, Error, Result, Status,
     bindgen_prelude::{Function, FunctionRef},
     threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode, UnknownReturnValue},
-    Env, Error, Result, Status,
 };
 use once_cell::sync::Lazy;
 
@@ -27,12 +27,12 @@ use qt_host::HostCapabilities as RawWindowHostCapabilities;
 use crate::{
     api::{
         AlignItems, FlexDirection, JustifyContent, QtDebugNodeBounds, QtDebugNodeSnapshot,
-        QtDebugSnapshot, QtHostEvent, QtNode, QtWindowCaptureFrame,
-        QtWindowFrameState, QtWindowHostCapabilities, QtWindowHostInfo, WindowPropUpdate,
+        QtDebugSnapshot, QtHostEvent, QtNode, QtWindowCaptureFrame, QtWindowFrameState,
+        QtWindowHostCapabilities, QtWindowHostInfo, WindowPropUpdate,
     },
     qt::{self, QtRealizedNodeState},
-    trace,
     renderer::scheduler,
+    trace,
 };
 
 pub(crate) const ROOT_NODE_ID: u32 = 1;
@@ -125,7 +125,6 @@ impl QtNodeInner {
     fn mark_destroyed_once(&self) -> bool {
         self.destroyed.swap(true, Ordering::SeqCst)
     }
-
 }
 
 pub(crate) trait NodeHandle {
@@ -226,7 +225,6 @@ impl RuntimeState {
             self.mark_destroyed(*id);
         }
     }
-
 }
 
 static JS_CALLBACK: Lazy<Mutex<Option<Arc<EventCallback>>>> = Lazy::new(|| Mutex::new(None));
@@ -327,9 +325,7 @@ pub(crate) fn emit_js_event(event: QtHostEvent) {
             Some(*node_id),
             Some(*listener_id),
         ),
-        _ => {
-            (0, None, None)
-        }
+        _ => (0, None, None),
     };
 
     let dispatch_mode = callback
@@ -367,8 +363,6 @@ pub(crate) fn current_app_generation() -> Result<u64> {
         .app_generation
         .ok_or_else(|| invalid_arg("Qt app is not active"))
 }
-
-
 
 pub(crate) fn ensure_live_node(node: &impl NodeHandle) -> Result<()> {
     if node.inner().is_destroyed() {
@@ -503,9 +497,7 @@ pub(crate) fn subtree_node_ids(generation: u64, node_id: u32) -> Result<Vec<u32>
     state.tree.subtree_handles(node_id).map_err(invalid_arg)
 }
 
-pub(crate) fn create_widget_inner(
-    generation: u64,
-) -> Result<Arc<QtNodeInner>> {
+pub(crate) fn create_widget_inner(generation: u64) -> Result<Arc<QtNodeInner>> {
     ensure_app_generation(generation)?;
 
     let (id, generation) = {
@@ -513,8 +505,7 @@ pub(crate) fn create_widget_inner(
         state.allocate_node_id()?
     };
 
-    qt::qt_create_widget(id, 1u8)
-        .map_err(|error| qt_error(error.what().to_owned()))?;
+    qt::qt_create_widget(id, 1u8).map_err(|error| qt_error(error.what().to_owned()))?;
 
     let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
     state.ensure_generation(generation)?;
@@ -547,8 +538,7 @@ fn current_window_host_backend_name() -> String {
 
 fn current_window_host_capabilities() -> QtWindowHostCapabilities {
     api_window_host_capabilities(
-        qt_host::capabilities()
-            .unwrap_or_else(qt_host::detected_capabilities),
+        qt_host::capabilities().unwrap_or_else(qt_host::detected_capabilities),
     )
 }
 
@@ -656,8 +646,6 @@ fn snapshot_from_realized_state(
     }
 }
 
-
-
 fn read_window_screen_x(node: &impl NodeHandle) -> Result<i32> {
     let bounds = qt::debug_node_bounds(node.inner().id);
     Ok(bounds.screen_x)
@@ -667,8 +655,6 @@ fn read_window_screen_y(node: &impl NodeHandle) -> Result<i32> {
     let bounds = qt::debug_node_bounds(node.inner().id);
     Ok(bounds.screen_y)
 }
-
-
 
 pub(crate) fn node_parent(node: &impl NodeHandle) -> Result<Option<QtNode>> {
     ensure_live_node(node)?;
@@ -733,11 +719,12 @@ pub(crate) fn insert_child(
     qt::qt_insert_child(parent.inner().id, child.inner().id, anchor_id_or_zero)
         .map_err(|error| qt_error(error.what().to_owned()))?;
 
-    if let Some(window_id) = scheduler::window_ancestor_id_for_node(
-        parent.inner().generation,
-        parent.inner().id,
-    )? {
-        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_scene_subtree(window_id, parent.inner().id));
+    if let Some(window_id) =
+        scheduler::window_ancestor_id_for_node(parent.inner().generation, parent.inner().id)?
+    {
+        crate::renderer::with_renderer_mut(|r| {
+            r.scheduler.mark_scene_subtree(window_id, parent.inner().id)
+        });
     }
     Ok(())
 }
@@ -758,11 +745,12 @@ pub(crate) fn remove_child(parent: &impl NodeHandle, child: &QtNode) -> Result<(
     qt::qt_remove_child(parent.inner().id, child.inner().id)
         .map_err(|error| qt_error(error.what().to_owned()))?;
 
-    if let Some(window_id) = scheduler::window_ancestor_id_for_node(
-        parent.inner().generation,
-        parent.inner().id,
-    )? {
-        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_scene_subtree(window_id, parent.inner().id));
+    if let Some(window_id) =
+        scheduler::window_ancestor_id_for_node(parent.inner().generation, parent.inner().id)?
+    {
+        crate::renderer::with_renderer_mut(|r| {
+            r.scheduler.mark_scene_subtree(window_id, parent.inner().id)
+        });
     }
     Ok(())
 }
@@ -814,7 +802,9 @@ pub(crate) fn destroy_node(node: &impl NodeHandle) -> Result<()> {
     }
     if let Some(window_id) = window_id {
         let dirty_node_id = parent_id.unwrap_or(window_id);
-        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_scene_subtree(window_id, dirty_node_id));
+        crate::renderer::with_renderer_mut(|r| {
+            r.scheduler.mark_scene_subtree(window_id, dirty_node_id)
+        });
     }
     Ok(())
 }
@@ -824,7 +814,9 @@ pub(crate) fn request_repaint(node: &impl NodeHandle) -> Result<()> {
     if let Some(window_id) =
         scheduler::window_ancestor_id_for_node(node.inner().generation, node.inner().id)?
     {
-        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_dirty_node(window_id, node.inner().id));
+        crate::renderer::with_renderer_mut(|r| {
+            r.scheduler.mark_dirty_node(window_id, node.inner().id)
+        });
     }
     let _ = qt::qt_request_window_compositor_frame(node.inner().id);
     qt::qt_request_repaint(node.inner().id).map_err(|error| qt_error(error.what().to_owned()))
@@ -840,7 +832,10 @@ pub(crate) fn request_overlay_next_frame_exact(
     overlay_node_id: u32,
 ) -> Result<()> {
     ensure_live_node(window)?;
-    crate::renderer::with_renderer_mut(|r| r.scheduler.mark_frame_tick_node(window.inner().id, overlay_node_id));
+    crate::renderer::with_renderer_mut(|r| {
+        r.scheduler
+            .mark_frame_tick_node(window.inner().id, overlay_node_id)
+    });
     if qt::qt_request_window_compositor_frame(window.inner().id)
         .map_err(|error| qt_error(error.what().to_owned()))?
     {
@@ -872,12 +867,15 @@ pub(crate) fn wire_event(node: &impl NodeHandle, export_id: u16) -> Result<()> {
     if node.inner().is_window() {
         let id = node.inner().id;
         return match export_name {
-            "onCloseRequested" => qt::qt_window_wire_close_requested(id)
-                .map_err(|e| qt_error(e.what().to_owned())),
-            "onHoverEnter" => qt::qt_window_wire_hover_enter(id)
-                .map_err(|e| qt_error(e.what().to_owned())),
-            "onHoverLeave" => qt::qt_window_wire_hover_leave(id)
-                .map_err(|e| qt_error(e.what().to_owned())),
+            "onCloseRequested" => {
+                qt::qt_window_wire_close_requested(id).map_err(|e| qt_error(e.what().to_owned()))
+            }
+            "onHoverEnter" => {
+                qt::qt_window_wire_hover_enter(id).map_err(|e| qt_error(e.what().to_owned()))
+            }
+            "onHoverLeave" => {
+                qt::qt_window_wire_hover_leave(id).map_err(|e| qt_error(e.what().to_owned()))
+            }
             _ => Err(invalid_arg(format!(
                 "unknown window event export {export_name}"
             ))),
@@ -895,36 +893,28 @@ pub(crate) fn apply_prop(node: &impl NodeHandle, update: WindowPropUpdate) -> Re
     let id = node.inner().id;
     match update {
         WindowPropUpdate::Title { value } => {
-            qt::qt_window_set_title(id, &value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_title(id, &value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::Width { value } => {
-            qt::qt_window_set_width(id, value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_width(id, value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::Height { value } => {
-            qt::qt_window_set_height(id, value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_height(id, value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::MinWidth { value } => {
-            qt::qt_window_set_min_width(id, value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_min_width(id, value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::MinHeight { value } => {
-            qt::qt_window_set_min_height(id, value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_min_height(id, value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::Visible { value } => {
-            qt::qt_window_set_visible(id, value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_visible(id, value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::Enabled { value } => {
-            qt::qt_window_set_enabled(id, value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_enabled(id, value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::Frameless { value } => {
-            qt::qt_window_set_frameless(id, value)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_frameless(id, value).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::TransparentBackground { value } => {
             qt::qt_window_set_transparent_background(id, value)
@@ -939,8 +929,7 @@ pub(crate) fn apply_prop(node: &impl NodeHandle, update: WindowPropUpdate) -> Re
         }
         WindowPropUpdate::WindowKind { value } => {
             let tag = u8::try_from(value).map_err(|_| invalid_arg("windowKind out of range"))?;
-            qt::qt_window_set_window_kind(id, tag)
-                .map_err(|e| qt_error(e.what().to_owned()))?;
+            qt::qt_window_set_window_kind(id, tag).map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::ScreenX { value } => {
             let y = read_window_screen_y(node)?;
@@ -1067,11 +1056,8 @@ pub(crate) fn debug_node_at_point(screen_x: i32, screen_y: i32) -> Result<Option
 }
 
 pub(crate) fn debug_capture_window_frame(window_id: u32) -> Result<QtWindowCaptureFrame> {
-    scheduler::capture_window_frame_exact(
-        window_id,
-        scheduler::WindowCaptureGrouping::Segmented,
-    )?
-    .into_api_frame()
+    scheduler::capture_window_frame_exact(window_id, scheduler::WindowCaptureGrouping::Segmented)?
+        .into_api_frame()
 }
 
 pub(crate) fn debug_set_inspect_mode(enabled: bool) -> Result<()> {
@@ -1111,12 +1097,12 @@ pub(crate) fn emit_inspect_event(node_id: u32) {
 }
 
 pub(crate) fn emit_canvas_pointer_event(canvas_node_id: u32, event_tag: u8, x: f64, y: f64) {
-    use crate::canvas::fragment::{fragment_store_hit_test, fragment_store_get_cursor, fragment_store_focus_fragment};
+    use crate::canvas::fragment::{
+        fragment_store_focus_fragment, fragment_store_get_cursor, fragment_store_hit_test,
+    };
 
     let fragment_id_opt = fragment_store_hit_test(canvas_node_id, x, y);
-    let fragment_id = fragment_id_opt
-        .map(|id| id.0 as i32)
-        .unwrap_or(-1);
+    let fragment_id = fragment_id_opt.map(|id| id.0 as i32).unwrap_or(-1);
 
     // Update cursor on mouse move.
     if event_tag == 3 {
@@ -1157,7 +1143,13 @@ pub(crate) fn emit_canvas_pointer_event(canvas_node_id: u32, event_tag: u8, x: f
     });
 }
 
-pub(crate) fn emit_canvas_context_menu_event(canvas_node_id: u32, x: f64, y: f64, screen_x: f64, screen_y: f64) {
+pub(crate) fn emit_canvas_context_menu_event(
+    canvas_node_id: u32,
+    x: f64,
+    y: f64,
+    screen_x: f64,
+    screen_y: f64,
+) {
     use crate::canvas::fragment::fragment_store_hit_test;
 
     let fragment_id = fragment_store_hit_test(canvas_node_id, x, y)
@@ -1250,7 +1242,11 @@ pub(crate) fn qt_window_event_focus_change(node_id: u32, gained: bool) {
 }
 
 pub(crate) fn qt_window_event_resize(node_id: u32, width: f64, height: f64) {
-    emit_js_event(QtHostEvent::WindowResize { node_id, width, height });
+    emit_js_event(QtHostEvent::WindowResize {
+        node_id,
+        width,
+        height,
+    });
 }
 
 pub(crate) fn qt_window_event_state_change(node_id: u32, state: u8) {
@@ -1263,7 +1259,9 @@ pub(crate) fn qt_system_color_scheme_changed(scheme: u8) {
         2 => "dark",
         _ => "unknown",
     };
-    emit_js_event(QtHostEvent::ColorSchemeChange { scheme: scheme_str.to_owned() });
+    emit_js_event(QtHostEvent::ColorSchemeChange {
+        scheme: scheme_str.to_owned(),
+    });
 }
 
 pub(crate) fn qt_screen_dpi_changed(dpi: f64) {
@@ -1276,33 +1274,23 @@ pub(crate) fn qt_file_dialog_result(request_id: u32, paths: Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashSet,
-        sync::Arc,
-    };
+    use std::{collections::HashSet, sync::Arc};
 
-    use crate::renderer::scheduler::{
-        pipeline::{
-            coalesce_scene_subtree_roots_in_tree, group_window_capture_parts,
-        },
-        state::WindowCaptureComposingPart,
-        WindowCaptureGrouping,
-    };
     use super::{
         capture::{WidgetCapture, WidgetCaptureFormat},
         tree::NodeTree,
         types::NodeKind,
     };
+    use crate::renderer::scheduler::{
+        WindowCaptureGrouping,
+        pipeline::{coalesce_scene_subtree_roots_in_tree, group_window_capture_parts},
+        state::WindowCaptureComposingPart,
+    };
 
     fn capture_part(node_id: u32) -> WindowCaptureComposingPart {
-        let capture = WidgetCapture::new_zeroed(
-            WidgetCaptureFormat::Argb32Premultiplied,
-            10,
-            10,
-            40,
-            1.0,
-        )
-        .unwrap();
+        let capture =
+            WidgetCapture::new_zeroed(WidgetCaptureFormat::Argb32Premultiplied, 10, 10, 40, 1.0)
+                .unwrap();
         WindowCaptureComposingPart {
             node_id,
             x: 0,
@@ -1343,12 +1331,9 @@ mod tests {
     #[test]
     fn scene_subtree_roots_coalesce_to_minimal_ancestors() {
         let mut tree = NodeTree::with_root(1);
-        tree.register(2, NodeKind::Window)
-            .expect("register");
-        tree.register(3, NodeKind::Window)
-            .expect("register");
-        tree.register(4, NodeKind::Window)
-            .expect("register");
+        tree.register(2, NodeKind::Window).expect("register");
+        tree.register(3, NodeKind::Window).expect("register");
+        tree.register(4, NodeKind::Window).expect("register");
         tree.insert_child(1, 2, None).expect("insert");
         tree.insert_child(2, 3, None).expect("insert");
         tree.insert_child(3, 4, None).expect("insert");
@@ -1379,9 +1364,6 @@ mod tests {
 
         scheduler.mark_geometry_node(7, 9);
 
-        assert_eq!(
-            scheduler.take_geometry_nodes(7),
-            HashSet::from([9_u32])
-        );
+        assert_eq!(scheduler.take_geometry_nodes(7), HashSet::from([9_u32]));
     }
 }

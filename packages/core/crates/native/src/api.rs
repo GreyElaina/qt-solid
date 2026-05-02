@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use napi::{
+    Env, Result,
     bindgen_prelude::{Buffer, Function},
     threadsafe_function::UnknownReturnValue,
-    Env, Result,
 };
 
 use crate::runtime::{self, QtNodeInner};
@@ -547,7 +547,6 @@ impl QtNode {
         runtime::apply_prop(self, update)
     }
 
-
     #[napi(js_name = "requestRepaint")]
     pub fn qt_solid_request_repaint(&self) -> Result<()> {
         runtime::request_repaint(self)
@@ -640,8 +639,7 @@ pub fn qt_solid_get_screen_geometry(node_id: u32) -> Result<QtScreenGeometryInfo
 
 #[napi_derive::napi(js_name = "focusWidget")]
 pub fn qt_solid_focus_widget(node_id: u32) -> Result<()> {
-    crate::qt::focus_widget(node_id)
-        .map_err(|e| napi::Error::from_reason(e.what().to_owned()))
+    crate::qt::focus_widget(node_id).map_err(|e| napi::Error::from_reason(e.what().to_owned()))
 }
 
 #[napi_derive::napi(js_name = "getWidgetSizeHint")]
@@ -741,31 +739,72 @@ pub fn qt_solid_trace_record_js(
     );
 }
 
-
 fn lower_motion_target(target: &QtMotionTarget) -> Vec<(motion::PropertyKey, f64)> {
     let mut out = Vec::with_capacity(8);
-    if let Some(v) = target.x { out.push((motion::PropertyKey::X, v)); }
-    if let Some(v) = target.y { out.push((motion::PropertyKey::Y, v)); }
-    if let Some(v) = target.scale_x { out.push((motion::PropertyKey::ScaleX, v)); }
-    if let Some(v) = target.scale_y { out.push((motion::PropertyKey::ScaleY, v)); }
-    if let Some(v) = target.rotate { out.push((motion::PropertyKey::Rotate, v)); }
-    if let Some(v) = target.opacity { out.push((motion::PropertyKey::Opacity, v)); }
-    if let Some(v) = target.origin_x { out.push((motion::PropertyKey::OriginX, v)); }
-    if let Some(v) = target.origin_y { out.push((motion::PropertyKey::OriginY, v)); }
+    if let Some(v) = target.x {
+        out.push((motion::PropertyKey::X, v));
+    }
+    if let Some(v) = target.y {
+        out.push((motion::PropertyKey::Y, v));
+    }
+    if let Some(v) = target.scale_x {
+        out.push((motion::PropertyKey::ScaleX, v));
+    }
+    if let Some(v) = target.scale_y {
+        out.push((motion::PropertyKey::ScaleY, v));
+    }
+    if let Some(v) = target.rotate {
+        out.push((motion::PropertyKey::Rotate, v));
+    }
+    if let Some(v) = target.opacity {
+        out.push((motion::PropertyKey::Opacity, v));
+    }
+    if let Some(v) = target.origin_x {
+        out.push((motion::PropertyKey::OriginX, v));
+    }
+    if let Some(v) = target.origin_y {
+        out.push((motion::PropertyKey::OriginY, v));
+    }
     // Paint
-    if let Some(v) = target.background_r { out.push((motion::PropertyKey::BackgroundR, v)); }
-    if let Some(v) = target.background_g { out.push((motion::PropertyKey::BackgroundG, v)); }
-    if let Some(v) = target.background_b { out.push((motion::PropertyKey::BackgroundB, v)); }
-    if let Some(v) = target.background_a { out.push((motion::PropertyKey::BackgroundA, v)); }
-    if let Some(v) = target.border_radius { out.push((motion::PropertyKey::BorderRadius, v)); }
-    if let Some(v) = target.blur_radius { out.push((motion::PropertyKey::BlurRadius, v)); }
-    if let Some(v) = target.shadow_offset_x { out.push((motion::PropertyKey::ShadowOffsetX, v)); }
-    if let Some(v) = target.shadow_offset_y { out.push((motion::PropertyKey::ShadowOffsetY, v)); }
-    if let Some(v) = target.shadow_blur_radius { out.push((motion::PropertyKey::ShadowBlurRadius, v)); }
-    if let Some(v) = target.shadow_r { out.push((motion::PropertyKey::ShadowR, v)); }
-    if let Some(v) = target.shadow_g { out.push((motion::PropertyKey::ShadowG, v)); }
-    if let Some(v) = target.shadow_b { out.push((motion::PropertyKey::ShadowB, v)); }
-    if let Some(v) = target.shadow_a { out.push((motion::PropertyKey::ShadowA, v)); }
+    if let Some(v) = target.background_r {
+        out.push((motion::PropertyKey::BackgroundR, v));
+    }
+    if let Some(v) = target.background_g {
+        out.push((motion::PropertyKey::BackgroundG, v));
+    }
+    if let Some(v) = target.background_b {
+        out.push((motion::PropertyKey::BackgroundB, v));
+    }
+    if let Some(v) = target.background_a {
+        out.push((motion::PropertyKey::BackgroundA, v));
+    }
+    if let Some(v) = target.border_radius {
+        out.push((motion::PropertyKey::BorderRadius, v));
+    }
+    if let Some(v) = target.blur_radius {
+        out.push((motion::PropertyKey::BlurRadius, v));
+    }
+    if let Some(v) = target.shadow_offset_x {
+        out.push((motion::PropertyKey::ShadowOffsetX, v));
+    }
+    if let Some(v) = target.shadow_offset_y {
+        out.push((motion::PropertyKey::ShadowOffsetY, v));
+    }
+    if let Some(v) = target.shadow_blur_radius {
+        out.push((motion::PropertyKey::ShadowBlurRadius, v));
+    }
+    if let Some(v) = target.shadow_r {
+        out.push((motion::PropertyKey::ShadowR, v));
+    }
+    if let Some(v) = target.shadow_g {
+        out.push((motion::PropertyKey::ShadowG, v));
+    }
+    if let Some(v) = target.shadow_b {
+        out.push((motion::PropertyKey::ShadowB, v));
+    }
+    if let Some(v) = target.shadow_a {
+        out.push((motion::PropertyKey::ShadowA, v));
+    }
     out
 }
 
@@ -774,7 +813,9 @@ fn lower_motion_target_keyframes(target: &QtMotionTarget) -> Vec<(motion::Proper
     macro_rules! prop {
         ($scalar:expr, $kf:expr, $key:expr) => {
             if let Some(kf) = &$kf {
-                if kf.len() >= 2 { out.push(($key, kf.clone())); }
+                if kf.len() >= 2 {
+                    out.push(($key, kf.clone()));
+                }
             } else if let Some(v) = $scalar {
                 out.push(($key, vec![v]));
             }
@@ -782,26 +823,76 @@ fn lower_motion_target_keyframes(target: &QtMotionTarget) -> Vec<(motion::Proper
     }
     prop!(target.x, target.x_keyframes, motion::PropertyKey::X);
     prop!(target.y, target.y_keyframes, motion::PropertyKey::Y);
-    prop!(target.scale_x, target.scale_x_keyframes, motion::PropertyKey::ScaleX);
-    prop!(target.scale_y, target.scale_y_keyframes, motion::PropertyKey::ScaleY);
-    prop!(target.rotate, target.rotate_keyframes, motion::PropertyKey::Rotate);
-    prop!(target.opacity, target.opacity_keyframes, motion::PropertyKey::Opacity);
-    prop!(target.origin_x, target.origin_x_keyframes, motion::PropertyKey::OriginX);
-    prop!(target.origin_y, target.origin_y_keyframes, motion::PropertyKey::OriginY);
+    prop!(
+        target.scale_x,
+        target.scale_x_keyframes,
+        motion::PropertyKey::ScaleX
+    );
+    prop!(
+        target.scale_y,
+        target.scale_y_keyframes,
+        motion::PropertyKey::ScaleY
+    );
+    prop!(
+        target.rotate,
+        target.rotate_keyframes,
+        motion::PropertyKey::Rotate
+    );
+    prop!(
+        target.opacity,
+        target.opacity_keyframes,
+        motion::PropertyKey::Opacity
+    );
+    prop!(
+        target.origin_x,
+        target.origin_x_keyframes,
+        motion::PropertyKey::OriginX
+    );
+    prop!(
+        target.origin_y,
+        target.origin_y_keyframes,
+        motion::PropertyKey::OriginY
+    );
     // Paint properties remain scalar-only
-    if let Some(v) = target.background_r { out.push((motion::PropertyKey::BackgroundR, vec![v])); }
-    if let Some(v) = target.background_g { out.push((motion::PropertyKey::BackgroundG, vec![v])); }
-    if let Some(v) = target.background_b { out.push((motion::PropertyKey::BackgroundB, vec![v])); }
-    if let Some(v) = target.background_a { out.push((motion::PropertyKey::BackgroundA, vec![v])); }
-    if let Some(v) = target.border_radius { out.push((motion::PropertyKey::BorderRadius, vec![v])); }
-    if let Some(v) = target.blur_radius { out.push((motion::PropertyKey::BlurRadius, vec![v])); }
-    if let Some(v) = target.shadow_offset_x { out.push((motion::PropertyKey::ShadowOffsetX, vec![v])); }
-    if let Some(v) = target.shadow_offset_y { out.push((motion::PropertyKey::ShadowOffsetY, vec![v])); }
-    if let Some(v) = target.shadow_blur_radius { out.push((motion::PropertyKey::ShadowBlurRadius, vec![v])); }
-    if let Some(v) = target.shadow_r { out.push((motion::PropertyKey::ShadowR, vec![v])); }
-    if let Some(v) = target.shadow_g { out.push((motion::PropertyKey::ShadowG, vec![v])); }
-    if let Some(v) = target.shadow_b { out.push((motion::PropertyKey::ShadowB, vec![v])); }
-    if let Some(v) = target.shadow_a { out.push((motion::PropertyKey::ShadowA, vec![v])); }
+    if let Some(v) = target.background_r {
+        out.push((motion::PropertyKey::BackgroundR, vec![v]));
+    }
+    if let Some(v) = target.background_g {
+        out.push((motion::PropertyKey::BackgroundG, vec![v]));
+    }
+    if let Some(v) = target.background_b {
+        out.push((motion::PropertyKey::BackgroundB, vec![v]));
+    }
+    if let Some(v) = target.background_a {
+        out.push((motion::PropertyKey::BackgroundA, vec![v]));
+    }
+    if let Some(v) = target.border_radius {
+        out.push((motion::PropertyKey::BorderRadius, vec![v]));
+    }
+    if let Some(v) = target.blur_radius {
+        out.push((motion::PropertyKey::BlurRadius, vec![v]));
+    }
+    if let Some(v) = target.shadow_offset_x {
+        out.push((motion::PropertyKey::ShadowOffsetX, vec![v]));
+    }
+    if let Some(v) = target.shadow_offset_y {
+        out.push((motion::PropertyKey::ShadowOffsetY, vec![v]));
+    }
+    if let Some(v) = target.shadow_blur_radius {
+        out.push((motion::PropertyKey::ShadowBlurRadius, vec![v]));
+    }
+    if let Some(v) = target.shadow_r {
+        out.push((motion::PropertyKey::ShadowR, vec![v]));
+    }
+    if let Some(v) = target.shadow_g {
+        out.push((motion::PropertyKey::ShadowG, vec![v]));
+    }
+    if let Some(v) = target.shadow_b {
+        out.push((motion::PropertyKey::ShadowB, vec![v]));
+    }
+    if let Some(v) = target.shadow_a {
+        out.push((motion::PropertyKey::ShadowA, vec![v]));
+    }
     out
 }
 
@@ -854,14 +945,30 @@ fn lower_per_property_transitions(
     t: &QtPerPropertyTransition,
 ) -> std::collections::HashMap<motion::PropertyKey, motion::TransitionSpec> {
     let mut map = std::collections::HashMap::new();
-    if let Some(s) = &t.x { map.insert(motion::PropertyKey::X, lower_transition_spec(s)); }
-    if let Some(s) = &t.y { map.insert(motion::PropertyKey::Y, lower_transition_spec(s)); }
-    if let Some(s) = &t.scale_x { map.insert(motion::PropertyKey::ScaleX, lower_transition_spec(s)); }
-    if let Some(s) = &t.scale_y { map.insert(motion::PropertyKey::ScaleY, lower_transition_spec(s)); }
-    if let Some(s) = &t.rotate { map.insert(motion::PropertyKey::Rotate, lower_transition_spec(s)); }
-    if let Some(s) = &t.opacity { map.insert(motion::PropertyKey::Opacity, lower_transition_spec(s)); }
-    if let Some(s) = &t.origin_x { map.insert(motion::PropertyKey::OriginX, lower_transition_spec(s)); }
-    if let Some(s) = &t.origin_y { map.insert(motion::PropertyKey::OriginY, lower_transition_spec(s)); }
+    if let Some(s) = &t.x {
+        map.insert(motion::PropertyKey::X, lower_transition_spec(s));
+    }
+    if let Some(s) = &t.y {
+        map.insert(motion::PropertyKey::Y, lower_transition_spec(s));
+    }
+    if let Some(s) = &t.scale_x {
+        map.insert(motion::PropertyKey::ScaleX, lower_transition_spec(s));
+    }
+    if let Some(s) = &t.scale_y {
+        map.insert(motion::PropertyKey::ScaleY, lower_transition_spec(s));
+    }
+    if let Some(s) = &t.rotate {
+        map.insert(motion::PropertyKey::Rotate, lower_transition_spec(s));
+    }
+    if let Some(s) = &t.opacity {
+        map.insert(motion::PropertyKey::Opacity, lower_transition_spec(s));
+    }
+    if let Some(s) = &t.origin_x {
+        map.insert(motion::PropertyKey::OriginX, lower_transition_spec(s));
+    }
+    if let Some(s) = &t.origin_y {
+        map.insert(motion::PropertyKey::OriginY, lower_transition_spec(s));
+    }
     map
 }
 
@@ -869,13 +976,13 @@ fn lower_per_property_transitions(
 // Canvas fragment store FFI
 // ---------------------------------------------------------------------------
 
-use crate::canvas::fragment::{
-    self as fragment_store, FragmentId,
-    ShapedTextCache, ShapedTextLayout, ShapedRun, ShapedTextLine, RasterizedGlyph,
-};
 use crate::canvas::fragment::decl::FragmentValue;
-use crate::canvas::vello::peniko::kurbo::{BezPath, PathEl, Point};
+use crate::canvas::fragment::{
+    self as fragment_store, FragmentId, RasterizedGlyph, ShapedRun, ShapedTextCache,
+    ShapedTextLayout, ShapedTextLine,
+};
 use crate::canvas::vello::peniko as peniko_crate;
+use crate::canvas::vello::peniko::kurbo::{BezPath, PathEl, Point};
 
 fn build_rasterized_glyphs(
     rasterized: &[crate::qt::ffi::bridge::QtRasterizedGlyph],
@@ -907,13 +1014,22 @@ fn build_rasterized_glyphs(
 
 fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
     // Rich text path: if text_runs are present, use styled shaping.
-    if fragment_store::fragment_store_read_text_style_runs(canvas_node_id, FragmentId(fragment_id)).is_some() {
+    if fragment_store::fragment_store_read_text_style_runs(canvas_node_id, FragmentId(fragment_id))
+        .is_some()
+    {
         reshape_styled_text_fragment(canvas_node_id, fragment_id);
         return;
     }
 
-    let Some((text, font_size, font_family, font_weight, font_italic, text_max_width, text_overflow)) =
-        fragment_store::fragment_store_read_text_props(canvas_node_id, FragmentId(fragment_id))
+    let Some((
+        text,
+        font_size,
+        font_family,
+        font_weight,
+        font_italic,
+        text_max_width,
+        text_overflow,
+    )) = fragment_store::fragment_store_read_text_props(canvas_node_id, FragmentId(fragment_id))
     else {
         return;
     };
@@ -926,7 +1042,15 @@ fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
         "ellipsis" => 2,
         _ => 0,
     };
-    let result = crate::qt::qt_shape_text_to_path(&text, font_size, &font_family, font_weight, font_italic, text_max_width, elide_mode);
+    let result = crate::qt::qt_shape_text_to_path(
+        &text,
+        font_size,
+        &font_family,
+        font_weight,
+        font_italic,
+        text_max_width,
+        elide_mode,
+    );
 
     let mut path = BezPath::new();
     for el in &result.elements {
@@ -956,21 +1080,24 @@ fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
         0.0
     };
     if dy != 0.0 {
-        path.apply_affine(crate::canvas::vello::peniko::kurbo::Affine::translate((0.0, dy)));
+        path.apply_affine(crate::canvas::vello::peniko::kurbo::Affine::translate((
+            0.0, dy,
+        )));
     }
 
-    let rasterized_glyphs = build_rasterized_glyphs(
-        &result.rasterized_glyphs,
-        dy,
-    );
+    let rasterized_glyphs = build_rasterized_glyphs(&result.rasterized_glyphs, dy);
 
-    let lines: Vec<ShapedTextLine> = result.lines.iter().map(|l| ShapedTextLine {
-        y_offset: l.y_offset,
-        width: l.width,
-        height: l.height,
-        ascent: l.ascent,
-        descent: l.descent,
-    }).collect();
+    let lines: Vec<ShapedTextLine> = result
+        .lines
+        .iter()
+        .map(|l| ShapedTextLine {
+            y_offset: l.y_offset,
+            width: l.width,
+            height: l.height,
+            ascent: l.ascent,
+            descent: l.descent,
+        })
+        .collect();
 
     let cache = ShapedTextCache {
         path,
@@ -991,7 +1118,10 @@ fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
 
 fn reshape_styled_text_fragment(canvas_node_id: u32, fragment_id: u32) {
     let Some((text_runs, default_font_size, default_font_family, text_max_width, text_overflow)) =
-        fragment_store::fragment_store_read_text_style_runs(canvas_node_id, FragmentId(fragment_id))
+        fragment_store::fragment_store_read_text_style_runs(
+            canvas_node_id,
+            FragmentId(fragment_id),
+        )
     else {
         return;
     };
@@ -1062,45 +1192,55 @@ fn reshape_styled_text_fragment(canvas_node_id: u32, fragment_id: u32) {
     };
 
     // Build per-run shaped paths with same vertical adjustment.
-    let shaped_runs: Vec<ShapedRun> = result.runs.iter().zip(text_runs.iter()).map(|(shaped_run, source_run)| {
-        let mut path = BezPath::new();
-        for el in &shaped_run.elements {
-            match el.tag {
-                0 => path.push(PathEl::MoveTo(Point::new(el.x0, el.y0))),
-                1 => path.push(PathEl::LineTo(Point::new(el.x0, el.y0))),
-                2 => path.push(PathEl::CurveTo(
-                    Point::new(el.x0, el.y0),
-                    Point::new(el.x1, el.y1),
-                    Point::new(el.x2, el.y2),
-                )),
-                _ => {}
+    let shaped_runs: Vec<ShapedRun> = result
+        .runs
+        .iter()
+        .zip(text_runs.iter())
+        .map(|(shaped_run, source_run)| {
+            let mut path = BezPath::new();
+            for el in &shaped_run.elements {
+                match el.tag {
+                    0 => path.push(PathEl::MoveTo(Point::new(el.x0, el.y0))),
+                    1 => path.push(PathEl::LineTo(Point::new(el.x0, el.y0))),
+                    2 => path.push(PathEl::CurveTo(
+                        Point::new(el.x0, el.y0),
+                        Point::new(el.x1, el.y1),
+                        Point::new(el.x2, el.y2),
+                    )),
+                    _ => {}
+                }
             }
-        }
-        if dy != 0.0 {
-            path.apply_affine(crate::canvas::vello::peniko::kurbo::Affine::translate((0.0, dy)));
-        }
-        ShapedRun {
-            path,
-            color: source_run.color,
-        }
-    }).collect();
+            if dy != 0.0 {
+                path.apply_affine(crate::canvas::vello::peniko::kurbo::Affine::translate((
+                    0.0, dy,
+                )));
+            }
+            ShapedRun {
+                path,
+                color: source_run.color,
+            }
+        })
+        .collect();
 
     if dy != 0.0 {
-        combined_path.apply_affine(crate::canvas::vello::peniko::kurbo::Affine::translate((0.0, dy)));
+        combined_path.apply_affine(crate::canvas::vello::peniko::kurbo::Affine::translate((
+            0.0, dy,
+        )));
     }
 
-    let lines: Vec<ShapedTextLine> = result.lines.iter().map(|l| ShapedTextLine {
-        y_offset: l.y_offset,
-        width: l.width,
-        height: l.height,
-        ascent: l.ascent,
-        descent: l.descent,
-    }).collect();
+    let lines: Vec<ShapedTextLine> = result
+        .lines
+        .iter()
+        .map(|l| ShapedTextLine {
+            y_offset: l.y_offset,
+            width: l.width,
+            height: l.height,
+            ascent: l.ascent,
+            descent: l.descent,
+        })
+        .collect();
 
-    let rasterized_glyphs = build_rasterized_glyphs(
-        &result.rasterized_glyphs,
-        dy,
-    );
+    let rasterized_glyphs = build_rasterized_glyphs(&result.rasterized_glyphs, dy);
 
     let cache = ShapedTextCache {
         path: combined_path,
@@ -1127,14 +1267,33 @@ fn parent_text_id_for_span(canvas_node_id: u32, fragment_id: u32) -> Option<u32>
 
 fn reshape_text_input_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
     let Some((text, font_size, font_family, font_weight, font_italic)) =
-        fragment_store::fragment_store_read_text_input_props(canvas_node_id, FragmentId(fragment_id))
+        fragment_store::fragment_store_read_text_input_props(
+            canvas_node_id,
+            FragmentId(fragment_id),
+        )
     else {
         return;
     };
-    reshape_text_input_with(canvas_node_id, fragment_id, &text, font_size, &font_family, font_weight, font_italic);
+    reshape_text_input_with(
+        canvas_node_id,
+        fragment_id,
+        &text,
+        font_size,
+        &font_family,
+        font_weight,
+        font_italic,
+    );
 }
 
-fn reshape_text_input_with(canvas_node_id: u32, fragment_id: u32, text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool) {
+fn reshape_text_input_with(
+    canvas_node_id: u32,
+    fragment_id: u32,
+    text: &str,
+    font_size: f64,
+    font_family: &str,
+    font_weight: i32,
+    font_italic: bool,
+) {
     if text.is_empty() {
         fragment_store::fragment_store_set_text_input_layout_cache(
             canvas_node_id,
@@ -1150,7 +1309,13 @@ fn reshape_text_input_with(canvas_node_id: u32, fragment_id: u32, text: &str, fo
         return;
     }
 
-    let result = crate::qt::qt_shape_text_with_cursors(text, font_size, font_family, font_weight, font_italic);
+    let result = crate::qt::qt_shape_text_with_cursors(
+        text,
+        font_size,
+        font_family,
+        font_weight,
+        font_italic,
+    );
 
     let mut path = BezPath::new();
     for el in &result.elements {
@@ -1260,13 +1425,11 @@ pub fn canvas_fragment_set_prop(
     key: String,
     value: FragmentValue,
 ) {
-    fragment_store::fragment_store_set_prop(
-        canvas_node_id,
-        FragmentId(fragment_id),
-        &key,
-        value,
-    );
-    if matches!(key.as_str(), "text" | "fontSize" | "fontFamily" | "fontWeight" | "fontStyle" | "textMaxWidth" | "color") {
+    fragment_store::fragment_store_set_prop(canvas_node_id, FragmentId(fragment_id), &key, value);
+    if matches!(
+        key.as_str(),
+        "text" | "fontSize" | "fontFamily" | "fontWeight" | "fontStyle" | "textMaxWidth" | "color"
+    ) {
         reshape_text_fragment_if_needed(canvas_node_id, fragment_id);
         reshape_text_input_fragment_if_needed(canvas_node_id, fragment_id);
     }
@@ -1344,8 +1507,8 @@ pub fn canvas_fragment_set_encoded_image(
     fragment_id: u32,
     data: Buffer,
 ) -> Result<()> {
-    use image::GenericImageView;
     use crate::canvas::vello::peniko;
+    use image::GenericImageView;
 
     let decoded = image::load_from_memory(&data)
         .map_err(|e| napi::Error::from_reason(format!("image decode failed: {e}")))?;
@@ -1369,14 +1532,8 @@ pub fn canvas_fragment_set_encoded_image(
 }
 
 #[napi_derive::napi(js_name = "canvasFragmentClearImage")]
-pub fn canvas_fragment_clear_image(
-    canvas_node_id: u32,
-    fragment_id: u32,
-) {
-    fragment_store::fragment_store_clear_image_data(
-        canvas_node_id,
-        FragmentId(fragment_id),
-    );
+pub fn canvas_fragment_clear_image(canvas_node_id: u32, fragment_id: u32) {
+    fragment_store::fragment_store_clear_image_data(canvas_node_id, FragmentId(fragment_id));
 }
 
 #[napi_derive::napi(js_name = "canvasFragmentRequestRepaint")]
@@ -1391,10 +1548,7 @@ pub fn canvas_fragment_set_debug_highlight(
     canvas_node_id: u32,
     fragment_id: Option<u32>,
 ) -> Result<()> {
-    fragment_store::fragment_store_set_debug_highlight(
-        canvas_node_id,
-        fragment_id.map(FragmentId),
-    );
+    fragment_store::fragment_store_set_debug_highlight(canvas_node_id, fragment_id.map(FragmentId));
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
     runtime::request_repaint(&node)
@@ -1406,7 +1560,11 @@ pub fn canvas_fragment_compute_layout(
     available_width: f64,
     available_height: f64,
 ) -> Result<()> {
-    fragment_store::fragment_store_compute_layout(canvas_node_id, available_width, available_height);
+    fragment_store::fragment_store_compute_layout(
+        canvas_node_id,
+        available_width,
+        available_height,
+    );
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
     runtime::request_repaint(&node)
@@ -1490,10 +1648,8 @@ pub fn canvas_fragment_get_world_bounds(
     canvas_node_id: u32,
     fragment_id: u32,
 ) -> Result<Option<QtWorldBounds>> {
-    let rect = fragment_store::fragment_store_get_world_bounds(
-        canvas_node_id,
-        FragmentId(fragment_id),
-    );
+    let rect =
+        fragment_store::fragment_store_get_world_bounds(canvas_node_id, FragmentId(fragment_id));
     Ok(rect.map(|r| QtWorldBounds {
         x: r.x0,
         y: r.y0,
@@ -1509,12 +1665,7 @@ pub fn canvas_fragment_set_scroll_offset(
     x: f64,
     y: f64,
 ) -> Result<()> {
-    fragment_store::fragment_store_set_scroll_offset(
-        canvas_node_id,
-        FragmentId(fragment_id),
-        x,
-        y,
-    );
+    fragment_store::fragment_store_set_scroll_offset(canvas_node_id, FragmentId(fragment_id), x, y);
     let generation = runtime::current_app_generation()?;
     let node = runtime::node_by_id(generation, canvas_node_id)?;
     runtime::request_repaint(&node)
@@ -1579,10 +1730,8 @@ pub fn canvas_fragment_get_content_size(
     canvas_node_id: u32,
     fragment_id: u32,
 ) -> Option<QtWorldBounds> {
-    let size = fragment_store::fragment_store_get_content_size(
-        canvas_node_id,
-        FragmentId(fragment_id),
-    );
+    let size =
+        fragment_store::fragment_store_get_content_size(canvas_node_id, FragmentId(fragment_id));
     size.map(|(w, h)| QtWorldBounds {
         x: 0.0,
         y: 0.0,
@@ -1592,9 +1741,7 @@ pub fn canvas_fragment_get_content_size(
 }
 
 #[napi_derive::napi(js_name = "canvasComputeIntrinsicSize")]
-pub fn canvas_compute_intrinsic_size(
-    canvas_node_id: u32,
-) -> Option<QtWorldBounds> {
+pub fn canvas_compute_intrinsic_size(canvas_node_id: u32) -> Option<QtWorldBounds> {
     let size = fragment_store::fragment_store_compute_intrinsic_size(canvas_node_id);
     size.map(|(w, h)| QtWorldBounds {
         x: 0.0,
@@ -1619,7 +1766,10 @@ pub fn canvas_fragment_set_layout_flip(
     let animating = fragment_store::fragment_store_set_layout_flip(
         canvas_node_id,
         FragmentId(fragment_id),
-        dx, dy, sx, sy,
+        dx,
+        dy,
+        sx,
+        sy,
         &spec,
         now,
     );
@@ -1786,7 +1936,8 @@ pub fn window_restore(id: u32) -> Result<()> {
 
 #[napi_derive::napi]
 pub fn window_fullscreen(id: u32, enter: bool) -> Result<()> {
-    crate::qt::qt_window_fullscreen(id, enter).map_err(|e| napi::Error::from_reason(e.what().to_owned()))
+    crate::qt::qt_window_fullscreen(id, enter)
+        .map_err(|e| napi::Error::from_reason(e.what().to_owned()))
 }
 
 #[napi_derive::napi]
@@ -1801,7 +1952,8 @@ pub fn window_is_maximized(id: u32) -> Result<bool> {
 
 #[napi_derive::napi]
 pub fn window_is_fullscreen(id: u32) -> Result<bool> {
-    crate::qt::qt_window_is_fullscreen(id).map_err(|e| napi::Error::from_reason(e.what().to_owned()))
+    crate::qt::qt_window_is_fullscreen(id)
+        .map_err(|e| napi::Error::from_reason(e.what().to_owned()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1817,7 +1969,9 @@ pub fn show_open_file_dialog(
 ) -> Result<u32> {
     let f = filter.unwrap_or_default();
     let m = multiple.unwrap_or(false);
-    Ok(crate::qt::qt_show_open_file_dialog(window_id, &title, &f, m))
+    Ok(crate::qt::qt_show_open_file_dialog(
+        window_id, &title, &f, m,
+    ))
 }
 
 #[napi_derive::napi]
@@ -1829,7 +1983,9 @@ pub fn show_save_file_dialog(
 ) -> Result<u32> {
     let f = filter.unwrap_or_default();
     let d = default_name.unwrap_or_default();
-    Ok(crate::qt::qt_show_save_file_dialog(window_id, &title, &f, &d))
+    Ok(crate::qt::qt_show_save_file_dialog(
+        window_id, &title, &f, &d,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1897,7 +2053,10 @@ pub fn canvas_fragment_snapshot_layers(canvas_node_id: u32) -> Vec<QtLayerSnapsh
         .map(|l| QtLayerSnapshot {
             fragment_id: l.fragment_id,
             layer_key: l.layer_key,
-            x: l.x, y: l.y, width: l.width, height: l.height,
+            x: l.x,
+            y: l.y,
+            width: l.width,
+            height: l.height,
             opacity: l.opacity as f64,
             reasons: l.reasons,
         })
@@ -1926,12 +2085,16 @@ pub fn canvas_fragment_snapshot_animations(canvas_node_id: u32) -> Vec<QtAnimati
         .map(|a| QtAnimationSnapshot {
             fragment_id: a.fragment_id,
             tag: a.tag,
-            channels: a.channels.into_iter().map(|c| QtAnimationChannelSnapshot {
-                property: c.property,
-                origin: c.origin,
-                target: c.target,
-                state: c.state,
-            }).collect(),
+            channels: a
+                .channels
+                .into_iter()
+                .map(|c| QtAnimationChannelSnapshot {
+                    property: c.property,
+                    origin: c.origin,
+                    target: c.target,
+                    state: c.state,
+                })
+                .collect(),
         })
         .collect()
 }
@@ -1968,7 +2131,9 @@ pub fn capture_canvas_region(
     let cropped = image::imageops::crop_imm(&img, px, py, pw, ph).to_image();
     let mut png_buf = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut png_buf);
-    cropped.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
+    cropped
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .ok()?;
 
     Some(png_buf.into())
 }
@@ -2013,18 +2178,18 @@ pub fn capture_fragment_isolated(
     canvas_node_id: u32,
     fragment_id: u32,
 ) -> Option<napi::bindgen_prelude::Buffer> {
-    use crate::canvas::fragment::{FragmentId, fragment_store_paint_at_origin, fragment_store_world_bounds};
+    use crate::canvas::fragment::{
+        FragmentId, fragment_store_paint_at_origin, fragment_store_world_bounds,
+    };
     use crate::canvas::vello::{Scene, peniko::kurbo::Affine};
 
     let generation = runtime::current_app_generation().ok()?;
     let _ = runtime::node_by_id(generation, canvas_node_id).ok()?;
 
-    let window_id = crate::renderer::scheduler::window_ancestor_id_for_node(
-        generation,
-        canvas_node_id,
-    )
-    .ok()?
-    .unwrap_or(canvas_node_id);
+    let window_id =
+        crate::renderer::scheduler::window_ancestor_id_for_node(generation, canvas_node_id)
+            .ok()?
+            .unwrap_or(canvas_node_id);
 
     let target = crate::renderer::with_renderer(|r| r.scheduler.target(window_id))?;
     let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target).ok()?;
@@ -2050,7 +2215,12 @@ pub fn capture_fragment_isolated(
     // node's own local_transform so content lands at (0,0) regardless of
     // where the fragment sits in the tree.
     let mut scene = Scene::new();
-    fragment_store_paint_at_origin(canvas_node_id, FragmentId(fragment_id), &mut scene, Affine::IDENTITY);
+    fragment_store_paint_at_origin(
+        canvas_node_id,
+        FragmentId(fragment_id),
+        &mut scene,
+        Affine::IDENTITY,
+    );
 
     // Render to a target sized exactly to the fragment
     let capture = crate::renderer::offscreen::render_scene_to_capture(

@@ -1,8 +1,8 @@
 use fragment_derive::Fragment;
 
 use super::super::vello::peniko::{
-    kurbo::{Affine, BezPath, Rect, RoundedRectRadii},
     BlendMode, Color, Fill,
+    kurbo::{Affine, BezPath, Rect, RoundedRectRadii},
 };
 use super::kinds::{
     CircleFragment, GroupFragment, ImageFragment, PathFragment, RectFragment, SpanFragment,
@@ -210,13 +210,18 @@ impl FragmentNode {
                 let mut outset = 0.0_f64;
                 // Stroke outset (half stroke width extends outside path)
                 if r.stroke.is_some() {
-                    let sw = r.stroke_width.max(
-                        r.stroke.as_ref().map_or(0.0, |s| s.width),
-                    );
+                    let sw = r
+                        .stroke_width
+                        .max(r.stroke.as_ref().map_or(0.0, |s| s.width));
                     outset = outset.max(sw / 2.0);
                 }
                 // Per-side borders (each drawn as inset stroke at half width)
-                for b in [&r.border_top, &r.border_right, &r.border_bottom, &r.border_left] {
+                for b in [
+                    &r.border_top,
+                    &r.border_right,
+                    &r.border_bottom,
+                    &r.border_left,
+                ] {
                     if let Some(b) = b {
                         outset = outset.max(b.width / 2.0);
                     }
@@ -233,9 +238,9 @@ impl FragmentNode {
             }
             FragmentData::Circle(c) => {
                 if c.stroke.is_some() {
-                    let sw = c.stroke_width.max(
-                        c.stroke.as_ref().map_or(0.0, |s| s.width),
-                    );
+                    let sw = c
+                        .stroke_width
+                        .max(c.stroke.as_ref().map_or(0.0, |s| s.width));
                     sw / 2.0
                 } else {
                     0.0
@@ -243,9 +248,9 @@ impl FragmentNode {
             }
             FragmentData::Path(p) => {
                 if p.stroke.is_some() {
-                    let sw = p.stroke_width.max(
-                        p.stroke.as_ref().map_or(0.0, |s| s.width),
-                    );
+                    let sw = p
+                        .stroke_width
+                        .max(p.stroke.as_ref().map_or(0.0, |s| s.width));
                     sw / 2.0
                 } else {
                     0.0

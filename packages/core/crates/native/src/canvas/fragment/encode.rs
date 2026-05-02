@@ -1,24 +1,30 @@
-use super::decl::FragmentEncode;
 use super::super::vello::peniko::{
-    kurbo::{
-        Affine, BezPath, Circle, PathEl, Point, Rect, RoundedRect, Shape, Stroke,
-    },
-    Fill, Gradient, ColorStop as PenikoColorStop, ImageBrushRef,
+    ColorStop as PenikoColorStop, Fill, Gradient, ImageBrushRef,
+    kurbo::{Affine, BezPath, Circle, PathEl, Point, Rect, RoundedRect, Shape, Stroke},
 };
 use super::super::vello::{PaintScene, Scene};
+use super::decl::FragmentEncode;
 use super::kinds::{
-    CircleFragment, GroupFragment, ImageFragment, PathFragment, RectFragment, SpanFragment,
-    TextFragment, TextInputFragment, CARET_COLOR, CARET_WIDTH, SELECTION_COLOR,
+    CARET_COLOR, CARET_WIDTH, CircleFragment, GroupFragment, ImageFragment, PathFragment,
+    RectFragment, SELECTION_COLOR, SpanFragment, TextFragment, TextInputFragment,
 };
 use super::types::{FragmentBrush, GradientStop};
 
 fn push_gradient_stops(gradient: &mut Gradient, stops: &[GradientStop]) {
     for stop in stops {
-        gradient.stops.push(PenikoColorStop::from((stop.offset as f32, stop.color)));
+        gradient
+            .stops
+            .push(PenikoColorStop::from((stop.offset as f32, stop.color)));
     }
 }
 
-pub(crate) fn fill_brush_gradient(scene: &mut Scene, transform: Affine, brush: &FragmentBrush, fill_rule: Fill, path: &BezPath) {
+pub(crate) fn fill_brush_gradient(
+    scene: &mut Scene,
+    transform: Affine,
+    brush: &FragmentBrush,
+    fill_rule: Fill,
+    path: &BezPath,
+) {
     match brush {
         FragmentBrush::Solid(fill) => {
             // vello_hybrid reserves alpha=0 for clipping; skip invisible fills.
@@ -26,30 +32,61 @@ pub(crate) fn fill_brush_gradient(scene: &mut Scene, transform: Affine, brush: &
                 scene.fill(fill.rule, transform, fill.color, None, path);
             }
         }
-        FragmentBrush::LinearGradient { start_x, start_y, end_x, end_y, stops } => {
-            let mut gradient = Gradient::new_linear(
-                Point::new(*start_x, *start_y),
-                Point::new(*end_x, *end_y),
-            );
+        FragmentBrush::LinearGradient {
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            stops,
+        } => {
+            let mut gradient =
+                Gradient::new_linear(Point::new(*start_x, *start_y), Point::new(*end_x, *end_y));
             push_gradient_stops(&mut gradient, stops);
-            scene.fill(fill_rule, transform, &gradient, Some(Affine::IDENTITY), path);
-        }
-        FragmentBrush::RadialGradient { center_x, center_y, radius, stops } => {
-            let mut gradient = Gradient::new_radial(
-                Point::new(*center_x, *center_y),
-                *radius as f32,
+            scene.fill(
+                fill_rule,
+                transform,
+                &gradient,
+                Some(Affine::IDENTITY),
+                path,
             );
-            push_gradient_stops(&mut gradient, stops);
-            scene.fill(fill_rule, transform, &gradient, Some(Affine::IDENTITY), path);
         }
-        FragmentBrush::SweepGradient { center_x, center_y, start_angle, end_angle, stops } => {
+        FragmentBrush::RadialGradient {
+            center_x,
+            center_y,
+            radius,
+            stops,
+        } => {
+            let mut gradient =
+                Gradient::new_radial(Point::new(*center_x, *center_y), *radius as f32);
+            push_gradient_stops(&mut gradient, stops);
+            scene.fill(
+                fill_rule,
+                transform,
+                &gradient,
+                Some(Affine::IDENTITY),
+                path,
+            );
+        }
+        FragmentBrush::SweepGradient {
+            center_x,
+            center_y,
+            start_angle,
+            end_angle,
+            stops,
+        } => {
             let mut gradient = Gradient::new_sweep(
                 Point::new(*center_x, *center_y),
                 start_angle.to_radians() as f32,
                 end_angle.to_radians() as f32,
             );
             push_gradient_stops(&mut gradient, stops);
-            scene.fill(fill_rule, transform, &gradient, Some(Affine::IDENTITY), path);
+            scene.fill(
+                fill_rule,
+                transform,
+                &gradient,
+                Some(Affine::IDENTITY),
+                path,
+            );
         }
     }
 }
@@ -61,15 +98,24 @@ impl FragmentEncode for GroupFragment {
 impl FragmentEncode for RectFragment {
     fn encode(&self, scene: &mut Scene, transform: Affine) {
         let rect = Rect::new(0.0, 0.0, self.width, self.height);
-        let has_radius = self.corner_radii.as_single_radius().map_or(true, |r| r > 0.0);
+        let has_radius = self
+            .corner_radii
+            .as_single_radius()
+            .map_or(true, |r| r > 0.0);
 
         // Shadow (behind everything). Inset shadows are handled by the GPU effect pass.
         if let Some(shadow) = &self.shadow {
             if !shadow.inset {
-                let sr = if has_radius { self.corner_radii.as_single_radius().unwrap_or(0.0) } else { 0.0 };
+                let sr = if has_radius {
+                    self.corner_radii.as_single_radius().unwrap_or(0.0)
+                } else {
+                    0.0
+                };
                 let shadow_rect = Rect::new(
-                    shadow.offset_x, shadow.offset_y,
-                    self.width + shadow.offset_x, self.height + shadow.offset_y,
+                    shadow.offset_x,
+                    shadow.offset_y,
+                    self.width + shadow.offset_x,
+                    self.height + shadow.offset_y,
                 );
                 scene.draw_box_shadow(transform, shadow_rect, shadow.color, sr, shadow.blur);
             }
@@ -90,11 +136,21 @@ impl FragmentEncode for RectFragment {
 
         // Stroke.
         if let Some(stroke) = &self.stroke {
-            scene.stroke(&Stroke::new(self.stroke_width.max(stroke.width)), transform, stroke.color, None, &path);
+            scene.stroke(
+                &Stroke::new(self.stroke_width.max(stroke.width)),
+                transform,
+                stroke.color,
+                None,
+                &path,
+            );
         }
 
         // Per-side borders — drawn as inset strokes along each edge.
-        if self.border_top.is_some() || self.border_right.is_some() || self.border_bottom.is_some() || self.border_left.is_some() {
+        if self.border_top.is_some()
+            || self.border_right.is_some()
+            || self.border_bottom.is_some()
+            || self.border_left.is_some()
+        {
             let w = self.width;
             let h = self.height;
             if let Some(b) = &self.border_top {
@@ -148,14 +204,22 @@ impl FragmentEncode for CircleFragment {
             }
         }
         if let Some(stroke) = &self.stroke {
-            scene.stroke(&Stroke::new(self.stroke_width.max(stroke.width)), transform, stroke.color, None, &path);
+            scene.stroke(
+                &Stroke::new(self.stroke_width.max(stroke.width)),
+                transform,
+                stroke.color,
+                None,
+                &path,
+            );
         }
     }
 }
 
 impl FragmentEncode for PathFragment {
     fn encode(&self, scene: &mut Scene, transform: Affine) {
-        let Some(path) = &self.parsed_path else { return };
+        let Some(path) = &self.parsed_path else {
+            return;
+        };
 
         // Fill.
         if let Some(brush) = &self.fill {
@@ -164,7 +228,13 @@ impl FragmentEncode for PathFragment {
 
         // Stroke.
         if let Some(stroke) = &self.stroke {
-            scene.stroke(&Stroke::new(self.stroke_width.max(stroke.width)), transform, stroke.color, None, path);
+            scene.stroke(
+                &Stroke::new(self.stroke_width.max(stroke.width)),
+                transform,
+                stroke.color,
+                None,
+                path,
+            );
         }
     }
 }
@@ -183,15 +253,26 @@ impl FragmentEncode for TextFragment {
             }
             // Rasterized color glyphs (emoji) — rendered as image fills.
             for rg in &cache.rasterized_glyphs {
-                if rg.image.width == 0 || rg.image.height == 0 { continue; }
+                if rg.image.width == 0 || rg.image.height == 0 {
+                    continue;
+                }
                 let sf = rg.scale_factor.max(1.0);
                 let logical_w = rg.image.width as f64 / sf;
                 let logical_h = rg.image.height as f64 / sf;
                 let dest = Rect::new(rg.x, rg.y, rg.x + logical_w, rg.y + logical_h);
                 let brush: ImageBrushRef = (&rg.image).into();
                 let brush_transform = Affine::translate((rg.x, rg.y))
-                    * Affine::scale_non_uniform(logical_w / rg.image.width as f64, logical_h / rg.image.height as f64);
-                scene.fill(Fill::NonZero, transform, brush, Some(brush_transform), &dest);
+                    * Affine::scale_non_uniform(
+                        logical_w / rg.image.width as f64,
+                        logical_h / rg.image.height as f64,
+                    );
+                scene.fill(
+                    Fill::NonZero,
+                    transform,
+                    brush,
+                    Some(brush_transform),
+                    &dest,
+                );
             }
         }
     }
@@ -214,8 +295,16 @@ impl FragmentEncode for TextInputFragment {
             let sel_start = cursor.min(anchor);
             let sel_end = cursor.max(anchor);
             let max_pos = layout.cursor_x_positions.len().saturating_sub(1);
-            let x0 = layout.cursor_x_positions.get(sel_start.min(max_pos)).copied().unwrap_or(0.0);
-            let x1 = layout.cursor_x_positions.get(sel_end.min(max_pos)).copied().unwrap_or(layout.width);
+            let x0 = layout
+                .cursor_x_positions
+                .get(sel_start.min(max_pos))
+                .copied()
+                .unwrap_or(0.0);
+            let x1 = layout
+                .cursor_x_positions
+                .get(sel_end.min(max_pos))
+                .copied()
+                .unwrap_or(layout.width);
             let sel_rect = Rect::new(x0, 0.0, x1, layout.height);
             scene.fill(Fill::NonZero, transform, SELECTION_COLOR, None, &sel_rect);
         }
@@ -223,7 +312,11 @@ impl FragmentEncode for TextInputFragment {
         // Draw caret (only when no selection and caret is visible).
         if !has_selection && self.caret_visible {
             let max_pos = layout.cursor_x_positions.len().saturating_sub(1);
-            let cx = layout.cursor_x_positions.get(cursor.min(max_pos)).copied().unwrap_or(0.0);
+            let cx = layout
+                .cursor_x_positions
+                .get(cursor.min(max_pos))
+                .copied()
+                .unwrap_or(0.0);
             let caret_rect = Rect::new(cx, 0.0, cx + CARET_WIDTH, layout.height);
             scene.fill(Fill::NonZero, transform, CARET_COLOR, None, &caret_rect);
         }
@@ -238,18 +331,31 @@ impl FragmentEncode for SpanFragment {
 
 impl FragmentEncode for ImageFragment {
     fn encode(&self, scene: &mut Scene, transform: Affine) {
-        let Some(image_data) = &self.image_data else { return };
-        if self.width <= 0.0 || self.height <= 0.0 { return; }
+        let Some(image_data) = &self.image_data else {
+            return;
+        };
+        if self.width <= 0.0 || self.height <= 0.0 {
+            return;
+        }
 
         let src_w = image_data.width as f64;
         let src_h = image_data.height as f64;
-        if src_w <= 0.0 || src_h <= 0.0 { return; }
+        if src_w <= 0.0 || src_h <= 0.0 {
+            return;
+        }
 
         // Compute brush_transform and the actual paint rect (may be smaller than dest for contain/none).
-        let (brush_transform, paint_rect) = compute_image_fit(src_w, src_h, self.width, self.height, &self.object_fit);
+        let (brush_transform, paint_rect) =
+            compute_image_fit(src_w, src_h, self.width, self.height, &self.object_fit);
 
         let brush: ImageBrushRef = image_data.into();
-        scene.fill(Fill::NonZero, transform, brush, Some(brush_transform), &paint_rect);
+        scene.fill(
+            Fill::NonZero,
+            transform,
+            brush,
+            Some(brush_transform),
+            &paint_rect,
+        );
     }
 }
 
@@ -280,6 +386,9 @@ fn compute_image_fit(src_w: f64, src_h: f64, dst_w: f64, dst_h: f64, mode: &str)
             (Affine::translate((dx, dy)), paint)
         }
         // "fill" or default — stretch to fit
-        _ => (Affine::scale_non_uniform(dst_w / src_w, dst_h / src_h), dest),
+        _ => (
+            Affine::scale_non_uniform(dst_w / src_w, dst_h / src_h),
+            dest,
+        ),
     }
 }

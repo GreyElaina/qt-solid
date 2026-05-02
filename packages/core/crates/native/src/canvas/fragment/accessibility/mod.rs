@@ -30,13 +30,19 @@ fn to_ak_rect(r: &KurboRect) -> AkRect {
     }
 }
 
+/// Whether a fragment node should appear in the accessibility tree by itself.
+fn node_has_a11y(node: &FragmentNode) -> bool {
+    node.semantics.is_some() || (node.props.visible && node.props.focusable)
+}
+
 /// Whether a fragment node should appear in the accessibility tree, either
-/// because it has explicit semantics or because it has descendant(s) that do.
+/// because it has explicit semantics, can receive focus, or because it has
+/// descendant(s) that do.
 fn subtree_has_a11y(
     node: &FragmentNode,
     nodes: &std::collections::HashMap<FragmentId, FragmentNode>,
 ) -> bool {
-    if node.semantics.is_some() {
+    if node_has_a11y(node) {
         return true;
     }
     node.children.iter().any(|cid| {
@@ -50,14 +56,8 @@ fn subtree_has_a11y(
 ///
 /// Returns the main node plus any synthetic child nodes (TextRun children
 /// for text-bearing fragments).
-fn build_ak_node(
-    frag: &FragmentNode,
-    a11y_children: &[NodeId],
-) -> (Node, Vec<(NodeId, Node)>) {
-    let role = frag
-        .semantics
-        .as_ref()
-        .map_or(Role::Group, |s| s.role);
+fn build_ak_node(frag: &FragmentNode, a11y_children: &[NodeId]) -> (Node, Vec<(NodeId, Node)>) {
+    let role = frag.semantics.as_ref().map_or(Role::Group, |s| s.role);
 
     let mut ak = Node::new(role);
     let bounds = frag.world_aabb.map(|r| to_ak_rect(&r));
@@ -94,13 +94,18 @@ fn build_ak_node(
             synthetic.push((run_id, run));
 
             // Text selection on the container.
-            if let Some(sel) = build_text_selection(&t.text, t.cursor_pos, t.selection_anchor, run_id)
+            if let Some(sel) =
+                build_text_selection(&t.text, t.cursor_pos, t.selection_anchor, run_id)
             {
                 ak.set_text_selection(sel);
             }
             ak.add_action(Action::SetTextSelection);
         }
         _ => {}
+    }
+
+    if frag.props.visible && frag.props.focusable {
+        ak.add_action(Action::Focus);
     }
 
     // Merge real a11y children + synthetic TextRun children.
@@ -211,7 +216,7 @@ impl FragmentTree {
             }
         }
 
-        let focus = self.focused.map(frag_to_node_id).unwrap_or(AK_ROOT_ID);
+        let focus = self.accesskit_focus();
 
         TreeUpdate {
             nodes: out,
@@ -281,7 +286,7 @@ impl FragmentTree {
             return None;
         }
 
-        let focus = self.focused.map(frag_to_node_id).unwrap_or(AK_ROOT_ID);
+        let focus = self.accesskit_focus();
 
         Some(TreeUpdate {
             nodes: out,
@@ -324,5 +329,94 @@ impl FragmentTree {
             })
             .map(|cid| frag_to_node_id(*cid))
             .collect()
+    }
+
+    fn accesskit_focus(&self) -> NodeId {
+        let Some(focused) = self.focused else {
+            return AK_ROOT_ID;
+        };
+        if self
+            .root_children
+            .iter()
+            .any(|id| self.subtree_contains_a11y_node(*id, focused))
+        {
+            frag_to_node_id(focused)
+        } else {
+            AK_ROOT_ID
+        }
+    }
+
+    fn subtree_contains_a11y_node(&self, id: FragmentId, target: FragmentId) -> bool {
+        let Some(node) = self.nodes.get(&id) else {
+            return false;
+        };
+        if id == target {
+            return node_has_a11y(node);
+        }
+        node.children
+            .iter()
+            .any(|child_id| self.subtree_contains_a11y_node(*child_id, target))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canvas::fragment::{FragmentData, FragmentTree};
+
+    fn node_ids(update: &TreeUpdate) -> Vec<NodeId> {
+        update.nodes.iter().map(|(id, _)| *id).collect()
+    }
+
+    #[test]
+    fn full_update_includes_focused_focusable_node_without_semantics() {
+        let mut tree = FragmentTree::new();
+        let id = tree.create_node(FragmentData::Rect(Default::default()));
+        tree.nodes.get_mut(&id).unwrap().props.focusable = true;
+        tree.insert_child(None, id, None);
+        tree.focused = Some(id);
+
+        let update = tree.build_full_accesskit_update();
+        let ids = node_ids(&update);
+
+        assert!(ids.contains(&AK_ROOT_ID));
+        assert!(ids.contains(&frag_to_node_id(id)));
+        assert_eq!(update.focus, frag_to_node_id(id));
+    }
+
+    #[test]
+    fn full_update_falls_back_to_root_when_focus_is_detached() {
+        let mut tree = FragmentTree::new();
+        let id = tree.create_node(FragmentData::Rect(Default::default()));
+        tree.nodes.get_mut(&id).unwrap().props.focusable = true;
+        tree.insert_child(None, id, None);
+        tree.focused = Some(id);
+
+        tree.detach_child(None, id);
+
+        let update = tree.build_full_accesskit_update();
+        let ids = node_ids(&update);
+
+        assert!(ids.contains(&AK_ROOT_ID));
+        assert!(!ids.contains(&frag_to_node_id(id)));
+        assert_eq!(update.focus, AK_ROOT_ID);
+    }
+
+    #[test]
+    fn full_update_falls_back_to_root_when_focus_is_removed() {
+        let mut tree = FragmentTree::new();
+        let id = tree.create_node(FragmentData::Rect(Default::default()));
+        tree.nodes.get_mut(&id).unwrap().props.focusable = true;
+        tree.insert_child(None, id, None);
+        tree.focused = Some(id);
+
+        tree.remove(id);
+
+        let update = tree.build_full_accesskit_update();
+        let ids = node_ids(&update);
+
+        assert!(ids.contains(&AK_ROOT_ID));
+        assert!(!ids.contains(&frag_to_node_id(id)));
+        assert_eq!(update.focus, AK_ROOT_ID);
     }
 }

@@ -14,7 +14,13 @@ pub(crate) fn emit_canvas_pointer_event(node_id: u32, event_tag: u8, x: f64, y: 
     crate::runtime::emit_canvas_pointer_event(node_id, event_tag, x, y);
 }
 
-pub(crate) fn emit_canvas_context_menu_event(node_id: u32, x: f64, y: f64, screen_x: f64, screen_y: f64) {
+pub(crate) fn emit_canvas_context_menu_event(
+    node_id: u32,
+    x: f64,
+    y: f64,
+    screen_x: f64,
+    screen_y: f64,
+) {
     crate::runtime::emit_canvas_context_menu_event(node_id, x, y, screen_x, screen_y);
 }
 
@@ -33,7 +39,14 @@ pub(crate) fn qt_canvas_key_event(
     native_virtual_key: u32,
 ) {
     crate::runtime::qt_canvas_key_event(
-        node_id, event_tag, qt_key, modifiers, text, repeat, native_scan_code, native_virtual_key,
+        node_id,
+        event_tag,
+        qt_key,
+        modifiers,
+        text,
+        repeat,
+        native_scan_code,
+        native_virtual_key,
     );
 }
 
@@ -48,7 +61,9 @@ pub(crate) fn qt_canvas_wheel_event(
     modifiers: u32,
     phase: u32,
 ) {
-    crate::runtime::qt_canvas_wheel_event(node_id, delta_x, delta_y, pixel_dx, pixel_dy, x, y, modifiers, phase);
+    crate::runtime::qt_canvas_wheel_event(
+        node_id, delta_x, delta_y, pixel_dx, pixel_dy, x, y, modifiers, phase,
+    );
 }
 
 pub(crate) fn qt_window_event_focus_change(node_id: u32, gained: bool) {

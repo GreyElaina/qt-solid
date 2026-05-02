@@ -1,5 +1,5 @@
-pub mod decl;
 pub(crate) mod accessibility;
+pub mod decl;
 mod encode;
 mod hit_test;
 mod kinds;
@@ -23,12 +23,12 @@ use std::collections::HashMap;
 
 use taffy::prelude::*;
 
-use decl::FragmentValue;
+use super::vello::Scene;
 use super::vello::peniko::kurbo::{Affine, BezPath, Point, Rect, Vec2};
 use super::vello::peniko::{Color, ImageData};
-use super::vello::Scene;
-use crate::runtime;
 use crate::renderer::compositor::effects::{BackdropBlurEffect, InnerShadowEffect};
+use crate::runtime;
+use decl::FragmentValue;
 
 pub fn fragment_store_ensure(canvas_node_id: u32) {
     runtime::ensure_fragment_tree(canvas_node_id);
@@ -73,7 +73,10 @@ pub fn fragment_store_detach_child(
     child: FragmentId,
 ) {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
-        let is_span = tree.nodes.get(&child).map_or(false, |n| matches!(n.kind, FragmentData::Span(_)));
+        let is_span = tree
+            .nodes
+            .get(&child)
+            .map_or(false, |n| matches!(n.kind, FragmentData::Span(_)));
         tree.detach_child(parent, child);
         if is_span {
             if let Some(parent_id) = parent {
@@ -112,10 +115,7 @@ pub fn fragment_store_set_image_data(
     });
 }
 
-pub fn fragment_store_clear_image_data(
-    canvas_node_id: u32,
-    fragment_id: FragmentId,
-) {
+pub fn fragment_store_clear_image_data(canvas_node_id: u32, fragment_id: FragmentId) {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         if let Some(node) = tree.nodes.get_mut(&fragment_id) {
             if let FragmentData::Image(ref mut img) = node.kind {
@@ -194,18 +194,34 @@ pub fn fragment_store_set_prop(
                 let v32 = fv as f32;
                 tree.with_taffy_style_mut(fragment_id, |style| {
                     if key == "width" {
-                        style.size.width = if v32 > 0.0 { taffy::style::Dimension::length(v32) } else { taffy::style::Dimension::auto() };
+                        style.size.width = if v32 > 0.0 {
+                            taffy::style::Dimension::length(v32)
+                        } else {
+                            taffy::style::Dimension::auto()
+                        };
                     } else {
-                        style.size.height = if v32 > 0.0 { taffy::style::Dimension::length(v32) } else { taffy::style::Dimension::auto() };
+                        style.size.height = if v32 > 0.0 {
+                            taffy::style::Dimension::length(v32)
+                        } else {
+                            taffy::style::Dimension::auto()
+                        };
                     }
                 });
             } else if let FragmentValue::Str { ref value } = value {
                 if let Some(dim) = parse_dimension_string(value) {
                     if let Some(node) = tree.nodes.get_mut(&fragment_id) {
-                        if key == "width" { node.props.explicit_width = None; } else { node.props.explicit_height = None; }
+                        if key == "width" {
+                            node.props.explicit_width = None;
+                        } else {
+                            node.props.explicit_height = None;
+                        }
                     }
                     tree.with_taffy_style_mut(fragment_id, |style| {
-                        if key == "width" { style.size.width = dim; } else { style.size.height = dim; }
+                        if key == "width" {
+                            style.size.width = dim;
+                        } else {
+                            style.size.height = dim;
+                        }
                     });
                     tree.any_dirty = true;
                     tree.cached_scene = None;
@@ -236,7 +252,9 @@ pub fn fragment_store_set_prop(
 
         // Sync taffy position mode when x/y explicit state changes.
         if key == "x" || key == "y" {
-            let (ex, ey) = tree.nodes.get(&fragment_id)
+            let (ex, ey) = tree
+                .nodes
+                .get(&fragment_id)
                 .map(|n| (n.props.explicit_x, n.props.explicit_y))
                 .unwrap_or((None, None));
             tree.with_taffy_style_mut(fragment_id, |style| {
@@ -272,15 +290,18 @@ pub fn fragment_store_paint(canvas_node_id: u32, scene: &mut Scene, transform: A
 }
 
 pub fn fragment_store_paint_subtrees(canvas_node_id: u32) -> Vec<(FragmentId, Scene, bool)> {
-    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
-        tree.paint_subtrees()
-    }).unwrap_or_default()
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.paint_subtrees())
+        .unwrap_or_default()
 }
 
-pub fn fragment_store_compute_dirty_rects(canvas_node_id: u32, scale_factor: f64) -> DirtyRectResult {
+pub fn fragment_store_compute_dirty_rects(
+    canvas_node_id: u32,
+    scale_factor: f64,
+) -> DirtyRectResult {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         tree.compute_dirty_rects(scale_factor)
-    }).unwrap_or(DirtyRectResult::FullRepaint)
+    })
+    .unwrap_or(DirtyRectResult::FullRepaint)
 }
 
 pub fn fragment_store_consume_dirty_state(canvas_node_id: u32) {
@@ -290,17 +311,26 @@ pub fn fragment_store_consume_dirty_state(canvas_node_id: u32) {
 }
 
 pub fn fragment_store_force_full_repaint(canvas_node_id: u32) -> bool {
-    runtime::with_fragment_tree(canvas_node_id, |tree| tree.force_full_repaint)
-        .unwrap_or(true)
+    runtime::with_fragment_tree(canvas_node_id, |tree| tree.force_full_repaint).unwrap_or(true)
 }
 
-pub fn fragment_store_paint_single(canvas_node_id: u32, fragment_id: FragmentId, scene: &mut Scene, transform: Affine) {
+pub fn fragment_store_paint_single(
+    canvas_node_id: u32,
+    fragment_id: FragmentId,
+    scene: &mut Scene,
+    transform: Affine,
+) {
     runtime::with_fragment_tree(canvas_node_id, |tree| {
         tree.paint_node_self_only(scene, fragment_id, transform);
     });
 }
 
-pub fn fragment_store_paint_at_origin(canvas_node_id: u32, fragment_id: FragmentId, scene: &mut Scene, transform: Affine) {
+pub fn fragment_store_paint_at_origin(
+    canvas_node_id: u32,
+    fragment_id: FragmentId,
+    scene: &mut Scene,
+    transform: Affine,
+) {
     runtime::with_fragment_tree(canvas_node_id, |tree| {
         tree.paint_node_at_origin(scene, fragment_id, transform);
     });
@@ -310,7 +340,8 @@ pub fn fragment_store_world_bounds(canvas_node_id: u32, fragment_id: FragmentId)
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         tree.ensure_aabbs();
         tree.node(fragment_id)?.world_aabb
-    }).flatten()
+    })
+    .flatten()
 }
 
 pub fn fragment_store_build_paint_plan(canvas_node_id: u32) -> Option<PaintPlan> {
@@ -318,24 +349,27 @@ pub fn fragment_store_build_paint_plan(canvas_node_id: u32) -> Option<PaintPlan>
 }
 
 pub fn fragment_store_build_render_plan(canvas_node_id: u32) -> Option<RenderPlan> {
-    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
-        tree.build_paint_plan().partition()
-    })
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.build_paint_plan().partition())
 }
 
 pub fn fragment_store_has_promoted(canvas_node_id: u32) -> bool {
-    runtime::with_fragment_tree(canvas_node_id, |tree| tree.has_promoted_nodes())
-        .unwrap_or(false)
+    runtime::with_fragment_tree(canvas_node_id, |tree| tree.has_promoted_nodes()).unwrap_or(false)
 }
 
-pub fn fragment_store_collect_inner_shadows(canvas_node_id: u32, scale_factor: f64) -> Vec<InnerShadowEffect> {
+pub fn fragment_store_collect_inner_shadows(
+    canvas_node_id: u32,
+    scale_factor: f64,
+) -> Vec<InnerShadowEffect> {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         tree.collect_inner_shadow_effects(scale_factor)
     })
     .unwrap_or_default()
 }
 
-pub fn fragment_store_collect_backdrop_blurs(canvas_node_id: u32, scale_factor: f64) -> Vec<BackdropBlurEffect> {
+pub fn fragment_store_collect_backdrop_blurs(
+    canvas_node_id: u32,
+    scale_factor: f64,
+) -> Vec<BackdropBlurEffect> {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         tree.collect_backdrop_blur_effects(scale_factor)
     })
@@ -344,9 +378,9 @@ pub fn fragment_store_collect_backdrop_blurs(canvas_node_id: u32, scale_factor: 
 
 pub fn fragment_store_has_animating(canvas_node_id: u32) -> bool {
     runtime::with_fragment_tree(canvas_node_id, |tree| {
-        tree.nodes.values().any(|n| {
-            n.timeline.as_ref().map_or(false, |t| t.is_animating())
-        })
+        tree.nodes
+            .values()
+            .any(|n| n.timeline.as_ref().map_or(false, |t| t.is_animating()))
     })
     .unwrap_or(false)
 }
@@ -385,10 +419,7 @@ pub fn fragment_store_focus_fragment(canvas_node_id: u32, fragment_id: FragmentI
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         let old = tree.focus_fragment(fragment_id);
         let new_focused = tree.focused().map(|id| id.0 as i32).unwrap_or(-1);
-        (
-            old.map(|id| id.0 as i32).unwrap_or(-1),
-            new_focused,
-        )
+        (old.map(|id| id.0 as i32).unwrap_or(-1), new_focused)
     })
     .unwrap_or((-1, -1))
 }
@@ -490,7 +521,15 @@ pub fn fragment_store_read_text_props(
             }
             let weight = text.font_weight as i32;
             let italic = text.font_style == "italic";
-            Some((text.text.clone(), text.font_size, text.font_family.clone(), weight, italic, text.text_max_width, text.text_overflow.clone()))
+            Some((
+                text.text.clone(),
+                text.font_size,
+                text.font_family.clone(),
+                weight,
+                italic,
+                text.text_max_width,
+                text.text_overflow.clone(),
+            ))
         } else {
             None
         }
@@ -521,10 +560,26 @@ pub fn fragment_store_read_text_style_runs(
             if let FragmentData::Span(ref span) = child.kind {
                 runs.push(TextStyleRun {
                     text: span.text.clone(),
-                    font_size: if span.font_size > 0.0 { span.font_size } else { text_frag.font_size },
-                    font_family: if span.font_family.is_empty() { text_frag.font_family.clone() } else { span.font_family.clone() },
-                    font_weight: if span.font_weight > 0.0 { span.font_weight as i32 } else { text_frag.font_weight as i32 },
-                    font_italic: if span.font_style.is_empty() { text_frag.font_style == "italic" } else { span.font_style == "italic" },
+                    font_size: if span.font_size > 0.0 {
+                        span.font_size
+                    } else {
+                        text_frag.font_size
+                    },
+                    font_family: if span.font_family.is_empty() {
+                        text_frag.font_family.clone()
+                    } else {
+                        span.font_family.clone()
+                    },
+                    font_weight: if span.font_weight > 0.0 {
+                        span.font_weight as i32
+                    } else {
+                        text_frag.font_weight as i32
+                    },
+                    font_italic: if span.font_style.is_empty() {
+                        text_frag.font_style == "italic"
+                    } else {
+                        span.font_style == "italic"
+                    },
                     color: span.color,
                 });
             }
@@ -532,7 +587,13 @@ pub fn fragment_store_read_text_style_runs(
         if runs.is_empty() {
             None
         } else {
-            Some((runs, text_frag.font_size, text_frag.font_family.clone(), text_frag.text_max_width, text_frag.text_overflow.clone()))
+            Some((
+                runs,
+                text_frag.font_size,
+                text_frag.font_family.clone(),
+                text_frag.text_max_width,
+                text_frag.text_overflow.clone(),
+            ))
         }
     })?
 }
@@ -554,7 +615,8 @@ pub fn fragment_store_parent_text_for_span(
         } else {
             None
         }
-    }).flatten()
+    })
+    .flatten()
 }
 
 /// Read text input props for reshaping.
@@ -570,7 +632,13 @@ pub fn fragment_store_read_text_input_props(
             }
             let weight = ti.font_weight as i32;
             let italic = ti.font_style == "italic";
-            Some((ti.text.clone(), ti.font_size, ti.font_family.clone(), weight, italic))
+            Some((
+                ti.text.clone(),
+                ti.font_size,
+                ti.font_family.clone(),
+                weight,
+                italic,
+            ))
         } else {
             None
         }
@@ -592,18 +660,15 @@ pub fn fragment_store_click_to_cursor(
         let inv = world.inverse();
         let local = inv * Point::new(window_x, 0.0);
         Some(local.x)
-    }).flatten();
+    })
+    .flatten();
 
     if let Some(lx) = local_x {
         let _ = crate::qt::ffi::qt_text_edit_click_to_cursor(canvas_node_id, lx);
     }
 }
 
-pub fn fragment_store_drag_to_cursor(
-    canvas_node_id: u32,
-    window_x: f64,
-    _window_y: f64,
-) {
+pub fn fragment_store_drag_to_cursor(canvas_node_id: u32, window_x: f64, _window_y: f64) {
     let local_x = runtime::with_fragment_tree(canvas_node_id, |tree| {
         let focused_id = tree.focused()?;
         let node = tree.node(focused_id)?;
@@ -614,7 +679,8 @@ pub fn fragment_store_drag_to_cursor(
         let inv = world.inverse();
         let local = inv * Point::new(window_x, 0.0);
         Some(local.x)
-    }).flatten();
+    })
+    .flatten();
 
     if let Some(lx) = local_x {
         let _ = crate::qt::ffi::qt_text_edit_drag_to_cursor(canvas_node_id, lx);
@@ -678,7 +744,14 @@ pub fn fragment_store_set_motion_target(
     now: f64,
 ) -> bool {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
-        tree.set_motion_target(fragment_id, targets, default_transition, per_property, delay_secs, now)
+        tree.set_motion_target(
+            fragment_id,
+            targets,
+            default_transition,
+            per_property,
+            delay_secs,
+            now,
+        )
     })
     .unwrap_or(false)
 }
@@ -694,17 +767,31 @@ pub fn fragment_store_set_motion_target_keyframes(
     now: f64,
 ) -> bool {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
-        tree.set_motion_target_keyframes(fragment_id, targets, times, default_transition, per_property, delay_secs, now)
+        tree.set_motion_target_keyframes(
+            fragment_id,
+            targets,
+            times,
+            default_transition,
+            per_property,
+            delay_secs,
+            now,
+        )
     })
     .unwrap_or(false)
 }
 
 pub fn fragment_store_tick_motion(canvas_node_id: u32, now: f64) -> (bool, Vec<FragmentId>, f64) {
-    runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.tick_motion(now))
-        .unwrap_or((false, Vec::new(), 0.0))
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.tick_motion(now)).unwrap_or((
+        false,
+        Vec::new(),
+        0.0,
+    ))
 }
 
-pub fn fragment_store_get_world_bounds(canvas_node_id: u32, fragment_id: FragmentId) -> Option<Rect> {
+pub fn fragment_store_get_world_bounds(
+    canvas_node_id: u32,
+    fragment_id: FragmentId,
+) -> Option<Rect> {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.get_world_bounds(fragment_id))
         .flatten()
 }
@@ -750,17 +837,11 @@ pub fn fragment_store_get_content_size(
     canvas_node_id: u32,
     fragment_id: FragmentId,
 ) -> Option<(f64, f64)> {
-    runtime::with_fragment_tree(canvas_node_id, |tree| {
-        tree.get_content_size(fragment_id)
-    }).flatten()
+    runtime::with_fragment_tree(canvas_node_id, |tree| tree.get_content_size(fragment_id)).flatten()
 }
 
-pub fn fragment_store_compute_intrinsic_size(
-    canvas_node_id: u32,
-) -> Option<(f64, f64)> {
-    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
-        tree.compute_intrinsic_size()
-    }).flatten()
+pub fn fragment_store_compute_intrinsic_size(canvas_node_id: u32) -> Option<(f64, f64)> {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.compute_intrinsic_size()).flatten()
 }
 
 pub fn fragment_store_set_layout_flip(
@@ -785,14 +866,40 @@ pub fn fragment_store_set_layout_flip(
 
 const LAYOUT_PROPS: &[&str] = &[
     "display",
-    "flexDirection", "flexGrow", "flexShrink", "flexBasis",
-    "flexWrap", "alignItems", "alignSelf", "justifyContent",
-    "gap", "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-    "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
-    "minWidth", "minHeight", "maxWidth", "maxHeight",
-    "position", "overflow", "overflowX", "overflowY",
-    "gridTemplateRows", "gridTemplateColumns",
-    "gridAutoFlow", "gridRow", "gridColumn", "gridRowSpan", "gridColSpan",
+    "flexDirection",
+    "flexGrow",
+    "flexShrink",
+    "flexBasis",
+    "flexWrap",
+    "alignItems",
+    "alignSelf",
+    "justifyContent",
+    "gap",
+    "padding",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "margin",
+    "marginTop",
+    "marginRight",
+    "marginBottom",
+    "marginLeft",
+    "minWidth",
+    "minHeight",
+    "maxWidth",
+    "maxHeight",
+    "position",
+    "overflow",
+    "overflowX",
+    "overflowY",
+    "gridTemplateRows",
+    "gridTemplateColumns",
+    "gridAutoFlow",
+    "gridRow",
+    "gridColumn",
+    "gridRowSpan",
+    "gridColSpan",
 ];
 
 // ---------------------------------------------------------------------------
@@ -827,12 +934,20 @@ fn apply_semantics_prop(node: &mut FragmentNode, key: &str, value: &FragmentValu
         }
         "ariaLabel" => {
             if let FragmentValue::Str { value } = value {
-                semantics.label = if value.is_empty() { None } else { Some(value.clone()) };
+                semantics.label = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.clone())
+                };
             }
         }
         "ariaDescription" => {
             if let FragmentValue::Str { value } = value {
-                semantics.description = if value.is_empty() { None } else { Some(value.clone()) };
+                semantics.description = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.clone())
+                };
             }
         }
         "ariaLive" => {
@@ -870,7 +985,11 @@ fn apply_semantics_prop(node: &mut FragmentNode, key: &str, value: &FragmentValu
         }
         "ariaValueNow" => {
             if let FragmentValue::Str { value } = value {
-                semantics.value = if value.is_empty() { None } else { Some(value.clone()) };
+                semantics.value = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.clone())
+                };
             } else if let FragmentValue::F64 { value } = value {
                 semantics.value = Some(value.to_string());
             }
@@ -957,11 +1076,21 @@ fn apply_layout_prop_to_style(style: &mut taffy::Style, key: &str, v: f32) {
         }
         "padding" => {
             let lp = taffy::style::LengthPercentage::length(v);
-            style.padding = taffy::geometry::Rect { top: lp, right: lp, bottom: lp, left: lp };
+            style.padding = taffy::geometry::Rect {
+                top: lp,
+                right: lp,
+                bottom: lp,
+                left: lp,
+            };
         }
         "margin" => {
             let lpa = taffy::style::LengthPercentageAuto::length(v);
-            style.margin = taffy::geometry::Rect { top: lpa, right: lpa, bottom: lpa, left: lpa };
+            style.margin = taffy::geometry::Rect {
+                top: lpa,
+                right: lpa,
+                bottom: lpa,
+                left: lpa,
+            };
         }
         "paddingTop" => style.padding.top = taffy::style::LengthPercentage::length(v),
         "paddingRight" => style.padding.right = taffy::style::LengthPercentage::length(v),
@@ -1140,7 +1269,8 @@ fn parse_track_size(s: &str) -> GridTemplateComponent<String> {
 }
 
 fn apply_grid_tracks_to_style(style: &mut taffy::Style, key: &str, tracks: &[String]) {
-    let parsed: Vec<GridTemplateComponent<String>> = tracks.iter().map(|t| parse_track_size(t)).collect();
+    let parsed: Vec<GridTemplateComponent<String>> =
+        tracks.iter().map(|t| parse_track_size(t)).collect();
     match key {
         "gridTemplateRows" => {
             style.display = taffy::style::Display::Grid;
@@ -1158,26 +1288,38 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
     match key {
         "x" => {
             match value {
-                FragmentValue::F64 { value } => { node.props.explicit_x = Some(value); }
-                FragmentValue::Unset => { node.props.explicit_x = None; }
+                FragmentValue::F64 { value } => {
+                    node.props.explicit_x = Some(value);
+                }
+                FragmentValue::Unset => {
+                    node.props.explicit_x = None;
+                }
                 _ => {}
             }
             return;
         }
         "y" => {
             match value {
-                FragmentValue::F64 { value } => { node.props.explicit_y = Some(value); }
-                FragmentValue::Unset => { node.props.explicit_y = None; }
+                FragmentValue::F64 { value } => {
+                    node.props.explicit_y = Some(value);
+                }
+                FragmentValue::Unset => {
+                    node.props.explicit_y = None;
+                }
                 _ => {}
             }
             return;
         }
         "opacity" => {
-            if let FragmentValue::F64 { value } = value { node.props.opacity = value as f32; }
+            if let FragmentValue::F64 { value } = value {
+                node.props.opacity = value as f32;
+            }
             return;
         }
         "clip" => {
-            if let FragmentValue::Bool { value } = value { node.props.clip = value; }
+            if let FragmentValue::Bool { value } = value {
+                node.props.clip = value;
+            }
             return;
         }
         "clipPath" => {
@@ -1189,17 +1331,23 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
                         BezPath::from_svg(value).ok()
                     };
                 }
-                FragmentValue::Unset => { node.props.clip_path = None; }
+                FragmentValue::Unset => {
+                    node.props.clip_path = None;
+                }
                 _ => {}
             }
             return;
         }
         "visible" => {
-            if let FragmentValue::Bool { value } = value { node.props.visible = value; }
+            if let FragmentValue::Bool { value } = value {
+                node.props.visible = value;
+            }
             return;
         }
         "pointerEvents" => {
-            if let FragmentValue::Bool { value } = value { node.props.pointer_events = value; }
+            if let FragmentValue::Bool { value } = value {
+                node.props.pointer_events = value;
+            }
             return;
         }
         "cursor" => {
@@ -1219,11 +1367,15 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
             return;
         }
         "focusable" => {
-            if let FragmentValue::Bool { value } = value { node.props.focusable = value; }
+            if let FragmentValue::Bool { value } = value {
+                node.props.focusable = value;
+            }
             return;
         }
         "layer" => {
-            if let FragmentValue::Bool { value } = value { node.promoted = value; }
+            if let FragmentValue::Bool { value } = value {
+                node.promoted = value;
+            }
             return;
         }
         "blendMode" => {
@@ -1237,15 +1389,21 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
                 FragmentValue::F64 { value } => {
                     node.props.backdrop_blur = if value > 0.0 { Some(value) } else { None };
                 }
-                FragmentValue::Unset => { node.props.backdrop_blur = None; }
+                FragmentValue::Unset => {
+                    node.props.backdrop_blur = None;
+                }
                 _ => {}
             }
             return;
         }
         "zIndex" => {
             match value {
-                FragmentValue::F64 { value } => { node.props.z_index = value as i32; }
-                FragmentValue::Unset => { node.props.z_index = 0; }
+                FragmentValue::F64 { value } => {
+                    node.props.z_index = value as i32;
+                }
+                FragmentValue::Unset => {
+                    node.props.z_index = 0;
+                }
                 _ => {}
             }
             return;
@@ -1257,10 +1415,23 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
         return;
     }
     node.kind.apply_prop(key, value);
-    if matches!(key, "text" | "fontSize" | "fontFamily" | "fontWeight" | "fontStyle" | "textMaxWidth" | "textOverflow") {
+    if matches!(
+        key,
+        "text"
+            | "fontSize"
+            | "fontFamily"
+            | "fontWeight"
+            | "fontStyle"
+            | "textMaxWidth"
+            | "textOverflow"
+    ) {
         match &mut node.kind {
-            FragmentData::Text(t) => { t.shaped = None; }
-            FragmentData::TextInput(ti) => { ti.layout = None; }
+            FragmentData::Text(t) => {
+                t.shaped = None;
+            }
+            FragmentData::TextInput(ti) => {
+                ti.layout = None;
+            }
             _ => {}
         }
     }
@@ -1330,9 +1501,15 @@ fn format_color(c: &Color) -> String {
 fn serialize_taffy_style(props: &mut HashMap<String, String>, style: &taffy::Style) {
     match style.flex_direction {
         taffy::FlexDirection::Row => {}
-        taffy::FlexDirection::Column => { props.insert("flexDirection".into(), "column".into()); }
-        taffy::FlexDirection::RowReverse => { props.insert("flexDirection".into(), "row-reverse".into()); }
-        taffy::FlexDirection::ColumnReverse => { props.insert("flexDirection".into(), "column-reverse".into()); }
+        taffy::FlexDirection::Column => {
+            props.insert("flexDirection".into(), "column".into());
+        }
+        taffy::FlexDirection::RowReverse => {
+            props.insert("flexDirection".into(), "row-reverse".into());
+        }
+        taffy::FlexDirection::ColumnReverse => {
+            props.insert("flexDirection".into(), "column-reverse".into());
+        }
     }
     if style.flex_grow != 0.0 {
         props.insert("flexGrow".into(), format!("{}", style.flex_grow));
@@ -1341,20 +1518,34 @@ fn serialize_taffy_style(props: &mut HashMap<String, String>, style: &taffy::Sty
         props.insert("flexShrink".into(), format!("{}", style.flex_shrink));
     }
     if let Some(v) = lp_length_value(style.gap.width) {
-        if v != 0.0 { props.insert("columnGap".into(), format!("{}", v)); }
+        if v != 0.0 {
+            props.insert("columnGap".into(), format!("{}", v));
+        }
     }
     if let Some(v) = lp_length_value(style.gap.height) {
-        if v != 0.0 { props.insert("rowGap".into(), format!("{}", v)); }
+        if v != 0.0 {
+            props.insert("rowGap".into(), format!("{}", v));
+        }
     }
     serialize_taffy_rect_lp("padding", &style.padding, props);
     if let Some(ai) = style.align_items {
-        props.insert("alignItems".into(), format!("{:?}", ai).to_ascii_lowercase());
+        props.insert(
+            "alignItems".into(),
+            format!("{:?}", ai).to_ascii_lowercase(),
+        );
     }
     if let Some(jc) = style.justify_content {
-        props.insert("justifyContent".into(), format!("{:?}", jc).to_ascii_lowercase());
+        props.insert(
+            "justifyContent".into(),
+            format!("{:?}", jc).to_ascii_lowercase(),
+        );
     }
-    if style.overflow.x != taffy::Overflow::Visible || style.overflow.y != taffy::Overflow::Visible {
-        props.insert("overflow".into(), format!("{:?}/{:?}", style.overflow.x, style.overflow.y).to_ascii_lowercase());
+    if style.overflow.x != taffy::Overflow::Visible || style.overflow.y != taffy::Overflow::Visible
+    {
+        props.insert(
+            "overflow".into(),
+            format!("{:?}/{:?}", style.overflow.x, style.overflow.y).to_ascii_lowercase(),
+        );
     }
 }
 
@@ -1373,7 +1564,12 @@ fn serialize_taffy_rect_lp(
     rect: &taffy::geometry::Rect<taffy::LengthPercentage>,
     props: &mut HashMap<String, String>,
 ) {
-    let sides = [("Top", rect.top), ("Right", rect.right), ("Bottom", rect.bottom), ("Left", rect.left)];
+    let sides = [
+        ("Top", rect.top),
+        ("Right", rect.right),
+        ("Bottom", rect.bottom),
+        ("Left", rect.left),
+    ];
     for (suffix, val) in sides {
         if let Some(v) = lp_length_value(val) {
             if v != 0.0 {
@@ -1399,104 +1595,112 @@ fn snapshot_tag(kind: &FragmentData) -> &'static str {
 impl FragmentTree {
     /// Devtools snapshot — returns a flat list of all nodes with layout data.
     pub fn snapshot(&self) -> Vec<FragmentNodeSnapshot> {
-        self.nodes.values().map(|node| {
-            let tag = snapshot_tag(&node.kind).to_string();
+        self.nodes
+            .values()
+            .map(|node| {
+                let tag = snapshot_tag(&node.kind).to_string();
 
-            let width = node.layout.width;
-            let height = node.layout.height;
+                let width = node.layout.width;
+                let height = node.layout.height;
 
-            let taffy_style = node.taffy_node
-                .and_then(|tn| self.taffy.style(tn).ok())
-                .cloned();
+                let taffy_style = node
+                    .taffy_node
+                    .and_then(|tn| self.taffy.style(tn).ok())
+                    .cloned();
 
-            let mut props = HashMap::new();
-            match &node.kind {
-                FragmentData::Rect(r) => {
-                    if let Some(FragmentBrush::Solid(fp)) = &r.fill {
-                        props.insert("fill".into(), format_color(&fp.color));
+                let mut props = HashMap::new();
+                match &node.kind {
+                    FragmentData::Rect(r) => {
+                        if let Some(FragmentBrush::Solid(fp)) = &r.fill {
+                            props.insert("fill".into(), format_color(&fp.color));
+                        }
+                        let radii = &r.corner_radii;
+                        if radii.as_single_radius().map_or(true, |r| r > 0.0) {
+                            props.insert(
+                                "cornerRadius".into(),
+                                format!("{:.1}", radii.as_single_radius().unwrap_or(0.0)),
+                            );
+                        }
+                        if r.stroke_width > 0.0 {
+                            props.insert("strokeWidth".into(), format!("{:.1}", r.stroke_width));
+                        }
+                        if let Some(sp) = &r.stroke {
+                            props.insert("stroke".into(), format_color(&sp.color));
+                        }
                     }
-                    let radii = &r.corner_radii;
-                    if radii.as_single_radius().map_or(true, |r| r > 0.0) {
-                        props.insert("cornerRadius".into(), format!("{:.1}", radii.as_single_radius().unwrap_or(0.0)));
+                    FragmentData::Text(t) => {
+                        props.insert("text".into(), t.text.clone());
+                        props.insert("fontSize".into(), format!("{}", t.font_size));
+                        if !t.font_family.is_empty() {
+                            props.insert("fontFamily".into(), t.font_family.clone());
+                        }
+                        props.insert("color".into(), format_color(&t.color));
                     }
-                    if r.stroke_width > 0.0 {
-                        props.insert("strokeWidth".into(), format!("{:.1}", r.stroke_width));
+                    FragmentData::TextInput(t) => {
+                        props.insert("text".into(), t.text.clone());
+                        props.insert("fontSize".into(), format!("{}", t.font_size));
+                        props.insert("color".into(), format_color(&t.color));
                     }
-                    if let Some(sp) = &r.stroke {
-                        props.insert("stroke".into(), format_color(&sp.color));
+                    FragmentData::Circle(c) => {
+                        props.insert("cx".into(), format!("{}", c.cx));
+                        props.insert("cy".into(), format!("{}", c.cy));
+                        props.insert("r".into(), format!("{}", c.r));
+                        if let Some(fp) = &c.fill {
+                            props.insert("fill".into(), format_color(&fp.color));
+                        }
+                    }
+                    FragmentData::Path(p) => {
+                        if !p.d.is_empty() {
+                            props.insert("d".into(), p.d.clone());
+                        }
+                        if let Some(FragmentBrush::Solid(fp)) = &p.fill {
+                            props.insert("fill".into(), format_color(&fp.color));
+                        }
+                    }
+                    FragmentData::Group(_) => {}
+                    FragmentData::Image(img) => {
+                        if !img.object_fit.is_empty() {
+                            props.insert("objectFit".into(), img.object_fit.clone());
+                        }
+                        props.insert("hasImage".into(), img.image_data.is_some().to_string());
+                    }
+                    FragmentData::Span(s) => {
+                        props.insert("text".into(), s.text.clone());
+                        props.insert("fontSize".into(), format!("{}", s.font_size));
+                        if !s.font_family.is_empty() {
+                            props.insert("fontFamily".into(), s.font_family.clone());
+                        }
+                        props.insert("color".into(), format_color(&s.color));
                     }
                 }
-                FragmentData::Text(t) => {
-                    props.insert("text".into(), t.text.clone());
-                    props.insert("fontSize".into(), format!("{}", t.font_size));
-                    if !t.font_family.is_empty() {
-                        props.insert("fontFamily".into(), t.font_family.clone());
-                    }
-                    props.insert("color".into(), format_color(&t.color));
-                }
-                FragmentData::TextInput(t) => {
-                    props.insert("text".into(), t.text.clone());
-                    props.insert("fontSize".into(), format!("{}", t.font_size));
-                    props.insert("color".into(), format_color(&t.color));
-                }
-                FragmentData::Circle(c) => {
-                    props.insert("cx".into(), format!("{}", c.cx));
-                    props.insert("cy".into(), format!("{}", c.cy));
-                    props.insert("r".into(), format!("{}", c.r));
-                    if let Some(fp) = &c.fill {
-                        props.insert("fill".into(), format_color(&fp.color));
-                    }
-                }
-                FragmentData::Path(p) => {
-                    if !p.d.is_empty() {
-                        props.insert("d".into(), p.d.clone());
-                    }
-                    if let Some(FragmentBrush::Solid(fp)) = &p.fill {
-                        props.insert("fill".into(), format_color(&fp.color));
-                    }
-                }
-                FragmentData::Group(_) => {}
-                FragmentData::Image(img) => {
-                    if !img.object_fit.is_empty() {
-                        props.insert("objectFit".into(), img.object_fit.clone());
-                    }
-                    props.insert("hasImage".into(), img.image_data.is_some().to_string());
-                }
-                FragmentData::Span(s) => {
-                    props.insert("text".into(), s.text.clone());
-                    props.insert("fontSize".into(), format!("{}", s.font_size));
-                    if !s.font_family.is_empty() {
-                        props.insert("fontFamily".into(), s.font_family.clone());
-                    }
-                    props.insert("color".into(), format_color(&s.color));
-                }
-            }
 
-            if let Some(style) = &taffy_style {
-                serialize_taffy_style(&mut props, style);
-            }
+                if let Some(style) = &taffy_style {
+                    serialize_taffy_style(&mut props, style);
+                }
 
-            FragmentNodeSnapshot {
-                id: node.id.0,
-                tag,
-                parent_id: node.parent.map(|p| p.0),
-                child_ids: node.children.iter().map(|c| c.0).collect(),
-                x: node.render_x(),
-                y: node.render_y(),
-                width,
-                height,
-                clip: node.props.clip,
-                visible: node.props.visible,
-                opacity: node.props.opacity,
-                props,
-            }
-        }).collect()
+                FragmentNodeSnapshot {
+                    id: node.id.0,
+                    tag,
+                    parent_id: node.parent.map(|p| p.0),
+                    child_ids: node.children.iter().map(|c| c.0).collect(),
+                    x: node.render_x(),
+                    y: node.render_y(),
+                    width,
+                    height,
+                    clip: node.props.clip,
+                    visible: node.props.visible,
+                    opacity: node.props.opacity,
+                    props,
+                }
+            })
+            .collect()
     }
 
     /// Snapshot of promoted layers for devtools LayerTree domain.
     pub fn snapshot_layers(&mut self) -> Vec<LayerSnapshot> {
         self.ensure_aabbs();
-        self.nodes.values()
+        self.nodes
+            .values()
             .filter(|n| n.promoted && n.layer_key.is_some())
             .map(|n| {
                 let bounds = n.world_aabb.unwrap_or(Rect::ZERO);
@@ -1525,11 +1729,15 @@ impl FragmentTree {
 
     /// Snapshot of active animations for devtools Animation domain.
     pub fn snapshot_animations(&self) -> Vec<AnimationSnapshot> {
-        self.nodes.values()
+        self.nodes
+            .values()
             .filter_map(|n| {
                 let timeline = n.timeline.as_ref()?;
-                if !timeline.is_animating() { return None; }
-                let channels = timeline.running_channel_snapshots()
+                if !timeline.is_animating() {
+                    return None;
+                }
+                let channels = timeline
+                    .running_channel_snapshots()
                     .into_iter()
                     .map(|(prop, origin, target, state)| AnimationChannelSnapshot {
                         property: prop.to_string(),
@@ -1549,8 +1757,7 @@ impl FragmentTree {
 }
 
 pub fn fragment_store_snapshot(canvas_node_id: u32) -> Vec<FragmentNodeSnapshot> {
-    runtime::with_fragment_tree(canvas_node_id, |tree| tree.snapshot())
-        .unwrap_or_default()
+    runtime::with_fragment_tree(canvas_node_id, |tree| tree.snapshot()).unwrap_or_default()
 }
 
 pub fn fragment_store_snapshot_layers(canvas_node_id: u32) -> Vec<LayerSnapshot> {

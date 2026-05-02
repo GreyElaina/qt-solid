@@ -15,9 +15,8 @@ pub(crate) fn render_scene_to_capture(
     let height_u16 = u16::try_from(height_px)
         .map_err(|_| qt_error("scene height exceeds vello_cpu range".to_owned()))?;
 
-    let mut painter = anyrender_vello_cpu::VelloCpuScenePainter(
-        RenderContext::new(width_u16, height_u16),
-    );
+    let mut painter =
+        anyrender_vello_cpu::VelloCpuScenePainter(RenderContext::new(width_u16, height_u16));
     painter.append_scene(scene.clone(), Affine::scale(scale_factor));
 
     let mut pixmap = Pixmap::new(width_u16, height_u16);

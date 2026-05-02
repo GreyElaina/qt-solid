@@ -1,6 +1,6 @@
 use super::super::vello::{
-    peniko::kurbo::{Affine, Rect},
     Scene,
+    peniko::kurbo::{Affine, Rect},
 };
 
 // ---------------------------------------------------------------------------
@@ -62,9 +62,15 @@ pub struct FragmentTextRunWire {
 #[napi_derive::napi(discriminant_case = "lowercase")]
 #[derive(Debug, Clone)]
 pub enum FragmentValue {
-    F64 { value: f64 },
-    Str { value: String },
-    Bool { value: bool },
+    F64 {
+        value: f64,
+    },
+    Str {
+        value: String,
+    },
+    Bool {
+        value: bool,
+    },
     LinearGradient {
         start_x: f64,
         start_y: f64,

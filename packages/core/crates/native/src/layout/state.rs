@@ -108,11 +108,19 @@ impl LayoutRegistry {
     }
 
     pub fn engine(&self, engine_id: u32) -> &TaffyEngine {
-        &self.engines.get(&engine_id).expect("invalid engine id").engine
+        &self
+            .engines
+            .get(&engine_id)
+            .expect("invalid engine id")
+            .engine
     }
 
     pub fn engine_mut(&mut self, engine_id: u32) -> &mut TaffyEngine {
-        &mut self.engines.get_mut(&engine_id).expect("invalid engine id").engine
+        &mut self
+            .engines
+            .get_mut(&engine_id)
+            .expect("invalid engine id")
+            .engine
     }
 
     // --- Child layout ---
@@ -126,7 +134,9 @@ impl LayoutRegistry {
     }
 
     pub fn child_layout_mut(&mut self, widget_id: u32) -> &mut ChildLayout {
-        self.child_layouts.get_mut(&widget_id).expect("widget not in child layout registry")
+        self.child_layouts
+            .get_mut(&widget_id)
+            .expect("widget not in child layout registry")
     }
 }
 

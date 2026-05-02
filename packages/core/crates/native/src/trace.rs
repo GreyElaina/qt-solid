@@ -143,5 +143,3 @@ pub(crate) fn record_dynamic(
         detail,
     });
 }
-
-

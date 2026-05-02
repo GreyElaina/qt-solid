@@ -3,10 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "build/qt_wgpu_renderer.rs"]
-mod qt_wgpu_renderer;
 #[path = "build/qt_taffy_layout.rs"]
 mod qt_taffy_layout;
+#[path = "build/qt_wgpu_renderer.rs"]
+mod qt_wgpu_renderer;
 
 use qt_build_utils::QtBuild;
 
@@ -44,11 +44,10 @@ fn find_qt_private_include_dirs(qt_build: &QtBuild) -> Vec<PathBuf> {
     }
 
     // Add mkspecs include dir for qplatformdefs.h (needed by QWidgetLineControl).
-    if let Ok(output) = std::process::Command::new(
-        env::var("QMAKE").unwrap_or_else(|_| "qmake".to_string()),
-    )
-    .args(["-query", "QT_HOST_DATA"])
-    .output()
+    if let Ok(output) =
+        std::process::Command::new(env::var("QMAKE").unwrap_or_else(|_| "qmake".to_string()))
+            .args(["-query", "QT_HOST_DATA"])
+            .output()
     {
         if output.status.success() {
             let host_data = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -128,7 +127,6 @@ fn main() {
     println!("cargo:rerun-if-changed=src/layout/ffi.rs");
     println!("cargo:rerun-if-changed=src/layout/registry_ffi.rs");
 
-
     qt_wgpu_renderer.emit_rerun_if_changed();
     qt_taffy_layout.emit_rerun_if_changed();
     napi_build::setup();
@@ -150,7 +148,11 @@ fn main() {
         assert_supported_macos_qt_version(&qt_build);
     }
 
-    let mut build = cxx_build::bridges(["src/qt/ffi.rs", "src/layout/ffi.rs", "src/layout/registry_ffi.rs"]);
+    let mut build = cxx_build::bridges([
+        "src/qt/ffi.rs",
+        "src/layout/ffi.rs",
+        "src/layout/registry_ffi.rs",
+    ]);
     build.file("src/qt/cpp/ffi.cpp");
     qt_wgpu_renderer.add_cpp_sources(&mut build);
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
@@ -180,7 +182,10 @@ fn main() {
 
     // Vendored libuv headers (compile-time only; symbols resolved dynamically at runtime).
     // add_include_if_exists(&mut build, "../../../../third_party/libuv-include");
-    add_include_if_exists(&mut build, concat!(env!("CARGO_WORKSPACE_DIR"), "/third_party/libuv-include"));
+    add_include_if_exists(
+        &mut build,
+        concat!(env!("CARGO_WORKSPACE_DIR"), "/third_party/libuv-include"),
+    );
 
     for include_dir in qt_include_dirs {
         add_include_if_exists(&mut build, include_dir);

@@ -1,7 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
+use vello::wgpu;
 use vello_common::paint::ImageId;
 use vello_hybrid::Renderer;
-use vello::wgpu;
 
 use crate::canvas::vello::Scene;
 

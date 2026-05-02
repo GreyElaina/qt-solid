@@ -70,7 +70,12 @@ impl FragmentTree {
     pub fn hit_test(&mut self, point: (f64, f64)) -> Option<FragmentId> {
         self.ensure_aabbs();
         let world_point = Point::new(point.0, point.1);
-        self.hit_test_children(&self.root_children.clone(), Affine::IDENTITY, point, world_point)
+        self.hit_test_children(
+            &self.root_children.clone(),
+            Affine::IDENTITY,
+            point,
+            world_point,
+        )
     }
 
     fn hit_test_children(
@@ -252,7 +257,9 @@ impl FragmentTree {
         let mut chain = Vec::new();
         let mut current = Some(id);
         while let Some(cid) = current {
-            let Some(node) = self.nodes.get(&cid) else { break };
+            let Some(node) = self.nodes.get(&cid) else {
+                break;
+            };
             chain.push(node.local_transform());
             current = node.parent;
         }

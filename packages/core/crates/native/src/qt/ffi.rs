@@ -1,4 +1,3 @@
-
 #[cxx::bridge(namespace = "qt_solid_spike::qt")]
 pub(crate) mod bridge {
     struct QtRealizedNodeState {
@@ -271,9 +270,8 @@ pub(crate) mod bridge {
         ) -> Result<QtWindowCompositorDriveStatus>;
         fn qt_window_compositor_frame_is_initialized(target: QtCompositorTarget) -> Result<bool>;
         fn qt_window_compositor_request_frame(target: QtCompositorTarget) -> Result<bool>;
-        fn qt_window_compositor_display_link_should_run(
-            target: QtCompositorTarget,
-        ) -> Result<bool>;
+        fn qt_window_compositor_display_link_should_run(target: QtCompositorTarget)
+        -> Result<bool>;
         fn qt_window_compositor_metal_layer_handle(target: QtCompositorTarget) -> Result<u64>;
         fn qt_window_compositor_note_metal_display_link_drawable(
             target: QtCompositorTarget,
@@ -341,8 +339,22 @@ pub(crate) mod bridge {
         fn qt_clipboard_get(mime: &str) -> Vec<u8>;
         fn qt_clipboard_clear();
         fn qt_clipboard_set(entries: Vec<QtClipboardEntry>);
-        fn qt_shape_text_to_path(text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool, max_width: f64, elide_mode: u8) -> QtShapedTextResult;
-        fn qt_shape_text_with_cursors(text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool) -> QtShapedTextWithCursorsResult;
+        fn qt_shape_text_to_path(
+            text: &str,
+            font_size: f64,
+            font_family: &str,
+            font_weight: i32,
+            font_italic: bool,
+            max_width: f64,
+            elide_mode: u8,
+        ) -> QtShapedTextResult;
+        fn qt_shape_text_with_cursors(
+            text: &str,
+            font_size: f64,
+            font_family: &str,
+            font_weight: i32,
+            font_italic: bool,
+        ) -> QtShapedTextWithCursorsResult;
         fn qt_shape_styled_text_to_path(
             text: &str,
             default_font_size: f64,
@@ -351,11 +363,28 @@ pub(crate) mod bridge {
             elide_mode: u8,
             style_runs: &[QtTextStyleRun],
         ) -> QtStyledShapedTextResult;
-        fn qt_measure_text(text: &str, font_size: f64, font_family: &str, font_weight: i32, font_italic: bool, max_width: f64) -> QtTextMeasurement;
+        fn qt_measure_text(
+            text: &str,
+            font_size: f64,
+            font_family: &str,
+            font_weight: i32,
+            font_italic: bool,
+            max_width: f64,
+        ) -> QtTextMeasurement;
         fn qt_system_color_scheme() -> u8;
         fn qt_screen_dpi_info(id: u32) -> QtScreenDpiInfo;
-        fn qt_show_open_file_dialog(window_id: u32, title: &str, filter: &str, multiple: bool) -> u32;
-        fn qt_show_save_file_dialog(window_id: u32, title: &str, filter: &str, default_name: &str) -> u32;
+        fn qt_show_open_file_dialog(
+            window_id: u32,
+            title: &str,
+            filter: &str,
+            multiple: bool,
+        ) -> u32;
+        fn qt_show_save_file_dialog(
+            window_id: u32,
+            title: &str,
+            filter: &str,
+            default_name: &str,
+        ) -> u32;
 
         fn qt_window_set_title(id: u32, value: &str) -> Result<()>;
         fn qt_window_set_width(id: u32, value: i32) -> Result<()>;
@@ -384,14 +413,8 @@ pub(crate) mod bridge {
             sel_end: i32,
         ) -> Result<()>;
         fn qt_text_edit_deactivate(window_id: u32) -> Result<()>;
-        fn qt_text_edit_click_to_cursor(
-            window_id: u32,
-            local_x: f64,
-        ) -> Result<()>;
-        fn qt_text_edit_drag_to_cursor(
-            window_id: u32,
-            local_x: f64,
-        ) -> Result<()>;
+        fn qt_text_edit_click_to_cursor(window_id: u32, local_x: f64) -> Result<()>;
+        fn qt_text_edit_drag_to_cursor(window_id: u32, local_x: f64) -> Result<()>;
         fn qt_window_present_cpu_frame(
             node_id: u32,
             pixels: &[u8],
@@ -411,41 +434,26 @@ pub(crate) mod bridge {
 }
 
 pub(crate) use bridge::{
-    QtCompositorSurfaceKind, QtCompositorTarget,
-    QtRealizedNodeState, QtWindowCompositorDriveStatus,
-    debug_clear_highlight, debug_click_node, debug_close_node,
+    QtClipboardEntry, QtCompositorSurfaceKind, QtCompositorTarget, QtRealizedNodeState,
+    QtWindowCompositorDriveStatus, debug_clear_highlight, debug_click_node, debug_close_node,
     debug_highlight_node, debug_input_insert_text, debug_node_at_point, debug_node_bounds,
     debug_set_inspect_mode, focus_widget, get_screen_geometry, get_widget_size_hint,
-    qt_capture_widget_into, qt_capture_widget_layout,
-    qt_capture_widget_visible_rects, qt_create_widget,
-    qt_debug_node_state, qt_destroy_widget, qt_host_started, qt_insert_child,
-    qt_remove_child,
-    qt_request_repaint, qt_request_window_compositor_frame, schedule_debug_event,
-    qt_host_shutdown, qt_host_start, trace_now_ns,
-    qt_clipboard_get_text, qt_clipboard_set_text, qt_clipboard_has_text,
-    qt_clipboard_formats, qt_clipboard_get, qt_clipboard_clear,
-    qt_clipboard_set, QtClipboardEntry,
-    qt_set_window_transient_owner,
-    qt_shape_text_to_path,
-    qt_shape_text_with_cursors,
-    qt_shape_styled_text_to_path,
-    qt_measure_text,
-    qt_system_color_scheme,
-    qt_window_set_title, qt_window_set_width, qt_window_set_height,
-    qt_window_set_min_width, qt_window_set_min_height,
-    qt_window_set_visible, qt_window_set_enabled,
-    qt_window_set_frameless, qt_window_set_transparent_background,
-    qt_window_set_always_on_top, qt_window_set_window_kind,
-    qt_window_set_screen_position,
-    qt_window_wire_close_requested, qt_window_wire_hover_enter, qt_window_wire_hover_leave,
-    qt_canvas_set_cursor,
-    qt_text_edit_click_to_cursor,
-    qt_text_edit_drag_to_cursor,
-    qt_window_minimize, qt_window_maximize, qt_window_restore,
-    qt_window_fullscreen, qt_window_is_minimized, qt_window_is_maximized,
-    qt_window_is_fullscreen,
-    qt_screen_dpi_info,
-    qt_show_open_file_dialog, qt_show_save_file_dialog,
+    qt_canvas_set_cursor, qt_capture_widget_into, qt_capture_widget_layout,
+    qt_capture_widget_visible_rects, qt_clipboard_clear, qt_clipboard_formats, qt_clipboard_get,
+    qt_clipboard_get_text, qt_clipboard_has_text, qt_clipboard_set, qt_clipboard_set_text,
+    qt_create_widget, qt_debug_node_state, qt_destroy_widget, qt_host_shutdown, qt_host_start,
+    qt_host_started, qt_insert_child, qt_measure_text, qt_remove_child, qt_request_repaint,
+    qt_request_window_compositor_frame, qt_screen_dpi_info, qt_set_window_transient_owner,
+    qt_shape_styled_text_to_path, qt_shape_text_to_path, qt_shape_text_with_cursors,
+    qt_show_open_file_dialog, qt_show_save_file_dialog, qt_system_color_scheme,
+    qt_text_edit_click_to_cursor, qt_text_edit_drag_to_cursor, qt_window_fullscreen,
+    qt_window_is_fullscreen, qt_window_is_maximized, qt_window_is_minimized, qt_window_maximize,
+    qt_window_minimize, qt_window_restore, qt_window_set_always_on_top, qt_window_set_enabled,
+    qt_window_set_frameless, qt_window_set_height, qt_window_set_min_height,
+    qt_window_set_min_width, qt_window_set_screen_position, qt_window_set_title,
+    qt_window_set_transparent_background, qt_window_set_visible, qt_window_set_width,
+    qt_window_set_window_kind, qt_window_wire_close_requested, qt_window_wire_hover_enter,
+    qt_window_wire_hover_leave, schedule_debug_event, trace_now_ns,
 };
 
 pub(crate) fn emit_app_event(name: &str) {
@@ -464,7 +472,13 @@ pub(crate) fn qt_canvas_pointer_event(node_id: u32, event_tag: u8, x: f64, y: f6
     super::runtime::emit_canvas_pointer_event(node_id, event_tag, x, y);
 }
 
-pub(crate) fn qt_canvas_context_menu_event(node_id: u32, x: f64, y: f64, screen_x: f64, screen_y: f64) {
+pub(crate) fn qt_canvas_context_menu_event(
+    node_id: u32,
+    x: f64,
+    y: f64,
+    screen_x: f64,
+    screen_y: f64,
+) {
     super::runtime::emit_canvas_context_menu_event(node_id, x, y, screen_x, screen_y);
 }
 
@@ -479,7 +493,14 @@ pub(crate) fn qt_canvas_key_event(
     native_virtual_key: u32,
 ) {
     super::runtime::qt_canvas_key_event(
-        node_id, event_tag, qt_key, modifiers, text, repeat, native_scan_code, native_virtual_key,
+        node_id,
+        event_tag,
+        qt_key,
+        modifiers,
+        text,
+        repeat,
+        native_scan_code,
+        native_virtual_key,
     );
 }
 
@@ -494,7 +515,9 @@ pub(crate) fn qt_canvas_wheel_event(
     modifiers: u32,
     phase: u32,
 ) {
-    super::runtime::qt_canvas_wheel_event(node_id, delta_x, delta_y, pixel_dx, pixel_dy, x, y, modifiers, phase);
+    super::runtime::qt_canvas_wheel_event(
+        node_id, delta_x, delta_y, pixel_dx, pixel_dy, x, y, modifiers, phase,
+    );
 }
 
 pub(crate) fn qt_text_edit_sync(
@@ -511,8 +534,7 @@ pub(crate) fn qt_text_edit_sync(
     width: f64,
 ) {
     use crate::canvas::fragment::{
-        FragmentId, ShapedTextLayout,
-        fragment_store_set_text_input_state,
+        FragmentId, ShapedTextLayout, fragment_store_set_text_input_state,
     };
     use crate::canvas::vello::peniko::kurbo::{BezPath, PathEl, Point};
 
@@ -540,7 +562,11 @@ pub(crate) fn qt_text_edit_sync(
     };
 
     let sel_anchor = if sel_start >= 0 && sel_start != sel_end {
-        let anchor = if cursor == sel_end { sel_start } else { sel_end };
+        let anchor = if cursor == sel_end {
+            sel_start
+        } else {
+            sel_end
+        };
         anchor as f64
     } else {
         -1.0
@@ -585,8 +611,8 @@ pub(crate) fn qt_text_edit_set_caret_visible(canvas_node_id: u32, fragment_id: u
 }
 
 pub(crate) fn qt_canvas_focus_next(node_id: u32, forward: bool) -> bool {
-    use crate::canvas::fragment::fragment_store_focus_next;
     use crate::api::QtHostEvent;
+    use crate::canvas::fragment::fragment_store_focus_next;
 
     let (old, new) = fragment_store_focus_next(node_id, forward);
     if new < 0 {
@@ -620,17 +646,31 @@ pub(crate) fn sync_text_edit_session_for_focus(canvas_node_id: u32) {
             } else {
                 (-1, -1)
             };
-            Some((focused_id.0, ti.text.clone(), ti.font_size, cursor, sel_start, sel_end))
+            Some((
+                focused_id.0,
+                ti.text.clone(),
+                ti.font_size,
+                cursor,
+                sel_start,
+                sel_end,
+            ))
         } else {
             None
         }
-    }).flatten();
+    })
+    .flatten();
 
     match info {
         Some((fragment_id, text, font_size, cursor, sel_start, sel_end)) => {
             let _ = bridge::qt_text_edit_activate(
-                canvas_node_id, canvas_node_id, fragment_id,
-                &text, font_size, cursor, sel_start, sel_end,
+                canvas_node_id,
+                canvas_node_id,
+                fragment_id,
+                &text,
+                font_size,
+                cursor,
+                sel_start,
+                sel_end,
             );
         }
         None => {
@@ -765,7 +805,11 @@ pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
         .begin_drive(render_target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     crate::renderer::scheduler::frame_clock::qt_window_frame_tick(node_id)?;
-    let status = crate::renderer::scheduler::pipeline::drive_frame_with_drawable(node_id, target, drawable_handle)?;
+    let status = crate::renderer::scheduler::pipeline::drive_frame_with_drawable(
+        node_id,
+        target,
+        drawable_handle,
+    )?;
 
     if matches!(status, QtWindowCompositorDriveStatus::Busy) {
         let _ = compositor.request_frame(
@@ -781,12 +825,12 @@ pub(crate) fn qt_window_compositor_frame_is_initialized(
 ) -> napi::Result<bool> {
     let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    Ok(qt_compositor::compositor_frame_is_initialized(render_target))
+    Ok(qt_compositor::compositor_frame_is_initialized(
+        render_target,
+    ))
 }
 
-pub(crate) fn qt_window_compositor_request_frame(
-    target: QtCompositorTarget,
-) -> napi::Result<bool> {
+pub(crate) fn qt_window_compositor_request_frame(target: QtCompositorTarget) -> napi::Result<bool> {
     let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     qt_compositor::load_or_create_compositor(render_target)
@@ -804,11 +848,9 @@ pub(crate) fn qt_window_compositor_display_link_should_run(
 ) -> napi::Result<bool> {
     let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    Ok(
-        qt_compositor::load_or_create_compositor(render_target)
-            .map(|compositor| compositor.should_run_frame_source())
-            .map_err(|error| crate::runtime::qt_error(error.to_string()))?,
-    )
+    Ok(qt_compositor::load_or_create_compositor(render_target)
+        .map(|compositor| compositor.should_run_frame_source())
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?)
 }
 
 pub(crate) fn qt_window_compositor_metal_layer_handle(
@@ -839,9 +881,7 @@ pub(crate) fn qt_window_compositor_release_metal_drawable(
     Ok(())
 }
 
-pub(crate) fn qt_destroy_window_compositor(
-    target: QtCompositorTarget,
-) -> napi::Result<()> {
+pub(crate) fn qt_destroy_window_compositor(target: QtCompositorTarget) -> napi::Result<()> {
     let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     #[cfg(target_os = "macos")]

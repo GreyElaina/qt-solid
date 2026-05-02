@@ -1,18 +1,20 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::canvas::fragment::node::{FragmentData, FragmentNode};
-use crate::canvas::fragment::paint::{is_axis_aligned_affine, transform_local_bounds_to_world, PaintCollector};
+use crate::canvas::fragment::paint::{
+    PaintCollector, is_axis_aligned_affine, transform_local_bounds_to_world,
+};
 use crate::canvas::fragment::types::{
-    push_fragment_layer, FragmentClipShape, FragmentId, FragmentLayerKey,
-    PaintChunk, PaintPlan, PromotedLayer,
+    FragmentClipShape, FragmentId, FragmentLayerKey, PaintChunk, PaintPlan, PromotedLayer,
+    push_fragment_layer,
 };
 use crate::renderer::compositor::effects::{BackdropBlurEffect, InnerShadowEffect};
 use crate::vello::peniko::kurbo::{Affine, BezPath, Rect, Shape, Stroke, Vec2};
 use crate::vello::peniko::{Color, Fill};
 use crate::vello::{PaintScene, Scene};
 
-use super::dirty_rect::rects_intersect;
 use super::FragmentTree;
+use super::dirty_rect::rects_intersect;
 
 impl FragmentTree {
     // -----------------------------------------------------------------------
@@ -142,7 +144,9 @@ impl FragmentTree {
 
     fn paint_node(&self, scene: &mut Scene, id: FragmentId, parent_transform: Affine) {
         let Some(node) = self.node(id) else { return };
-        if !node.props.visible { return; }
+        if !node.props.visible {
+            return;
+        }
 
         let transform = parent_transform * node.local_transform();
         let scroll = self.scroll_offsets.get(&id).copied();
@@ -152,7 +156,13 @@ impl FragmentTree {
             let clip = node.clip_shape().or_else(|| {
                 scroll.and_then(|_| node.effective_bounds().map(FragmentClipShape::Rect))
             });
-            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
+            push_fragment_layer(
+                scene,
+                transform,
+                clip.as_ref(),
+                node.props.opacity,
+                node.props.blend_mode,
+            );
         }
 
         node.kind.encode(scene, transform);
@@ -184,7 +194,9 @@ impl FragmentTree {
         dirty_clips: &[Rect],
     ) {
         let Some(node) = self.node(id) else { return };
-        if !node.props.visible { return; }
+        if !node.props.visible {
+            return;
+        }
 
         let scroll = self.scroll_offsets.get(&id).copied();
         let needs_layer = node.needs_layer() || scroll.is_some();
@@ -211,7 +223,13 @@ impl FragmentTree {
             let layer_clip = node.clip_shape().or_else(|| {
                 scroll.and_then(|_| node.effective_bounds().map(FragmentClipShape::Rect))
             });
-            push_fragment_layer(scene, transform, layer_clip.as_ref(), node.props.opacity, node.props.blend_mode);
+            push_fragment_layer(
+                scene,
+                transform,
+                layer_clip.as_ref(),
+                node.props.opacity,
+                node.props.blend_mode,
+            );
         }
 
         // Cull self-encode if world_aabb doesn't intersect any dirty rect.
@@ -243,16 +261,29 @@ impl FragmentTree {
     }
 
     /// Paint a single fragment node (self only, no children) into the scene.
-    pub fn paint_node_self_only(&self, scene: &mut Scene, id: FragmentId, parent_transform: Affine) {
+    pub fn paint_node_self_only(
+        &self,
+        scene: &mut Scene,
+        id: FragmentId,
+        parent_transform: Affine,
+    ) {
         let Some(node) = self.node(id) else { return };
-        if !node.props.visible { return; }
+        if !node.props.visible {
+            return;
+        }
 
         let transform = parent_transform * node.local_transform();
         let needs_layer = node.needs_layer();
 
         if needs_layer {
             let clip = node.clip_shape();
-            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
+            push_fragment_layer(
+                scene,
+                transform,
+                clip.as_ref(),
+                node.props.opacity,
+                node.props.blend_mode,
+            );
         }
 
         node.kind.encode(scene, transform);
@@ -266,12 +297,20 @@ impl FragmentTree {
     /// position/transform.
     pub fn paint_node_at_origin(&self, scene: &mut Scene, id: FragmentId, transform: Affine) {
         let Some(node) = self.node(id) else { return };
-        if !node.props.visible { return; }
+        if !node.props.visible {
+            return;
+        }
 
         let needs_layer = node.needs_layer();
         if needs_layer {
             let clip = node.clip_shape();
-            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
+            push_fragment_layer(
+                scene,
+                transform,
+                clip.as_ref(),
+                node.props.opacity,
+                node.props.blend_mode,
+            );
         }
 
         node.kind.encode(scene, transform);
@@ -282,13 +321,29 @@ impl FragmentTree {
     }
 
     fn paint_debug_highlight(&mut self, scene: &mut Scene, base_transform: Affine) {
-        let Some(hl_id) = self.debug_highlight else { return };
+        let Some(hl_id) = self.debug_highlight else {
+            return;
+        };
         self.ensure_aabbs();
-        let Some(bounds) = self.nodes.get(&hl_id).and_then(|n| n.world_aabb) else { return };
+        let Some(bounds) = self.nodes.get(&hl_id).and_then(|n| n.world_aabb) else {
+            return;
+        };
 
         let path = BezPath::from_vec(bounds.path_elements(0.1).collect());
-        scene.fill(Fill::NonZero, base_transform, Color::from_rgba8(255, 191, 0, 32), None, &path);
-        scene.stroke(&Stroke::new(2.0), base_transform, Color::from_rgba8(255, 191, 0, 220), None, &path);
+        scene.fill(
+            Fill::NonZero,
+            base_transform,
+            Color::from_rgba8(255, 191, 0, 32),
+            None,
+            &path,
+        );
+        scene.stroke(
+            &Stroke::new(2.0),
+            base_transform,
+            Color::from_rgba8(255, 191, 0, 220),
+            None,
+            &path,
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -301,7 +356,9 @@ impl FragmentTree {
 
         // Capture per-node dirty flags before clearing — needed for
         // content_dirty / pose_only_dirty on PromotedLayer.
-        let dirty_flags: HashMap<FragmentId, (bool, bool)> = self.nodes.iter()
+        let dirty_flags: HashMap<FragmentId, (bool, bool)> = self
+            .nodes
+            .iter()
             .filter(|(_, n)| n.promoted)
             .map(|(&id, n)| (id, (n.dirty, n.pose_dirty)))
             .collect();
@@ -311,7 +368,8 @@ impl FragmentTree {
             current_inline: Scene::new(),
             layer_stack: Vec::new(),
         };
-        let root_children = Self::sorted_children_by_z_static(&self.nodes, &self.root_children.clone());
+        let root_children =
+            Self::sorted_children_by_z_static(&self.nodes, &self.root_children.clone());
         for &child_id in &root_children {
             Self::paint_node_collecting_cached(
                 &self.nodes,
@@ -338,21 +396,22 @@ impl FragmentTree {
             }
         }
 
-        let current_keys: HashSet<FragmentLayerKey> = collector.chunks.iter()
+        let current_keys: HashSet<FragmentLayerKey> = collector
+            .chunks
+            .iter()
             .filter_map(|c| match c {
                 PaintChunk::Promoted(layer) => Some(layer.layer_key),
                 _ => None,
             })
             .collect();
-        let stale_keys: Vec<FragmentLayerKey> = self.previous_promoted_keys
+        let stale_keys: Vec<FragmentLayerKey> = self
+            .previous_promoted_keys
             .difference(&current_keys)
             .copied()
             .collect();
         self.previous_promoted_keys = current_keys;
 
-        scene_cache.retain(|id, _| {
-            self.nodes.get(id).map_or(false, |n| n.promoted)
-        });
+        scene_cache.retain(|id, _| self.nodes.get(id).map_or(false, |n| n.promoted));
         self.promoted_scene_cache = scene_cache;
 
         for node in self.nodes.values_mut() {
@@ -362,7 +421,10 @@ impl FragmentTree {
         self.any_dirty = false;
         self.cached_scene = None;
 
-        PaintPlan { chunks: collector.chunks, stale_keys }
+        PaintPlan {
+            chunks: collector.chunks,
+            stale_keys,
+        }
     }
 
     /// Collect inner shadow effects from RectFragments with inset shadows.
@@ -372,15 +434,22 @@ impl FragmentTree {
         for node in self.nodes.values() {
             if let FragmentData::Rect(rect) = &node.kind {
                 if let Some(shadow) = &rect.shadow {
-                    if !shadow.inset { continue; }
-                    let Some(world_aabb) = node.world_aabb else { continue };
+                    if !shadow.inset {
+                        continue;
+                    }
+                    let Some(world_aabb) = node.world_aabb else {
+                        continue;
+                    };
                     let sf = scale_factor as f32;
                     let r = rect.corner_radii.as_single_radius().unwrap_or(0.0) as f32 * sf;
                     let rgba = shadow.color.to_rgba8();
                     let a = rgba.a as f32 / 255.0;
                     effects.push(InnerShadowEffect {
                         rect_min: [world_aabb.x0 as f32 * sf, world_aabb.y0 as f32 * sf],
-                        rect_size: [world_aabb.width() as f32 * sf, world_aabb.height() as f32 * sf],
+                        rect_size: [
+                            world_aabb.width() as f32 * sf,
+                            world_aabb.height() as f32 * sf,
+                        ],
                         corner_radius: r,
                         offset: [shadow.offset_x as f32 * sf, shadow.offset_y as f32 * sf],
                         blur_std_dev: shadow.blur as f32 * sf,
@@ -402,17 +471,28 @@ impl FragmentTree {
         self.ensure_aabbs();
         let mut effects = Vec::new();
         for node in self.nodes.values() {
-            let Some(blur_radius) = node.props.backdrop_blur else { continue };
-            if blur_radius <= 0.0 { continue; }
-            let Some(world_aabb) = node.world_aabb else { continue };
+            let Some(blur_radius) = node.props.backdrop_blur else {
+                continue;
+            };
+            if blur_radius <= 0.0 {
+                continue;
+            }
+            let Some(world_aabb) = node.world_aabb else {
+                continue;
+            };
             let sf = scale_factor as f32;
             let corner_radius = match &node.kind {
-                FragmentData::Rect(rect) => rect.corner_radii.as_single_radius().unwrap_or(0.0) as f32 * sf,
+                FragmentData::Rect(rect) => {
+                    rect.corner_radii.as_single_radius().unwrap_or(0.0) as f32 * sf
+                }
                 _ => 0.0,
             };
             effects.push(BackdropBlurEffect {
                 rect_min: [world_aabb.x0 as f32 * sf, world_aabb.y0 as f32 * sf],
-                rect_size: [world_aabb.width() as f32 * sf, world_aabb.height() as f32 * sf],
+                rect_size: [
+                    world_aabb.width() as f32 * sf,
+                    world_aabb.height() as f32 * sf,
+                ],
                 corner_radius,
                 blur_radius: blur_radius as f32 * sf,
             });
@@ -430,7 +510,9 @@ impl FragmentTree {
         scene_cache: &mut HashMap<FragmentId, Scene>,
     ) {
         let Some(node) = nodes.get(&id) else { return };
-        if !node.props.visible { return; }
+        if !node.props.visible {
+            return;
+        }
 
         let transform = parent_transform * node.local_transform();
 
@@ -459,8 +541,7 @@ impl FragmentTree {
                 scene_cache.insert(id, cache_copy);
             }
 
-            let bounds = Self::compute_promoted_local_bounds(nodes, id)
-                .unwrap_or(Rect::ZERO);
+            let bounds = Self::compute_promoted_local_bounds(nodes, id).unwrap_or(Rect::ZERO);
             let clip_rect = collector.accumulated_clip_rect();
 
             collector.chunks.push(PaintChunk::Promoted(PromotedLayer {
@@ -472,7 +553,7 @@ impl FragmentTree {
                 clip: clip_rect.map(FragmentClipShape::Rect),
                 opacity: node.props.opacity,
                 blend_mode: node.props.blend_mode,
-                content_dirty: true,   // set correctly in build_paint_plan
+                content_dirty: true, // set correctly in build_paint_plan
                 pose_only_dirty: false,
             }));
 
@@ -499,8 +580,13 @@ impl FragmentTree {
         let children = Self::sorted_children_by_z_static(nodes, &node.children.clone());
         for child_id in children {
             Self::paint_node_collecting_cached(
-                nodes, scroll_offsets, collector, child_id, child_transform,
-                reuse_cache, scene_cache,
+                nodes,
+                scroll_offsets,
+                collector,
+                child_id,
+                child_transform,
+                reuse_cache,
+                scene_cache,
             );
         }
 
@@ -517,7 +603,9 @@ impl FragmentTree {
         parent_transform: Affine,
     ) {
         let Some(node) = nodes.get(&id) else { return };
-        if !node.props.visible { return; }
+        if !node.props.visible {
+            return;
+        }
 
         let transform = parent_transform * node.local_transform();
         let scroll = scroll_offsets.get(&id).copied();
@@ -527,7 +615,13 @@ impl FragmentTree {
             let clip = node.clip_shape().or_else(|| {
                 scroll.and_then(|_| node.effective_bounds().map(FragmentClipShape::Rect))
             });
-            push_fragment_layer(scene, transform, clip.as_ref(), node.props.opacity, node.props.blend_mode);
+            push_fragment_layer(
+                scene,
+                transform,
+                clip.as_ref(),
+                node.props.opacity,
+                node.props.blend_mode,
+            );
         }
 
         node.kind.encode(scene, transform);
@@ -554,7 +648,9 @@ impl FragmentTree {
         id: FragmentId,
     ) {
         let Some(node) = nodes.get(&id) else { return };
-        if !node.props.visible { return; }
+        if !node.props.visible {
+            return;
+        }
 
         node.kind.encode(scene, Affine::IDENTITY);
 

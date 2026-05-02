@@ -1,18 +1,16 @@
-use napi::Result;
 use crate::canvas::vello::Scene;
 use crate::runtime::capture::WidgetCapture;
+use napi::Result;
 
 use crate::{
     qt,
     renderer::offscreen as scene_renderer,
-    runtime::{
-        NodeHandle, ensure_live_node, node_by_id, qt_error,
-    },
+    runtime::{NodeHandle, ensure_live_node, node_by_id, qt_error},
 };
 
-use super::frame_clock::{node_frame_time, window_ancestor_id_for_node};
 use super::capture_qt_widget_exact_with_children;
 use super::compositor_target_to_renderer;
+use super::frame_clock::{node_frame_time, window_ancestor_id_for_node};
 
 use crate::canvas::fragment as fragment_store;
 use crate::canvas::vello::peniko::kurbo::Affine;

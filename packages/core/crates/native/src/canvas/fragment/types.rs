@@ -1,7 +1,7 @@
 use super::super::vello::peniko::{
+    BlendMode, Color, Fill, ImageData,
     color::palette,
     kurbo::{Affine, BezPath, Rect},
-    BlendMode, Color, Fill, ImageData,
 };
 use super::super::vello::{PaintScene, Scene};
 
@@ -17,7 +17,13 @@ pub enum FragmentClipShape {
     Path(BezPath),
 }
 
-pub(crate) fn push_fragment_layer(scene: &mut Scene, transform: Affine, clip: Option<&FragmentClipShape>, opacity: f32, blend_mode: BlendMode) {
+pub(crate) fn push_fragment_layer(
+    scene: &mut Scene,
+    transform: Affine,
+    clip: Option<&FragmentClipShape>,
+    opacity: f32,
+    blend_mode: BlendMode,
+) {
     match clip {
         Some(FragmentClipShape::Rect(r)) => scene.push_layer(blend_mode, opacity, transform, r),
         Some(FragmentClipShape::Path(p)) => scene.push_layer(blend_mode, opacity, transform, p),
@@ -78,7 +84,9 @@ pub struct PaintPlan {
 
 impl PaintPlan {
     pub fn has_promoted(&self) -> bool {
-        self.chunks.iter().any(|c| matches!(c, PaintChunk::Promoted(_)))
+        self.chunks
+            .iter()
+            .any(|c| matches!(c, PaintChunk::Promoted(_)))
     }
 
     /// Merge all chunks into a single scene (P1 fallback / non-compositor path).
@@ -195,10 +203,11 @@ impl PaintPlan {
 
                     // Transform local bounds to world space for overlap check.
                     let world_bounds = super::paint::transform_local_bounds_to_world(
-                        layer.bounds, layer.transform,
+                        layer.bounds,
+                        layer.transform,
                     );
-                    let overlaps = later_base_bounds
-                        .map_or(false, |u| rects_intersect(world_bounds, u));
+                    let overlaps =
+                        later_base_bounds.map_or(false, |u| rects_intersect(world_bounds, u));
 
                     if unsupported_blend || has_path_clip || overlaps {
                         placements[i] = false; // demote to base
@@ -251,9 +260,8 @@ impl PaintPlan {
             }
         }
 
-        let pose_only = !any_base_dirty
-            && !composited_layers.is_empty()
-            && all_composited_pose_only;
+        let pose_only =
+            !any_base_dirty && !composited_layers.is_empty() && all_composited_pose_only;
 
         RenderPlan {
             base_scene,
