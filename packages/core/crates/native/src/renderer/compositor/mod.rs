@@ -271,12 +271,18 @@ fn render_gpu_and_present_subtrees(
     let partial_rects = dirty_rects.filter(|r| !r.is_empty());
 
     if is_noop {
-        // Re-present retained base_texture content.
+        // Re-present retained content. Use output_texture when effects are
+        // active — it already contains base + backdrop blur / inner shadow
+        // from the most recent full render. Without this, the noop path
+        // would blit the raw base_texture, dropping all post-process effects.
+        let has_effects = !backdrop_blurs.is_empty() || !inner_shadows.is_empty();
+
         #[cfg(target_os = "macos")]
         if drawable_handle != 0 {
             ws.queue.submit([encoder.finish()]);
+            let source = if has_effects { &ws.output_texture } else { &ws.base_texture };
             raw_metal_present_to_drawable(
-                &mut ws.metal_present, &ws.queue, &ws.base_texture, width_px, height_px, drawable_handle,
+                &mut ws.metal_present, &ws.queue, source, width_px, height_px, drawable_handle,
             )?;
             return Ok(());
         }
@@ -287,6 +293,7 @@ fn render_gpu_and_present_subtrees(
         let surface_view = surface_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let noop_bind_group = if has_effects { &ws.output_bind_group } else { &ws.base_bind_group };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("qt-solid-surface-blit-noop"),
@@ -305,7 +312,7 @@ fn render_gpu_and_present_subtrees(
                 multiview_mask: None,
             });
             pass.set_pipeline(&ws.blit_pipeline);
-            pass.set_bind_group(0, &ws.base_bind_group, &[]);
+            pass.set_bind_group(0, noop_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
         ws.queue.submit([encoder.finish()]);
