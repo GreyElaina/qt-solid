@@ -1927,7 +1927,7 @@ pub fn capture_canvas_region(
     let node = runtime::node_by_id(generation, canvas_node_id).ok()?;
     // Use vello capture path directly — capture_widget_exact routes window
     // nodes through Qt raster which doesn't include vello-rendered fragment content.
-    let capture = crate::window_compositor::capture_vello_widget_exact(&node)
+    let capture = crate::renderer::scheduler::capture_vello_widget_exact(&node)
         .ok()?
         .or_else(|| runtime::capture_widget_exact(&node).ok())?;
 
@@ -1968,7 +1968,7 @@ pub fn capture_canvas_snapshot(canvas_node_id: u32) -> Option<QtCanvasSnapshot> 
 
     let generation = runtime::current_app_generation().ok()?;
     let node = runtime::node_by_id(generation, canvas_node_id).ok()?;
-    let capture = crate::window_compositor::capture_vello_widget_exact(&node)
+    let capture = crate::renderer::scheduler::capture_vello_widget_exact(&node)
         .ok()?
         .or_else(|| runtime::capture_widget_exact(&node).ok())?;
 
@@ -1998,15 +1998,15 @@ pub fn capture_fragment_isolated(
     let generation = runtime::current_app_generation().ok()?;
     let _ = runtime::node_by_id(generation, canvas_node_id).ok()?;
 
-    let window_id = crate::window_compositor::window_ancestor_id_for_node(
+    let window_id = crate::renderer::scheduler::window_ancestor_id_for_node(
         generation,
         canvas_node_id,
     )
     .ok()?
     .unwrap_or(canvas_node_id);
 
-    let target = crate::window_compositor::load_window_compositor_target(window_id)?;
-    let render_target = crate::window_compositor::compositor_target_to_renderer(target).ok()?;
+    let target = crate::renderer::with_renderer(|r| r.scheduler.target(window_id))?;
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target).ok()?;
 
     let layout = crate::qt::qt_capture_widget_layout(canvas_node_id).ok()?;
     let scale = layout.scale_factor;
@@ -2032,7 +2032,7 @@ pub fn capture_fragment_isolated(
     fragment_store_paint_at_origin(canvas_node_id, FragmentId(fragment_id), &mut scene, Affine::IDENTITY);
 
     // Render to a target sized exactly to the fragment
-    let capture = crate::scene_renderer::render_scene_to_capture(
+    let capture = crate::renderer::offscreen::render_scene_to_capture(
         render_target,
         canvas_node_id,
         pw,

@@ -2,10 +2,7 @@ use napi::Result;
 use crate::canvas::vello::Scene;
 use crate::runtime::capture::WidgetCapture;
 
-pub(crate) mod cpu;
-#[cfg(target_os = "macos")]
-mod macos_cpu;
-pub(crate) mod effect_pass;
+mod cpu;
 #[cfg(not(target_os = "macos"))]
 mod wgpu_hybrid;
 
@@ -19,7 +16,8 @@ pub(crate) fn render_scene_to_capture(
 ) -> Result<WidgetCapture> {
     #[cfg(target_os = "macos")]
     {
-        macos_cpu::render_scene_to_capture(target, node_id, width_px, height_px, scale_factor, scene)
+        let _ = (target, node_id);
+        cpu::render_scene_to_capture(width_px, height_px, scale_factor, scene)
     }
 
     #[cfg(not(target_os = "macos"))]

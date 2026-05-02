@@ -6,6 +6,7 @@ use std::{
 use std::{ffi::c_void, ptr::NonNull};
 
 use once_cell::sync::Lazy;
+pub(crate) mod effects;
 use crate::canvas::fragment::{FragmentId, FragmentLayerKey, RenderPlan};
 use crate::image::{HybridImageCache, sweep_stale_images};
 use vello::wgpu;
@@ -105,8 +106,8 @@ enum SurfaceCreationError {
 static WINDOW_SURFACES: Lazy<Mutex<HashMap<u32, WindowRenderMode>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-const BLIT_SHADER: &str = include_str!("../../shaders/blit_shader.wgsl");
-const COMPOSITE_LAYER_SHADER: &str = include_str!("../../shaders/composite_layer.wgsl");
+const BLIT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/blit_shader.wgsl"));
+const COMPOSITE_LAYER_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/composite_layer.wgsl"));
 
 /// Like `render_and_present` but accepts per-subtree scenes with dirty flags
 /// for Recording-based strip caching. GPU path only (CPU falls back to merged).
@@ -120,8 +121,8 @@ pub(crate) fn render_and_present_subtrees(
     target: qt_compositor::QtCompositorTarget,
     scale_factor: f64,
     subtrees: Vec<(crate::canvas::fragment::FragmentId, Scene, bool)>,
-    backdrop_blurs: &[crate::scene_renderer::effect_pass::BackdropBlurEffect],
-    inner_shadows: &[crate::scene_renderer::effect_pass::InnerShadowEffect],
+    backdrop_blurs: &[effects::BackdropBlurEffect],
+    inner_shadows: &[effects::InnerShadowEffect],
     dirty_rects: Option<&[(u32, u32, u32, u32)]>,
     drawable_handle: u64,
 ) -> napi::Result<bool> {
@@ -141,7 +142,7 @@ pub(crate) fn render_and_present_subtrees(
     }
 
     if !surfaces.contains_key(&node_id) {
-        if cfg!(target_os = "macos") || crate::runtime::window_gpu_enabled(node_id) {
+        if cfg!(target_os = "macos") || crate::renderer::with_renderer(|r| r.gpu_enabled(node_id)) {
             eprintln!("[qt-solid] node {node_id}: GPU mode requested");
             match create_window_surface(target) {
                 Ok(ws) => {
@@ -257,8 +258,8 @@ fn render_gpu_and_present_subtrees(
     height_px: u32,
     scale_factor: f64,
     subtrees: &[(FragmentId, Scene, bool)],
-    backdrop_blurs: &[crate::scene_renderer::effect_pass::BackdropBlurEffect],
-    inner_shadows: &[crate::scene_renderer::effect_pass::InnerShadowEffect],
+    backdrop_blurs: &[effects::BackdropBlurEffect],
+    inner_shadows: &[effects::InnerShadowEffect],
     dirty_rects: Option<&[(u32, u32, u32, u32)]>,
     drawable_handle: u64,
 ) -> napi::Result<()> {
@@ -401,12 +402,12 @@ fn render_gpu_and_present_subtrees(
                 depth_or_array_layers: 1,
             },
         );
-        crate::scene_renderer::effect_pass::apply_backdrop_blurs(
+        effects::apply_backdrop_blurs(
             &ws.device, &ws.queue, &mut fx_encoder,
             &ws.output_texture, &ws.output_view,
             tex_size, backdrop_blurs,
         );
-        crate::scene_renderer::effect_pass::apply_inner_shadows(
+        effects::apply_inner_shadows(
             &ws.device, &ws.queue, &mut fx_encoder,
             &ws.output_view, tex_size, inner_shadows,
         );
@@ -477,8 +478,8 @@ pub(crate) fn render_composited_and_present(
     target: qt_compositor::QtCompositorTarget,
     scale_factor: f64,
     render_plan: RenderPlan,
-    backdrop_blurs: &[crate::scene_renderer::effect_pass::BackdropBlurEffect],
-    inner_shadows: &[crate::scene_renderer::effect_pass::InnerShadowEffect],
+    backdrop_blurs: &[effects::BackdropBlurEffect],
+    inner_shadows: &[effects::InnerShadowEffect],
     dirty_rects: Option<&[(u32, u32, u32, u32)]>,
 ) -> napi::Result<bool> {
     let width_px = target.width_px.max(1);
@@ -494,7 +495,7 @@ pub(crate) fn render_composited_and_present(
 
     // Ensure GPU surface exists (same as render_and_present).
     if !surfaces.contains_key(&node_id) {
-        if cfg!(target_os = "macos") || crate::runtime::window_gpu_enabled(node_id) {
+        if cfg!(target_os = "macos") || crate::renderer::with_renderer(|r| r.gpu_enabled(node_id)) {
             match create_window_surface(target) {
                 Ok(ws) => { surfaces.insert(node_id, WindowRenderMode::Gpu(ws)); }
                 Err(SurfaceCreationError::NotReady(e)) => {
@@ -735,12 +736,12 @@ pub(crate) fn render_composited_and_present(
             },
             wgpu::Extent3d { width: width_px, height: height_px, depth_or_array_layers: 1 },
         );
-        crate::scene_renderer::effect_pass::apply_backdrop_blurs(
+        effects::apply_backdrop_blurs(
             &ws.device, &ws.queue, &mut encoder,
             &ws.output_texture, &ws.output_view,
             (width_px, height_px), backdrop_blurs,
         );
-        crate::scene_renderer::effect_pass::apply_inner_shadows(
+        effects::apply_inner_shadows(
             &ws.device, &ws.queue, &mut encoder,
             &ws.output_view, (width_px, height_px), inner_shadows,
         );

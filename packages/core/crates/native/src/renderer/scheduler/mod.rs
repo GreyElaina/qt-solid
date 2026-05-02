@@ -1,4 +1,3 @@
-pub(crate) mod bridge;
 pub(crate) mod frame_clock;
 pub(crate) mod pipeline;
 pub(crate) mod state;
@@ -12,88 +11,13 @@ use crate::{
     runtime::{NodeHandle, qt_error},
 };
 
-pub(crate) use bridge::{
-    qt_drive_window_compositor_frame, qt_drive_window_compositor_frame_with_drawable,
-    qt_mark_window_compositor_geometry_dirty,
-    qt_mark_window_compositor_pixels_dirty, qt_mark_window_compositor_pixels_dirty_region,
-    qt_mark_window_compositor_scene_dirty,
-    qt_window_compositor_frame_is_initialized, qt_window_frame_tick,
-    qt_window_motion_hit_root_ids, qt_window_motion_hit_test,
-    qt_window_motion_map_point_to_root, qt_window_take_next_frame_request,
-};
-pub(crate) use frame_clock::{
-    read_frame_f64_prop, window_ancestor_id_for_node, write_frame_bool_prop,
-};
+pub(crate) use frame_clock::window_ancestor_id_for_node;
 pub(crate) use pipeline::{
     WindowCaptureGrouping, capture_window_frame_exact, capture_window_widget_exact,
 };
-pub(crate) use state::CompositorState;
+pub(crate) use state::Scheduler;
 pub(crate) use texture_widget::capture_painted_widget_exact_with_children;
 pub(crate) use texture_widget::capture_vello_widget_exact;
-
-fn snapshot_window_compositor_pending_state(window_id: u32) -> state::WindowCompositorPendingState {
-    crate::runtime::with_compositor_state(|state| state.pending_state_snapshot(window_id))
-}
-
-fn store_window_compositor_target(window_id: u32, target: QtCompositorTarget) {
-    crate::runtime::with_compositor_state_mut(|state| state.set_target(window_id, target));
-}
-
-pub(crate) fn load_window_compositor_target(window_id: u32) -> Option<QtCompositorTarget> {
-    crate::runtime::with_compositor_state(|state| state.target(window_id))
-}
-
-fn mark_window_compositor_scene_node(window_id: u32, node_id: u32) {
-    crate::runtime::with_compositor_state_mut(|state| state.mark_scene_node(window_id, node_id));
-}
-
-fn mark_window_compositor_geometry_node(window_id: u32, node_id: u32) {
-    crate::runtime::with_compositor_state_mut(|state| state.mark_geometry_node(window_id, node_id));
-}
-
-pub(crate) fn mark_window_compositor_scene_subtree(window_id: u32, node_id: u32) {
-    crate::runtime::with_compositor_state_mut(|state| state.mark_scene_subtree(window_id, node_id));
-}
-
-fn mark_window_compositor_dirty_node(window_id: u32, node_id: u32) {
-    crate::runtime::with_compositor_state_mut(|state| state.mark_dirty_node(window_id, node_id));
-}
-
-pub(crate) fn mark_window_compositor_frame_tick_node(window_id: u32, node_id: u32) {
-    crate::runtime::with_compositor_state_mut(|state| {
-        state.mark_frame_tick_node(window_id, node_id)
-    });
-}
-
-fn mark_window_compositor_dirty_region(
-    window_id: u32,
-    node_id: u32,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-) {
-    if width <= 0 || height <= 0 {
-        return;
-    }
-
-    crate::runtime::with_compositor_state_mut(|state| {
-        state.mark_dirty_region(
-            window_id,
-            state::WindowCompositorDirtyRegion {
-                node_id,
-                x,
-                y,
-                width,
-                height,
-            },
-        )
-    });
-}
-
-fn clear_window_compositor_dirty_nodes(window_id: u32) {
-    crate::runtime::with_compositor_state_mut(|state| state.clear_dirty_nodes(window_id));
-}
 
 fn compositor_surface_kind_to_renderer(
     kind: qt::ffi::QtCompositorSurfaceKind,

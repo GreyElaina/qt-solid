@@ -60,7 +60,7 @@ pub(crate) struct WindowCaptureComposingPart {
     pub(crate) capture: Arc<WidgetCapture>,
 }
 
-pub(crate) struct CompositorState {
+pub(crate) struct Scheduler {
     targets: HashMap<u32, QtCompositorTarget>,
     geometry_nodes: HashMap<u32, HashSet<u32>>,
     scene_nodes: HashMap<u32, HashSet<u32>>,
@@ -71,7 +71,7 @@ pub(crate) struct CompositorState {
     frame_clocks: HashMap<u32, FrameClockState>,
 }
 
-impl CompositorState {
+impl Scheduler {
     pub(crate) fn new() -> Self {
         Self {
             targets: HashMap::new(),
@@ -144,6 +144,9 @@ impl CompositorState {
         window_id: u32,
         region: WindowCompositorDirtyRegion,
     ) {
+        if region.width <= 0 || region.height <= 0 {
+            return;
+        }
         self.mark_dirty_node(window_id, region.node_id);
         self.dirty_regions
             .entry(window_id)
@@ -165,6 +168,23 @@ impl CompositorState {
 
     pub(crate) fn frame_clock_mut(&mut self, window_id: u32) -> &mut FrameClockState {
         self.frame_clocks.entry(window_id).or_default()
+    }
+
+    pub(crate) fn tick_frame(&mut self, window_id: u32) {
+        self.frame_clock_mut(window_id).seq += 1.0;
+    }
+
+    pub(crate) fn take_next_frame_request(&mut self, window_id: u32) -> bool {
+        let clock = self.frame_clock_mut(window_id);
+        let requested = clock.next_frame_requested;
+        if requested {
+            clock.next_frame_requested = false;
+        }
+        requested
+    }
+
+    pub(crate) fn set_next_frame_requested(&mut self, window_id: u32, value: bool) {
+        self.frame_clock_mut(window_id).next_frame_requested = value;
     }
 
     pub(crate) fn clear_dirty_nodes(&mut self, window_id: u32) {

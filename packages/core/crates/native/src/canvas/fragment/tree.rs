@@ -5,7 +5,7 @@ use taffy::prelude::*;
 use super::super::vello::peniko::kurbo::{Affine, BezPath, Rect, Shape, Stroke, Vec2};
 use super::super::vello::peniko::{Color, Fill};
 use super::super::vello::{PaintScene, Scene};
-use crate::scene_renderer::effect_pass::{BackdropBlurEffect, InnerShadowEffect};
+use crate::renderer::compositor::effects::{BackdropBlurEffect, InnerShadowEffect};
 
 use super::node::{apply_sampled_pose_to_fragment, FragmentData, FragmentNode, FragmentProps, LayoutResult};
 use super::paint::{is_axis_aligned_affine, transform_local_bounds_to_world, PaintCollector};

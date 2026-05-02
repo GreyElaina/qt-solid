@@ -663,16 +663,16 @@ pub(crate) fn qt_window_event_resize(node_id: u32, width: f64, height: f64) {
 }
 
 pub(crate) fn qt_surface_renderer_resize(node_id: u32, width_px: u32, height_px: u32) {
-    crate::surface_renderer::resize_surface(node_id, width_px, height_px);
+    crate::renderer::compositor::resize_surface(node_id, width_px, height_px);
 }
 
 pub(crate) fn qt_surface_renderer_blit_and_present(node_id: u32) {
-    let _ = crate::surface_renderer::blit_and_present(node_id);
+    let _ = crate::renderer::compositor::blit_and_present(node_id);
 }
 
 #[cfg(target_os = "macos")]
 pub(crate) fn qt_surface_renderer_metal_layer_ptr(node_id: u32) -> u64 {
-    crate::surface_renderer::metal_layer_ptr(node_id)
+    crate::renderer::compositor::metal_layer_ptr(node_id)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -697,23 +697,23 @@ pub(crate) fn qt_file_dialog_result(request_id: u32, paths: Vec<String>) {
 }
 
 pub(crate) fn qt_mark_window_compositor_scene_dirty(window_id: u32, node_id: u32) {
-    crate::window_compositor::qt_mark_window_compositor_scene_dirty(window_id, node_id);
+    crate::renderer::with_renderer_mut(|r| r.scheduler.mark_scene_node(window_id, node_id));
 }
 
 pub(crate) fn qt_mark_window_compositor_geometry_dirty(window_id: u32, node_id: u32) {
-    crate::window_compositor::qt_mark_window_compositor_geometry_dirty(window_id, node_id);
+    crate::renderer::with_renderer_mut(|r| r.scheduler.mark_geometry_node(window_id, node_id));
 }
 
 pub(crate) fn qt_mark_window_compositor_pixels_dirty(window_id: u32, node_id: u32) {
-    crate::window_compositor::qt_mark_window_compositor_pixels_dirty(window_id, node_id);
+    crate::renderer::with_renderer_mut(|r| r.scheduler.mark_dirty_node(window_id, node_id));
 }
 
 pub(crate) fn qt_window_frame_tick(node_id: u32) -> napi::Result<()> {
-    crate::window_compositor::qt_window_frame_tick(node_id)
+    crate::renderer::scheduler::frame_clock::qt_window_frame_tick(node_id)
 }
 
 pub(crate) fn qt_window_take_next_frame_request(node_id: u32) -> napi::Result<bool> {
-    crate::window_compositor::qt_window_take_next_frame_request(node_id)
+    crate::renderer::scheduler::frame_clock::qt_window_frame_take_next_frame_request(node_id)
 }
 
 pub(crate) fn qt_mark_window_compositor_pixels_dirty_region(
@@ -724,9 +724,18 @@ pub(crate) fn qt_mark_window_compositor_pixels_dirty_region(
     width: i32,
     height: i32,
 ) {
-    crate::window_compositor::qt_mark_window_compositor_pixels_dirty_region(
-        window_id, node_id, x, y, width, height,
-    );
+    crate::renderer::with_renderer_mut(|r| {
+        r.scheduler.mark_dirty_region(
+            window_id,
+            crate::renderer::scheduler::state::WindowCompositorDirtyRegion {
+                node_id,
+                x,
+                y,
+                width,
+                height,
+            },
+        )
+    });
 }
 
 
@@ -734,7 +743,7 @@ pub(crate) fn qt_drive_window_compositor_frame(
     node_id: u32,
     target: QtCompositorTarget,
 ) -> napi::Result<QtWindowCompositorDriveStatus> {
-    let render_target = crate::window_compositor::compositor_target_to_renderer(target)?;
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)?;
     #[cfg(not(target_os = "macos"))]
     qt_compositor::compositor_actor::register_surface_node_id(
         render_target.surface_key(),
@@ -743,8 +752,8 @@ pub(crate) fn qt_drive_window_compositor_frame(
     qt_compositor::load_or_create_compositor(render_target)
         .and_then(|compositor| compositor.begin_drive(render_target))
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    crate::window_compositor::qt_window_frame_tick(node_id)?;
-    crate::window_compositor::qt_drive_window_compositor_frame(node_id, target)
+    crate::renderer::scheduler::frame_clock::qt_window_frame_tick(node_id)?;
+    crate::renderer::scheduler::pipeline::drive_frame(node_id, target)
 }
 
 pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
@@ -753,14 +762,14 @@ pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
     drawable_handle: u64,
 ) -> napi::Result<QtWindowCompositorDriveStatus> {
     let trace_enabled = std::env::var_os("QT_SOLID_WGPU_TRACE").is_some();
-    let render_target = crate::window_compositor::compositor_target_to_renderer(target)?;
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)?;
     let compositor = qt_compositor::load_or_create_compositor(render_target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     compositor
         .begin_drive(render_target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    crate::window_compositor::qt_window_frame_tick(node_id)?;
-    let status = crate::window_compositor::qt_drive_window_compositor_frame_with_drawable(node_id, target, drawable_handle)?;
+    crate::renderer::scheduler::frame_clock::qt_window_frame_tick(node_id)?;
+    let status = crate::renderer::scheduler::pipeline::drive_frame_with_drawable(node_id, target, drawable_handle)?;
 
     if trace_enabled {
         println!("[qt-ffi] display-link node={} status={:?}", node_id, status);
@@ -777,13 +786,15 @@ pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
 pub(crate) fn qt_window_compositor_frame_is_initialized(
     target: QtCompositorTarget,
 ) -> napi::Result<bool> {
-    crate::window_compositor::qt_window_compositor_frame_is_initialized(target)
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
+        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    Ok(qt_compositor::compositor_frame_is_initialized(render_target))
 }
 
 pub(crate) fn qt_window_compositor_request_frame(
     target: QtCompositorTarget,
 ) -> napi::Result<bool> {
-    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     qt_compositor::load_or_create_compositor(render_target)
         .and_then(|compositor| {
@@ -798,7 +809,7 @@ pub(crate) fn qt_window_compositor_request_frame(
 pub(crate) fn qt_window_compositor_display_link_should_run(
     target: QtCompositorTarget,
 ) -> napi::Result<bool> {
-    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     Ok(
         qt_compositor::load_or_create_compositor(render_target)
@@ -810,7 +821,7 @@ pub(crate) fn qt_window_compositor_display_link_should_run(
 pub(crate) fn qt_window_compositor_metal_layer_handle(
     target: QtCompositorTarget,
 ) -> napi::Result<u64> {
-    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     qt_compositor::load_or_create_compositor(render_target)
         .and_then(|compositor| compositor.layer_handle(render_target))
@@ -838,7 +849,7 @@ pub(crate) fn qt_window_compositor_release_metal_drawable(
 pub(crate) fn qt_destroy_window_compositor(
     target: QtCompositorTarget,
 ) -> napi::Result<()> {
-    let render_target = crate::window_compositor::compositor_target_to_renderer(target)
+    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
     #[cfg(target_os = "macos")]
     qt_compositor::destroy_compositor(render_target);
@@ -850,7 +861,7 @@ pub(crate) fn qt_window_motion_hit_test(
     screen_x: i32,
     screen_y: i32,
 ) -> napi::Result<bridge::QtMotionMouseTarget> {
-    crate::window_compositor::qt_window_motion_hit_test(window_id, screen_x, screen_y)
+    crate::renderer::scheduler::pipeline::window_motion_hit_test(window_id, screen_x, screen_y)
 }
 
 pub(crate) fn qt_window_motion_map_point_to_root(
@@ -859,7 +870,7 @@ pub(crate) fn qt_window_motion_map_point_to_root(
     screen_x: i32,
     screen_y: i32,
 ) -> napi::Result<bridge::QtMotionMouseTarget> {
-    crate::window_compositor::qt_window_motion_map_point_to_root(
+    crate::renderer::scheduler::pipeline::window_motion_map_point_to_root(
         window_id,
         root_node_id,
         screen_x,
@@ -868,7 +879,7 @@ pub(crate) fn qt_window_motion_map_point_to_root(
 }
 
 pub(crate) fn qt_window_motion_hit_root_ids(window_id: u32) -> napi::Result<Vec<u32>> {
-    crate::window_compositor::qt_window_motion_hit_root_ids(window_id)
+    crate::renderer::scheduler::pipeline::window_motion_hit_root_ids(window_id)
 }
 
 pub(crate) fn next_trace_id() -> u64 {

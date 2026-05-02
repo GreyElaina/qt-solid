@@ -27,7 +27,7 @@ use super::vello::peniko::kurbo::{Affine, BezPath, Point, Rect, Vec2};
 use super::vello::peniko::{Color, ImageData};
 use super::vello::Scene;
 use crate::runtime;
-use crate::scene_renderer::effect_pass::{BackdropBlurEffect, InnerShadowEffect};
+use crate::renderer::compositor::effects::{BackdropBlurEffect, InnerShadowEffect};
 
 pub fn fragment_store_ensure(canvas_node_id: u32) {
     runtime::ensure_fragment_tree(canvas_node_id);

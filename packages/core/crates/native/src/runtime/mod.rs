@@ -32,7 +32,7 @@ use crate::{
     },
     qt::{self, QtRealizedNodeState},
     trace,
-    window_compositor::{self, CompositorState},
+    renderer::scheduler,
 };
 
 pub(crate) const ROOT_NODE_ID: u32 = 1;
@@ -138,8 +138,6 @@ struct RuntimeState {
     next_node_id: u32,
     tree: NodeTree,
     wrappers: HashMap<u32, Weak<QtNodeInner>>,
-    compositor: CompositorState,
-    fragment_trees: HashMap<u32, crate::canvas::fragment::FragmentTree>,
 }
 
 impl RuntimeState {
@@ -150,8 +148,6 @@ impl RuntimeState {
             next_node_id: ROOT_NODE_ID + 1,
             tree: NodeTree::with_root(ROOT_NODE_ID),
             wrappers: HashMap::new(),
-            compositor: CompositorState::new(),
-            fragment_trees: HashMap::new(),
         }
     }
 
@@ -162,8 +158,7 @@ impl RuntimeState {
         self.next_node_id = ROOT_NODE_ID + 1;
         self.tree.reset_with_root(ROOT_NODE_ID);
         self.wrappers.clear();
-        self.compositor.clear_all();
-        self.fragment_trees.clear();
+        crate::renderer::with_renderer_mut(|r| r.clear_all());
         generation
     }
 
@@ -180,8 +175,7 @@ impl RuntimeState {
         self.next_node_id = ROOT_NODE_ID + 1;
         self.tree.reset_with_root(ROOT_NODE_ID);
         self.wrappers.clear();
-        self.compositor.clear_all();
-        self.fragment_trees.clear();
+        crate::renderer::with_renderer_mut(|r| r.clear_all());
     }
 
     fn ensure_generation(&self, generation: u64) -> Result<()> {
@@ -224,8 +218,10 @@ impl RuntimeState {
             inner.mark_destroyed();
         }
         self.wrappers.remove(&id);
-        self.fragment_trees.remove(&id);
-        self.compositor.clear_all();
+        crate::renderer::with_renderer_mut(|r| {
+            r.fragments.remove(id);
+            r.clear_all();
+        });
     }
 
     fn mark_destroyed_many(&mut self, ids: &[u32]) {
@@ -239,70 +235,27 @@ impl RuntimeState {
 static JS_CALLBACK: Lazy<Mutex<Option<Arc<EventCallback>>>> = Lazy::new(|| Mutex::new(None));
 static CLEANUP_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 static RUNTIME_STATE: Lazy<Mutex<RuntimeState>> = Lazy::new(|| Mutex::new(RuntimeState::new()));
-static WINDOW_GPU_MODE: Lazy<Mutex<HashMap<u32, bool>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-pub(crate) fn set_window_gpu_mode(node_id: u32, gpu: bool) {
-    WINDOW_GPU_MODE
-        .lock()
-        .expect("window gpu mode mutex poisoned")
-        .insert(node_id, gpu);
-}
-
-pub(crate) fn window_gpu_enabled(node_id: u32) -> bool {
-    WINDOW_GPU_MODE
-        .lock()
-        .expect("window gpu mode mutex poisoned")
-        .get(&node_id)
-        .copied()
-        .unwrap_or(false)
-}
-
-fn with_runtime_state<T>(run: impl FnOnce(&RuntimeState) -> T) -> T {
-    let state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    run(&state)
-}
-
-fn with_runtime_state_mut<T>(run: impl FnOnce(&mut RuntimeState) -> T) -> T {
-    let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
-    run(&mut state)
-}
-
-pub(crate) fn with_compositor_state<T>(run: impl FnOnce(&CompositorState) -> T) -> T {
-    with_runtime_state(|state| run(&state.compositor))
-}
-
-pub(crate) fn with_compositor_state_mut<T>(run: impl FnOnce(&mut CompositorState) -> T) -> T {
-    with_runtime_state_mut(|state| run(&mut state.compositor))
-}
 
 pub(crate) fn with_fragment_tree<T>(
     node_id: u32,
     run: impl FnOnce(&crate::canvas::fragment::FragmentTree) -> T,
 ) -> Option<T> {
-    with_runtime_state(|state| state.fragment_trees.get(&node_id).map(|tree| run(tree)))
+    crate::renderer::with_renderer(|r| r.fragments.with(node_id, run))
 }
 
 pub(crate) fn with_fragment_tree_mut<T>(
     node_id: u32,
     run: impl FnOnce(&mut crate::canvas::fragment::FragmentTree) -> T,
 ) -> Option<T> {
-    with_runtime_state_mut(|state| state.fragment_trees.get_mut(&node_id).map(|tree| run(tree)))
+    crate::renderer::with_renderer_mut(|r| r.fragments.with_mut(node_id, run))
 }
 
 pub(crate) fn ensure_fragment_tree(node_id: u32) {
-    with_runtime_state_mut(|state| {
-        state
-            .fragment_trees
-            .entry(node_id)
-            .or_insert_with(crate::canvas::fragment::FragmentTree::new);
-    });
+    crate::renderer::with_renderer_mut(|r| r.fragments.ensure(node_id));
 }
 
 pub(crate) fn remove_fragment_tree(node_id: u32) {
-    with_runtime_state_mut(|state| {
-        state.fragment_trees.remove(&node_id);
-    });
+    crate::renderer::with_renderer_mut(|r| r.fragments.remove(node_id));
 }
 
 pub(crate) fn qt_error(message: impl Into<String>) -> Error {
@@ -783,11 +736,11 @@ pub(crate) fn insert_child(
     qt::qt_insert_child(parent.inner().id, child.inner().id, anchor_id_or_zero)
         .map_err(|error| qt_error(error.what().to_owned()))?;
 
-    if let Some(window_id) = window_compositor::window_ancestor_id_for_node(
+    if let Some(window_id) = scheduler::window_ancestor_id_for_node(
         parent.inner().generation,
         parent.inner().id,
     )? {
-        window_compositor::mark_window_compositor_scene_subtree(window_id, parent.inner().id);
+        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_scene_subtree(window_id, parent.inner().id));
     }
     Ok(())
 }
@@ -808,11 +761,11 @@ pub(crate) fn remove_child(parent: &impl NodeHandle, child: &QtNode) -> Result<(
     qt::qt_remove_child(parent.inner().id, child.inner().id)
         .map_err(|error| qt_error(error.what().to_owned()))?;
 
-    if let Some(window_id) = window_compositor::window_ancestor_id_for_node(
+    if let Some(window_id) = scheduler::window_ancestor_id_for_node(
         parent.inner().generation,
         parent.inner().id,
     )? {
-        window_compositor::mark_window_compositor_scene_subtree(window_id, parent.inner().id);
+        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_scene_subtree(window_id, parent.inner().id));
     }
     Ok(())
 }
@@ -854,10 +807,8 @@ pub(crate) fn destroy_node(node: &impl NodeHandle) -> Result<()> {
     qt::qt_destroy_widget(node.inner().id, &removed_ids)
         .map_err(|error| qt_error(error.what().to_owned()))?;
 
-    // Clean up renderer state (CPU pixmap buffer + GPU surface) for this node.
-    // No-op for non-window nodes since they have no entries in the maps.
-    crate::surface_renderer::destroy_window_renderer_state(node.inner().id);
-    WINDOW_GPU_MODE.lock().expect("window gpu mode mutex poisoned").remove(&node.inner().id);
+    // Clean up renderer state (GPU surface, fragment tree, GPU mode) for this node.
+    crate::renderer::with_renderer_mut(|r| r.destroy_window(node.inner().id));
 
     {
         let mut state = RUNTIME_STATE.lock().expect("runtime state mutex poisoned");
@@ -866,7 +817,7 @@ pub(crate) fn destroy_node(node: &impl NodeHandle) -> Result<()> {
     }
     if let Some(window_id) = window_id {
         let dirty_node_id = parent_id.unwrap_or(window_id);
-        window_compositor::mark_window_compositor_scene_subtree(window_id, dirty_node_id);
+        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_scene_subtree(window_id, dirty_node_id));
     }
     Ok(())
 }
@@ -874,9 +825,9 @@ pub(crate) fn destroy_node(node: &impl NodeHandle) -> Result<()> {
 pub(crate) fn request_repaint(node: &impl NodeHandle) -> Result<()> {
     ensure_live_node(node)?;
     if let Some(window_id) =
-        window_compositor::window_ancestor_id_for_node(node.inner().generation, node.inner().id)?
+        scheduler::window_ancestor_id_for_node(node.inner().generation, node.inner().id)?
     {
-        window_compositor::qt_mark_window_compositor_pixels_dirty(window_id, node.inner().id);
+        crate::renderer::with_renderer_mut(|r| r.scheduler.mark_dirty_node(window_id, node.inner().id));
     }
     let _ = qt::qt_request_window_compositor_frame(node.inner().id);
     qt::qt_request_repaint(node.inner().id).map_err(|error| qt_error(error.what().to_owned()))
@@ -892,7 +843,7 @@ pub(crate) fn request_overlay_next_frame_exact(
     overlay_node_id: u32,
 ) -> Result<()> {
     ensure_live_node(window)?;
-    window_compositor::mark_window_compositor_frame_tick_node(window.inner().id, overlay_node_id);
+    crate::renderer::with_renderer_mut(|r| r.scheduler.mark_frame_tick_node(window.inner().id, overlay_node_id));
     if qt::qt_request_window_compositor_frame(window.inner().id)
         .map_err(|error| qt_error(error.what().to_owned()))?
     {
@@ -905,10 +856,10 @@ pub(crate) fn request_overlay_next_frame_exact(
 pub(crate) fn capture_widget_exact(node: &impl NodeHandle) -> Result<WidgetCapture> {
     ensure_live_node(node)?;
     if node.inner().is_window() {
-        return window_compositor::capture_window_widget_exact(node);
+        return scheduler::capture_window_widget_exact(node);
     }
 
-    window_compositor::capture_painted_widget_exact_with_children(node, true)
+    scheduler::capture_painted_widget_exact_with_children(node, true)
 }
 
 pub(crate) fn wire_event(node: &impl NodeHandle, export_id: u16) -> Result<()> {
@@ -987,7 +938,7 @@ pub(crate) fn apply_prop(node: &impl NodeHandle, update: WindowPropUpdate) -> Re
                 .map_err(|e| qt_error(e.what().to_owned()))?;
         }
         WindowPropUpdate::Gpu { value } => {
-            set_window_gpu_mode(id, value);
+            crate::renderer::with_renderer_mut(|r| r.set_gpu_mode(id, value));
         }
         WindowPropUpdate::WindowKind { value } => {
             let tag = u8::try_from(value).map_err(|_| invalid_arg("windowKind out of range"))?;
@@ -1054,15 +1005,18 @@ pub(crate) fn debug_emit_app_event(name: String) -> Result<()> {
 }
 
 pub(crate) fn request_next_frame_exact(node: &impl NodeHandle) -> Result<()> {
-    window_compositor::write_frame_bool_prop(node, "nextFrameRequested", true)?;
+    let window_id = node.inner().id;
+    crate::renderer::with_renderer_mut(|r| r.scheduler.set_next_frame_requested(window_id, true));
     request_window_repaint_exact(node)
 }
 
 pub(crate) fn read_window_frame_state_exact(node: &impl NodeHandle) -> Result<QtWindowFrameState> {
+    let window_id = node.inner().id;
+    let clock = crate::renderer::with_renderer(|r| r.scheduler.frame_clock(window_id));
     Ok(QtWindowFrameState {
-        seq: window_compositor::read_frame_f64_prop(node, "seq")?,
-        elapsed_ms: window_compositor::read_frame_f64_prop(node, "elapsedMs")?,
-        delta_ms: window_compositor::read_frame_f64_prop(node, "deltaMs")?,
+        seq: clock.seq,
+        elapsed_ms: clock.elapsed_ms,
+        delta_ms: clock.delta_ms,
     })
 }
 
@@ -1116,9 +1070,9 @@ pub(crate) fn debug_node_at_point(screen_x: i32, screen_y: i32) -> Result<Option
 }
 
 pub(crate) fn debug_capture_window_frame(window_id: u32) -> Result<QtWindowCaptureFrame> {
-    window_compositor::capture_window_frame_exact(
+    scheduler::capture_window_frame_exact(
         window_id,
-        window_compositor::WindowCaptureGrouping::Segmented,
+        scheduler::WindowCaptureGrouping::Segmented,
     )?
     .into_api_frame()
 }
@@ -1313,7 +1267,7 @@ mod tests {
     };
 
     use super::RuntimeState;
-    use crate::window_compositor::{
+    use crate::renderer::scheduler::{
         pipeline::{
             coalesce_scene_subtree_roots_in_tree, group_window_capture_parts,
         },
@@ -1393,26 +1347,26 @@ mod tests {
 
     #[test]
     fn dirty_node_marks_compositor_node() {
-        let mut state = RuntimeState::new();
-        state.app_generation = Some(1);
+        use crate::renderer::scheduler::Scheduler;
+        let mut scheduler = Scheduler::new();
 
-        state.compositor.mark_dirty_node(7, 9);
+        scheduler.mark_dirty_node(7, 9);
 
         assert_eq!(
-            state.compositor.dirty_nodes_for_test(7),
+            scheduler.dirty_nodes_for_test(7),
             Some(&HashSet::from([9_u32]))
         );
     }
 
     #[test]
     fn geometry_node_tracking_keeps_dirty_state_separate() {
-        let mut state = RuntimeState::new();
-        state.app_generation = Some(1);
+        use crate::renderer::scheduler::Scheduler;
+        let mut scheduler = Scheduler::new();
 
-        state.compositor.mark_geometry_node(7, 9);
+        scheduler.mark_geometry_node(7, 9);
 
         assert_eq!(
-            state.compositor.take_geometry_nodes(7),
+            scheduler.take_geometry_nodes(7),
             HashSet::from([9_u32])
         );
     }

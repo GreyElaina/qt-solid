@@ -1,5 +1,6 @@
 use std::sync::{Mutex, OnceLock};
 
+use bytemuck::{Pod, Zeroable};
 use vello::wgpu;
 use wgpu::util::DeviceExt;
 
@@ -30,7 +31,7 @@ fn effect_pipeline(device: &wgpu::Device) -> &'static EffectPipelineState {
 }
 
 fn create_pipeline(device: &wgpu::Device) -> EffectPipelineState {
-    let shader_source = include_str!("../../shaders/inner_shadow.wgsl");
+    let shader_source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/inner_shadow.wgsl"));
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("inner-shadow-shader"),
         source: wgpu::ShaderSource::Wgsl(shader_source.into()),
@@ -167,23 +168,30 @@ pub fn apply_inner_shadows(
     }
 }
 
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct InnerShadowUniforms {
+    rect_min: [f32; 2],
+    rect_size: [f32; 2],
+    corner_radius: f32,
+    blur_std_dev: f32,
+    offset: [f32; 2],
+    color: [f32; 4],
+    texture_size: [f32; 2],
+    _padding: [f32; 2],
+}
+
 fn make_inner_shadow_uniform(effect: &InnerShadowEffect, texture_size: (u32, u32)) -> [u8; 64] {
-    let mut data = [0u8; 64];
-    data[0..4].copy_from_slice(&effect.rect_min[0].to_le_bytes());
-    data[4..8].copy_from_slice(&effect.rect_min[1].to_le_bytes());
-    data[8..12].copy_from_slice(&effect.rect_size[0].to_le_bytes());
-    data[12..16].copy_from_slice(&effect.rect_size[1].to_le_bytes());
-    data[16..20].copy_from_slice(&effect.corner_radius.to_le_bytes());
-    data[20..24].copy_from_slice(&effect.blur_std_dev.to_le_bytes());
-    data[24..28].copy_from_slice(&effect.offset[0].to_le_bytes());
-    data[28..32].copy_from_slice(&effect.offset[1].to_le_bytes());
-    data[32..36].copy_from_slice(&effect.color[0].to_le_bytes());
-    data[36..40].copy_from_slice(&effect.color[1].to_le_bytes());
-    data[40..44].copy_from_slice(&effect.color[2].to_le_bytes());
-    data[44..48].copy_from_slice(&effect.color[3].to_le_bytes());
-    data[48..52].copy_from_slice(&(texture_size.0 as f32).to_le_bytes());
-    data[52..56].copy_from_slice(&(texture_size.1 as f32).to_le_bytes());
-    data
+    bytemuck::cast(InnerShadowUniforms {
+        rect_min: effect.rect_min,
+        rect_size: effect.rect_size,
+        corner_radius: effect.corner_radius,
+        blur_std_dev: effect.blur_std_dev,
+        offset: effect.offset,
+        color: effect.color,
+        texture_size: [texture_size.0 as f32, texture_size.1 as f32],
+        _padding: [0.0; 2],
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +218,7 @@ fn blur_pipeline(device: &wgpu::Device) -> &'static BlurPipelineState {
 }
 
 fn create_blur_pipeline(device: &wgpu::Device) -> BlurPipelineState {
-    let shader_source = include_str!("../../shaders/backdrop_blur.wgsl");
+    let shader_source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/backdrop_blur.wgsl"));
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("backdrop-blur-shader"),
         source: wgpu::ShaderSource::Wgsl(shader_source.into()),
@@ -378,13 +386,9 @@ pub fn apply_backdrop_blurs(
         target_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     for effect in effects {
-        let base = make_blur_uniform(effect, texture_size);
-
         // Horizontal uniform: direction = (1, 0)
         let h_uniform = {
-            let mut data = base;
-            data[32..36].copy_from_slice(&1.0f32.to_le_bytes());
-            data[36..40].copy_from_slice(&0.0f32.to_le_bytes());
+            let data = make_blur_uniform(effect, texture_size, [1.0, 0.0]);
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("backdrop-blur-h-uniform"),
                 contents: &data,
@@ -394,9 +398,7 @@ pub fn apply_backdrop_blurs(
 
         // Vertical uniform: direction = (0, 1)
         let v_uniform = {
-            let mut data = base;
-            data[32..36].copy_from_slice(&0.0f32.to_le_bytes());
-            data[36..40].copy_from_slice(&1.0f32.to_le_bytes());
+            let data = make_blur_uniform(effect, texture_size, [0.0, 1.0]);
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("backdrop-blur-v-uniform"),
                 contents: &data,
@@ -484,15 +486,30 @@ pub fn apply_backdrop_blurs(
     }
 }
 
-fn make_blur_uniform(effect: &BackdropBlurEffect, texture_size: (u32, u32)) -> [u8; 48] {
-    let mut data = [0u8; 48];
-    data[0..4].copy_from_slice(&effect.rect_min[0].to_le_bytes());
-    data[4..8].copy_from_slice(&effect.rect_min[1].to_le_bytes());
-    data[8..12].copy_from_slice(&effect.rect_size[0].to_le_bytes());
-    data[12..16].copy_from_slice(&effect.rect_size[1].to_le_bytes());
-    data[16..20].copy_from_slice(&effect.corner_radius.to_le_bytes());
-    data[20..24].copy_from_slice(&effect.blur_radius.to_le_bytes());
-    data[24..28].copy_from_slice(&(texture_size.0 as f32).to_le_bytes());
-    data[28..32].copy_from_slice(&(texture_size.1 as f32).to_le_bytes());
-    data
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+struct BlurUniforms {
+    rect_min: [f32; 2],
+    rect_size: [f32; 2],
+    corner_radius: f32,
+    blur_radius: f32,
+    texture_size: [f32; 2],
+    direction: [f32; 2],
+    _padding: [f32; 2],
+}
+
+fn make_blur_uniform(
+    effect: &BackdropBlurEffect,
+    texture_size: (u32, u32),
+    direction: [f32; 2],
+) -> [u8; 48] {
+    bytemuck::cast(BlurUniforms {
+        rect_min: effect.rect_min,
+        rect_size: effect.rect_size,
+        corner_radius: effect.corner_radius,
+        blur_radius: effect.blur_radius,
+        texture_size: [texture_size.0 as f32, texture_size.1 as f32],
+        direction,
+        _padding: [0.0; 2],
+    })
 }

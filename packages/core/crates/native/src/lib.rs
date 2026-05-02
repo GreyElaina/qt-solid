@@ -7,10 +7,8 @@ pub use canvas::{fragment, vello};
 mod layout;
 mod qt;
 mod runtime;
-mod scene_renderer;
-mod surface_renderer;
+mod renderer;
 mod trace;
-mod window_compositor;
 
 pub use api::{
     FocusPolicy, QtApp, QtHostEvent, QtNode, qt_solid_capture_window_frame,

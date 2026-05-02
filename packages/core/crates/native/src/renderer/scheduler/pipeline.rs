@@ -23,9 +23,8 @@ use crate::{
 use super::state::WindowCaptureComposingPart;
 use super::texture_widget::capture_painted_widget_exact_with_children;
 use super::{
-    capture_qt_widget_exact_with_children, capture_widget_visible_rects, clear_window_compositor_dirty_nodes,
-    compositor_target_to_renderer, load_window_compositor_target,
-    snapshot_window_compositor_pending_state, store_window_compositor_target,
+    capture_qt_widget_exact_with_children, capture_widget_visible_rects,
+    compositor_target_to_renderer,
 };
 
 
@@ -228,9 +227,10 @@ pub(crate) fn capture_window_frame_exact(
     }
 
     let window_bounds = debug_node_bounds(window_id)?;
-    let frame_seq = super::frame_clock::read_frame_f64_prop(&window, "seq")?;
-    let elapsed_ms = super::frame_clock::read_frame_f64_prop(&window, "elapsedMs")?;
-    let delta_ms = super::frame_clock::read_frame_f64_prop(&window, "deltaMs")?;
+    let clock = crate::renderer::with_renderer(|r| r.scheduler.frame_clock(window_id));
+    let frame_seq = clock.seq;
+    let elapsed_ms = clock.elapsed_ms;
+    let delta_ms = clock.delta_ms;
     qt::qt_capture_widget_layout(window_id).map_err(|error| qt_error(error.what().to_owned()))?;
     let parts = collect_window_capture_parts(generation, window_id, &window_bounds, true)?;
     let groups = group_window_capture_parts(grouping, parts)
@@ -249,14 +249,14 @@ pub(crate) fn capture_window_frame_exact(
 }
 
 
-pub(crate) fn drive_window_compositor_frame(
+pub(crate) fn drive_frame(
     node_id: u32,
     target: QtCompositorTarget,
 ) -> Result<QtWindowCompositorDriveStatus> {
     drive_fragment_surface_frame(node_id, target, 0)
 }
 
-pub(crate) fn drive_window_compositor_frame_with_drawable(
+pub(crate) fn drive_frame_with_drawable(
     node_id: u32,
     target: QtCompositorTarget,
     drawable_handle: u64,
@@ -290,14 +290,17 @@ fn drive_fragment_surface_frame(
     ensure_live_node(&node)?;
 
     // Detect size change — force repaint when viewport resized.
-    let prev_target = load_window_compositor_target(node_id);
+    let (prev_target, pending) = crate::renderer::with_renderer_mut(|r| {
+        let prev = r.scheduler.target(node_id);
+        r.scheduler.set_target(node_id, target);
+        let pending = r.scheduler.pending_state_snapshot(node_id);
+        (prev, pending)
+    });
     let size_changed = prev_target.map_or(true, |prev| {
         prev.width_px != target.width_px || prev.height_px != target.height_px
     });
-    store_window_compositor_target(node_id, target);
 
     // Check whether anything is dirty before doing GPU work.
-    let pending = snapshot_window_compositor_pending_state(node_id);
     let has_dirty = !pending.dirty_nodes.is_empty()
         || !pending.dirty_regions.is_empty()
         || !pending.scene_nodes.is_empty()
@@ -391,7 +394,7 @@ fn drive_fragment_surface_frame(
                 if drawable_handle != 0 {
                     qt_compositor::release_metal_drawable(drawable_handle);
                 }
-                crate::surface_renderer::render_composited_and_present(
+                crate::renderer::compositor::render_composited_and_present(
                     node_id,
                     compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
                     layout.scale_factor,
@@ -484,7 +487,7 @@ fn drive_fragment_surface_frame(
             node_id, layout.scale_factor,
         );
 
-        crate::surface_renderer::render_and_present_subtrees(
+        crate::renderer::compositor::render_and_present_subtrees(
             node_id,
             compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
             layout.scale_factor,
@@ -510,7 +513,7 @@ fn drive_fragment_surface_frame(
         crate::runtime::request_overlay_next_frame_exact(&node, node_id)?;
     }
 
-    clear_window_compositor_dirty_nodes(node_id);
+    crate::renderer::with_renderer_mut(|r| r.scheduler.clear_dirty_nodes(node_id));
 
     Ok(QtWindowCompositorDriveStatus::Presented)
 }

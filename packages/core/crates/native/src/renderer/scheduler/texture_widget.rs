@@ -4,15 +4,14 @@ use crate::runtime::capture::WidgetCapture;
 
 use crate::{
     qt,
+    renderer::offscreen as scene_renderer,
     runtime::{
         NodeHandle, ensure_live_node, node_by_id, qt_error,
     },
-    scene_renderer,
 };
 
 use super::frame_clock::{node_frame_time, window_ancestor_id_for_node};
 use super::capture_qt_widget_exact_with_children;
-use super::load_window_compositor_target;
 use super::compositor_target_to_renderer;
 
 use crate::canvas::fragment as fragment_store;
@@ -38,7 +37,7 @@ pub(crate) fn capture_vello_widget_exact(node: &impl NodeHandle) -> Result<Optio
     else {
         return Ok(None);
     };
-    let Some(target) = load_window_compositor_target(window_id) else {
+    let Some(target) = crate::renderer::with_renderer(|r| r.scheduler.target(window_id)) else {
         return capture_qt_widget_exact_with_children(node, false).map(Some);
     };
     let window = node_by_id(node.inner().generation, window_id)?;

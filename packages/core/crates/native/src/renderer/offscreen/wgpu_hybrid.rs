@@ -16,72 +16,6 @@ use vello_hybrid::{
 
 use crate::runtime::qt_error;
 
-#[derive(Default)]
-struct TimingAggregate {
-    count: u64,
-    total_ms: f64,
-}
-
-impl TimingAggregate {
-    fn add_sample(&mut self, elapsed: std::time::Duration) {
-        self.count += 1;
-        self.total_ms += elapsed.as_secs_f64() * 1000.0;
-    }
-
-    fn average_ms(&self) -> f64 {
-        if self.count == 0 {
-            return 0.0;
-        }
-        self.total_ms / self.count as f64
-    }
-}
-
-#[derive(Default)]
-struct HybridMetrics {
-    frames: u64,
-    append_scene: TimingAggregate,
-    render_layer: TimingAggregate,
-}
-
-fn hybrid_metrics_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("QT_SOLID_WGPU_METRICS").is_some())
-}
-
-fn hybrid_metrics() -> &'static Mutex<HybridMetrics> {
-    static METRICS: std::sync::OnceLock<Mutex<HybridMetrics>> = std::sync::OnceLock::new();
-    METRICS.get_or_init(|| Mutex::new(HybridMetrics::default()))
-}
-
-fn record_append_scene_metric(elapsed: std::time::Duration) {
-    if !hybrid_metrics_enabled() {
-        return;
-    }
-    let mut metrics = hybrid_metrics()
-        .lock()
-        .expect("qt hybrid metrics mutex poisoned");
-    metrics.append_scene.add_sample(elapsed);
-}
-
-fn record_render_layer_metric(elapsed: std::time::Duration) {
-    if !hybrid_metrics_enabled() {
-        return;
-    }
-    let mut metrics = hybrid_metrics()
-        .lock()
-        .expect("qt hybrid metrics mutex poisoned");
-    metrics.frames += 1;
-    metrics.render_layer.add_sample(elapsed);
-    if metrics.frames % 120 == 0 {
-        eprintln!(
-            "qt-solid hybrid metrics frames={} append_scene_ms={:.3} render_layer_ms={:.3}",
-            metrics.frames,
-            metrics.append_scene.average_ms(),
-            metrics.render_layer.average_ms(),
-        );
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RendererCacheKey {
     surface_kind: u8,
@@ -339,5 +273,3 @@ pub(crate) fn render_scene_to_capture(
     })
     .map_err(|error| qt_error(error.to_string()))
 }
-
-
