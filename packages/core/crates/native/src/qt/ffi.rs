@@ -234,11 +234,7 @@ pub(crate) mod bridge {
             descent: f64,
             width: f64,
         );
-        fn qt_text_edit_set_caret_visible(
-            canvas_node_id: u32,
-            fragment_id: u32,
-            visible: bool,
-        );
+        fn qt_text_edit_set_caret_visible(canvas_node_id: u32, fragment_id: u32, visible: bool);
         fn qt_window_event_close_requested(node_id: u32);
         fn qt_window_event_hover_enter(node_id: u32);
         fn qt_window_event_hover_leave(node_id: u32);
@@ -577,11 +573,7 @@ pub(crate) fn qt_text_edit_sync(
     }
 }
 
-pub(crate) fn qt_text_edit_set_caret_visible(
-    canvas_node_id: u32,
-    fragment_id: u32,
-    visible: bool,
-) {
+pub(crate) fn qt_text_edit_set_caret_visible(canvas_node_id: u32, fragment_id: u32, visible: bool) {
     use crate::canvas::fragment::{FragmentId, fragment_store_set_caret_visible};
     fragment_store_set_caret_visible(canvas_node_id, FragmentId(fragment_id), visible);
 
