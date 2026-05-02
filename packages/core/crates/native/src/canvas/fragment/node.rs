@@ -85,6 +85,40 @@ impl Default for FragmentProps {
 }
 
 // ---------------------------------------------------------------------------
+// Accessibility semantics attached to a fragment node.
+// ---------------------------------------------------------------------------
+
+/// Only present when the node has explicit a11y props or an auto-inferred role.
+#[derive(Debug, Clone)]
+pub struct SemanticsData {
+    pub role: accesskit::Role,
+    pub label: Option<String>,
+    pub value: Option<String>,
+    pub description: Option<String>,
+    pub live: Option<accesskit::Live>,
+    pub checked: Option<accesskit::Toggled>,
+    pub expanded: Option<bool>,
+    pub selected: Option<bool>,
+    pub disabled: bool,
+}
+
+impl SemanticsData {
+    pub fn with_role(role: accesskit::Role) -> Self {
+        Self {
+            role,
+            label: None,
+            value: None,
+            description: None,
+            live: None,
+            checked: None,
+            expanded: None,
+            selected: None,
+            disabled: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Layout result — taffy output after compute_layout
 // ---------------------------------------------------------------------------
 
@@ -130,6 +164,7 @@ pub struct FragmentNode {
     /// Cached AABB enclosing this node and all descendants.
     pub(crate) subtree_aabb: Option<Rect>,
     pub listeners: FragmentListeners,
+    pub semantics: Option<SemanticsData>,
 }
 
 impl FragmentNode {

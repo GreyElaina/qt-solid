@@ -1231,6 +1231,7 @@ pub(crate) fn emit_window_typed_event(node_id: u32, export_name: &str) {
 }
 
 pub(crate) fn qt_window_event_focus_change(node_id: u32, gained: bool) {
+    crate::accessibility::update_window_accessibility(node_id, gained);
     emit_js_event(QtHostEvent::WindowFocusChange { node_id, gained });
 }
 

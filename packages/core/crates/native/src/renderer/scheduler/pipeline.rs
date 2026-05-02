@@ -507,6 +507,12 @@ fn drive_fragment_surface_frame(
     // Consume dirty state after successful present.
     crate::canvas::fragment::fragment_store_consume_dirty_state(node_id);
 
+    // Initialize accessibility adapter on first successful present.
+    crate::accessibility::init_window_accessibility(node_id, target.primary_handle);
+
+    // Push updated fragment tree to accessibility adapter.
+    crate::accessibility::update_window_accessibility_tree(node_id);
+
     if still_animating {
         let desired_fps = velocity_to_desired_fps(max_velocity);
         crate::qt::ffi::bridge::qt_macos_set_display_link_frame_rate(node_id, desired_fps);

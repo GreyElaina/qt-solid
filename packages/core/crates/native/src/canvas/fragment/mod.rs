@@ -1,4 +1,5 @@
 pub mod decl;
+pub(crate) mod accessibility;
 mod encode;
 mod hit_test;
 mod kinds;
@@ -8,6 +9,7 @@ mod parse;
 mod tree;
 mod types;
 
+pub use accessibility::*;
 pub use kinds::*;
 pub use node::*;
 pub use parse::*;
@@ -135,6 +137,15 @@ pub fn fragment_store_set_prop(
     value: FragmentValue,
 ) -> bool {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        // Semantics props — accessibility data (intercept before layout/visual paths)
+        if is_semantics_prop(key) {
+            if let Some(node) = tree.nodes.get_mut(&fragment_id) {
+                apply_semantics_prop(node, key, &value);
+                tree.semantics_dirty.insert(fragment_id);
+            }
+            return;
+        }
+
         if is_layout_prop(key) {
             if let FragmentValue::F64 { value } = &value {
                 let v = *value as f32;
@@ -776,6 +787,137 @@ const LAYOUT_PROPS: &[&str] = &[
     "gridTemplateRows", "gridTemplateColumns",
     "gridAutoFlow", "gridRow", "gridColumn", "gridRowSpan", "gridColSpan",
 ];
+
+// ---------------------------------------------------------------------------
+// Semantics prop helpers — accessibility data
+// ---------------------------------------------------------------------------
+
+fn is_semantics_prop(key: &str) -> bool {
+    matches!(
+        key,
+        "role"
+            | "ariaLabel"
+            | "ariaDescription"
+            | "ariaLive"
+            | "ariaChecked"
+            | "ariaExpanded"
+            | "ariaSelected"
+            | "ariaDisabled"
+            | "ariaValueNow"
+    )
+}
+
+fn apply_semantics_prop(node: &mut FragmentNode, key: &str, value: &FragmentValue) {
+    let semantics = node
+        .semantics
+        .get_or_insert_with(|| SemanticsData::with_role(accesskit::Role::Group));
+
+    match key {
+        "role" => {
+            if let FragmentValue::Str { value } = value {
+                semantics.role = parse_a11y_role(value);
+            }
+        }
+        "ariaLabel" => {
+            if let FragmentValue::Str { value } = value {
+                semantics.label = if value.is_empty() { None } else { Some(value.clone()) };
+            }
+        }
+        "ariaDescription" => {
+            if let FragmentValue::Str { value } = value {
+                semantics.description = if value.is_empty() { None } else { Some(value.clone()) };
+            }
+        }
+        "ariaLive" => {
+            if let FragmentValue::Str { value } = value {
+                semantics.live = match value.as_str() {
+                    "polite" => Some(accesskit::Live::Polite),
+                    "assertive" => Some(accesskit::Live::Assertive),
+                    _ => None,
+                };
+            }
+        }
+        "ariaChecked" => {
+            if let FragmentValue::Bool { value } = value {
+                semantics.checked = Some(if *value {
+                    accesskit::Toggled::True
+                } else {
+                    accesskit::Toggled::False
+                });
+            }
+        }
+        "ariaExpanded" => {
+            if let FragmentValue::Bool { value } = value {
+                semantics.expanded = Some(*value);
+            }
+        }
+        "ariaSelected" => {
+            if let FragmentValue::Bool { value } = value {
+                semantics.selected = Some(*value);
+            }
+        }
+        "ariaDisabled" => {
+            if let FragmentValue::Bool { value } = value {
+                semantics.disabled = *value;
+            }
+        }
+        "ariaValueNow" => {
+            if let FragmentValue::Str { value } = value {
+                semantics.value = if value.is_empty() { None } else { Some(value.clone()) };
+            } else if let FragmentValue::F64 { value } = value {
+                semantics.value = Some(value.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn parse_a11y_role(role: &str) -> accesskit::Role {
+    match role {
+        "button" => accesskit::Role::Button,
+        "checkbox" => accesskit::Role::CheckBox,
+        "radio" => accesskit::Role::RadioButton,
+        "switch" => accesskit::Role::Switch,
+        "slider" => accesskit::Role::Slider,
+        "spinbutton" => accesskit::Role::SpinButton,
+        "textbox" => accesskit::Role::TextInput,
+        "searchbox" => accesskit::Role::SearchInput,
+        "combobox" => accesskit::Role::ComboBox,
+        "list" => accesskit::Role::List,
+        "listitem" => accesskit::Role::ListItem,
+        "listbox" => accesskit::Role::ListBox,
+        "option" => accesskit::Role::ListBoxOption,
+        "menu" => accesskit::Role::Menu,
+        "menuitem" => accesskit::Role::MenuItem,
+        "menubar" => accesskit::Role::MenuBar,
+        "tab" => accesskit::Role::Tab,
+        "tablist" => accesskit::Role::TabList,
+        "tabpanel" => accesskit::Role::TabPanel,
+        "tree" => accesskit::Role::Tree,
+        "treeitem" => accesskit::Role::TreeItem,
+        "table" => accesskit::Role::Table,
+        "row" => accesskit::Role::Row,
+        "cell" => accesskit::Role::Cell,
+        "link" => accesskit::Role::Link,
+        "heading" => accesskit::Role::Heading,
+        "img" | "image" => accesskit::Role::Image,
+        "navigation" => accesskit::Role::Navigation,
+        "main" => accesskit::Role::Main,
+        "region" => accesskit::Role::Region,
+        "form" => accesskit::Role::Form,
+        "group" => accesskit::Role::Group,
+        "dialog" => accesskit::Role::Dialog,
+        "alert" => accesskit::Role::Alert,
+        "alertdialog" => accesskit::Role::AlertDialog,
+        "progressbar" => accesskit::Role::ProgressIndicator,
+        "separator" => accesskit::Role::Splitter,
+        "toolbar" => accesskit::Role::Toolbar,
+        "tooltip" => accesskit::Role::Tooltip,
+        "scrollbar" => accesskit::Role::ScrollBar,
+        "label" => accesskit::Role::Label,
+        _ => accesskit::Role::Group,
+    }
+}
 
 fn is_layout_prop(key: &str) -> bool {
     LAYOUT_PROPS.contains(&key)

@@ -106,6 +106,7 @@ impl Renderer {
         self.fragments.remove(node_id);
         self.gpu_mode.remove(&node_id);
         compositor::destroy_window_renderer_state(node_id);
+        crate::accessibility::destroy_window_accessibility(node_id);
         self.scheduler.clear_all();
     }
 }

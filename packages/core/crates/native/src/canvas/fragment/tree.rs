@@ -7,7 +7,7 @@ use super::super::vello::peniko::{Color, Fill};
 use super::super::vello::{PaintScene, Scene};
 use crate::renderer::compositor::effects::{BackdropBlurEffect, InnerShadowEffect};
 
-use super::node::{apply_sampled_pose_to_fragment, FragmentData, FragmentNode, FragmentProps, LayoutResult};
+use super::node::{apply_sampled_pose_to_fragment, FragmentData, FragmentNode, FragmentProps, LayoutResult, SemanticsData};
 use super::paint::{is_axis_aligned_affine, transform_local_bounds_to_world, PaintCollector};
 use super::types::{
     push_fragment_layer, FragmentClipShape, FragmentId, FragmentLayerKey, FragmentLayoutChange,
@@ -82,6 +82,8 @@ pub struct FragmentTree {
     /// Dirty clip rects in logical coordinates. Set before paint,
     /// used by paint_node_culled for subtree culling.
     pub(crate) dirty_clips: Vec<Rect>,
+    /// Fragment IDs whose semantics data changed (role, label, bounds, etc.).
+    pub(crate) semantics_dirty: HashSet<FragmentId>,
 }
 
 /// Maximum number of independent dirty rects before falling back to union.
@@ -128,6 +130,7 @@ impl Default for FragmentTree {
             stale_node_bounds: HashMap::new(),
             dirty_node_ids: HashSet::new(),
             dirty_clips: Vec::new(),
+            semantics_dirty: HashSet::new(),
         }
     }
 }
@@ -177,6 +180,16 @@ impl FragmentTree {
     pub fn create_node(&mut self, kind: FragmentData) -> FragmentId {
         let id = self.allocate_id();
         let is_span = matches!(kind, FragmentData::Span(_));
+
+        // Auto-infer semantics role from fragment kind
+        let inferred_semantics = match &kind {
+            FragmentData::Text(_) => Some(SemanticsData::with_role(accesskit::Role::Label)),
+            FragmentData::TextInput(_) => Some(SemanticsData::with_role(accesskit::Role::TextInput)),
+            FragmentData::Image(_) => Some(SemanticsData::with_role(accesskit::Role::Image)),
+            FragmentData::Group(_) => Some(SemanticsData::with_role(accesskit::Role::Group)),
+            _ => None,
+        };
+
         let taffy_node = self.taffy.new_leaf(taffy::Style {
             flex_shrink: 0.0,
             ..Default::default()
@@ -203,12 +216,14 @@ impl FragmentTree {
                 world_aabb: None,
                 subtree_aabb: None,
                 listeners: FragmentListeners::empty(),
+                semantics: inferred_semantics,
             },
         );
         // Node not yet attached to a parent — just mark global dirty.
         self.any_dirty = true;
         self.aabbs_dirty = true;
         self.cached_scene = None;
+        self.semantics_dirty.insert(id);
         id
     }
 
@@ -573,6 +588,7 @@ impl FragmentTree {
                     self.any_dirty = true;
                     self.cached_scene = None;
                     layout_dirty_ids.push(id);
+                    self.semantics_dirty.insert(id);
                 }
             }
 
@@ -585,6 +601,7 @@ impl FragmentTree {
                 self.any_dirty = true;
                 self.cached_scene = None;
                 layout_dirty_ids.push(id);
+                self.semantics_dirty.insert(id);
             }
 
             let mut paint_size_changed = false;
@@ -618,6 +635,7 @@ impl FragmentTree {
                 self.any_dirty = true;
                 self.cached_scene = None;
                 layout_dirty_ids.push(id);
+                self.semantics_dirty.insert(id);
             }
 
             if has_listener && (pos_changed || layout_size_changed || paint_size_changed) {
@@ -1668,6 +1686,14 @@ impl FragmentTree {
         self.stale_node_bounds.clear();
         self.dirty_node_ids.clear();
         self.force_full_repaint = false;
+    }
+
+    pub(crate) fn mark_semantics_dirty(&mut self, id: FragmentId) {
+        self.semantics_dirty.insert(id);
+    }
+
+    pub(crate) fn take_semantics_dirty(&mut self) -> HashSet<FragmentId> {
+        std::mem::take(&mut self.semantics_dirty)
     }
 }
 

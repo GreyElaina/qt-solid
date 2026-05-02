@@ -1,3 +1,4 @@
+mod accessibility;
 mod api;
 mod canvas;
 mod image;

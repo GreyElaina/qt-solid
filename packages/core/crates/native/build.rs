@@ -119,6 +119,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/qt/cpp/platform/clipboard.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/platform/file_dialogs.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/platform/appearance.cpp");
+    println!("cargo:rerun-if-changed=src/qt/cpp/platform/accessibility_bridge.mm");
     println!("cargo:rerun-if-changed=src/qt/ffi.rs");
 
     println!("cargo:rerun-if-changed=src/qt/runtime.rs");
@@ -153,6 +154,7 @@ fn main() {
     qt_wgpu_renderer.add_cpp_sources(&mut build);
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         qt_wgpu_renderer.add_objc_sources(&mut build);
+        build.file("src/qt/cpp/platform/accessibility_bridge.mm");
         build.flag_if_supported("-fblocks");
     }
     let windows_msvc = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
@@ -175,7 +177,8 @@ fn main() {
     add_include_if_exists(&mut build, &out_dir);
 
     // Vendored libuv headers (compile-time only; symbols resolved dynamically at runtime).
-    add_include_if_exists(&mut build, "../../../../third_party/libuv-include");
+    // add_include_if_exists(&mut build, "../../../../third_party/libuv-include");
+    add_include_if_exists(&mut build, concat!(env!("CARGO_WORKSPACE_DIR"), "/third_party/libuv-include"));
 
     for include_dir in qt_include_dirs {
         add_include_if_exists(&mut build, include_dir);
