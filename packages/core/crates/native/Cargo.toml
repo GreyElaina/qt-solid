@@ -35,11 +35,11 @@ vello_common = { version = "0.0.7", default-features = false }
 bitflags = "2"
 qt-host = { version = "0.1.0", path = "../qt-host" }
 accesskit = "0.24.0"
-accesskit_macos = "0.26.0"
 unicode-segmentation = "1.13.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 accesskit_macos = "0.26.0"
+objc2-app-kit = { version = "0.3.2", features = ["NSView", "NSWindow", "NSAccessibility"] }
 raw-window-metal = "1.1.0"
 wgpu-hal = "28.0.0"
 foreign-types = "0.5.0"

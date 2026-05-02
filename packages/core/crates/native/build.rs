@@ -119,7 +119,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/qt/cpp/platform/clipboard.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/platform/file_dialogs.cpp");
     println!("cargo:rerun-if-changed=src/qt/cpp/platform/appearance.cpp");
-    println!("cargo:rerun-if-changed=src/qt/cpp/platform/accessibility_bridge.mm");
+    println!("cargo:rerun-if-changed=src/qt/cpp/platform/popup_monitor.mm");
+    // accessibility_bridge.mm replaced by Rust accessibility_bridge.rs
     println!("cargo:rerun-if-changed=src/qt/ffi.rs");
 
     println!("cargo:rerun-if-changed=src/qt/runtime.rs");
@@ -154,8 +155,9 @@ fn main() {
     qt_wgpu_renderer.add_cpp_sources(&mut build);
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         qt_wgpu_renderer.add_objc_sources(&mut build);
-        build.file("src/qt/cpp/platform/accessibility_bridge.mm");
+        // accessibility_bridge now in pure Rust
         build.flag_if_supported("-fblocks");
+        build.file("src/qt/cpp/platform/popup_monitor.mm");
     }
     let windows_msvc = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");

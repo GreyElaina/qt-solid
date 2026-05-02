@@ -9,7 +9,6 @@ mod parse;
 mod tree;
 mod types;
 
-pub use accessibility::*;
 pub use kinds::*;
 pub use node::*;
 pub use parse::*;

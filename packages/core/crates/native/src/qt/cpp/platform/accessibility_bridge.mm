@@ -79,9 +79,15 @@ extern "C" bool qt_solid_bridge_nswindow_accessibility(void *nsview_ptr) {
     // 1. Fix content view's accessibilityParent to point to the window.
     //    accesskit root node calls view.accessibilityParent to find its
     //    parent in the a11y tree. Qt's QNSView returns nil or a stale
-    //    QMacAccessibilityElement here. Override it on the swizzled view class.
+    //    QMacAccessibilityElement here. Override it on the real class.
+    //
+    //    Use [view class] instead of object_getClass(view) to get the
+    //    declared class rather than any KVO-swizzled subclass.  Adding
+    //    methods to NSKVONotifying_* subclasses can corrupt KVO's
+    //    internal dependent-key resolution and cause crashes in
+    //    -[NSView setFrameSize:] → NSKeyValueDidChange.
     {
-        Class view_cls = object_getClass(view);
+        Class view_cls = [view class];
         SEL parent_sel = @selector(accessibilityParent);
 
         // class_addMethod only adds if not already present on this exact class.
@@ -93,8 +99,9 @@ extern "C" bool qt_solid_bridge_nswindow_accessibility(void *nsview_ptr) {
     }
 
     // 2. Override NSWindow's accessibilityChildren to merge in accesskit nodes.
+    //    Same rationale: use [window class] to avoid KVO subclasses.
     {
-        Class cls = object_getClass(window);
+        Class cls = [window class];
         SEL sel = @selector(accessibilityChildren);
 
         unsigned int count = 0;

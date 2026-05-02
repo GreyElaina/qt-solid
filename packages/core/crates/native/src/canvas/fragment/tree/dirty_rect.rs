@@ -94,13 +94,6 @@ impl FragmentTree {
         self.force_full_repaint = false;
     }
 
-    pub(crate) fn mark_semantics_dirty(&mut self, id: FragmentId) {
-        self.semantics_dirty.insert(id);
-    }
-
-    pub(crate) fn take_semantics_dirty(&mut self) -> HashSet<FragmentId> {
-        std::mem::take(&mut self.semantics_dirty)
-    }
 }
 
 // ---------------------------------------------------------------------------

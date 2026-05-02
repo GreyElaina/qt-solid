@@ -1,4 +1,6 @@
 mod accessibility;
+#[cfg(target_os = "macos")]
+mod accessibility_bridge;
 mod api;
 mod canvas;
 mod image;
