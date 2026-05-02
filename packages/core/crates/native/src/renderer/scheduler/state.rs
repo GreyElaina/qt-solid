@@ -85,6 +85,14 @@ impl Scheduler {
         }
     }
 
+    fn remove_node_from_sets(map: &mut HashMap<u32, HashSet<u32>>, node_id: u32) {
+        map.remove(&node_id);
+        map.retain(|_, nodes| {
+            nodes.remove(&node_id);
+            !nodes.is_empty()
+        });
+    }
+
     pub(crate) fn clear_all(&mut self) {
         self.targets.clear();
         self.geometry_nodes.clear();
@@ -94,6 +102,30 @@ impl Scheduler {
         self.dirty_nodes.clear();
         self.dirty_regions.clear();
         self.frame_clocks.clear();
+    }
+
+    pub(crate) fn clear_window(&mut self, window_id: u32) {
+        self.targets.remove(&window_id);
+        self.geometry_nodes.remove(&window_id);
+        self.scene_nodes.remove(&window_id);
+        self.scene_subtrees.remove(&window_id);
+        self.frame_tick_nodes.remove(&window_id);
+        self.dirty_nodes.remove(&window_id);
+        self.dirty_regions.remove(&window_id);
+        self.frame_clocks.remove(&window_id);
+    }
+
+    pub(crate) fn forget_node(&mut self, node_id: u32) {
+        self.clear_window(node_id);
+        Self::remove_node_from_sets(&mut self.geometry_nodes, node_id);
+        Self::remove_node_from_sets(&mut self.scene_nodes, node_id);
+        Self::remove_node_from_sets(&mut self.scene_subtrees, node_id);
+        Self::remove_node_from_sets(&mut self.frame_tick_nodes, node_id);
+        Self::remove_node_from_sets(&mut self.dirty_nodes, node_id);
+        self.dirty_regions.retain(|_, regions| {
+            regions.retain(|region| region.node_id != node_id);
+            !regions.is_empty()
+        });
     }
 
     pub(crate) fn set_target(&mut self, window_id: u32, target: QtCompositorTarget) {

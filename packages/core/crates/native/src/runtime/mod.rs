@@ -218,10 +218,7 @@ impl RuntimeState {
             inner.mark_destroyed();
         }
         self.wrappers.remove(&id);
-        crate::renderer::with_renderer_mut(|r| {
-            r.fragments.remove(id);
-            r.clear_all();
-        });
+        crate::renderer::with_renderer_mut(|r| r.forget_node(id));
     }
 
     fn mark_destroyed_many(&mut self, ids: &[u32]) {

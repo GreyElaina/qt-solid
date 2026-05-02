@@ -101,13 +101,51 @@ impl Renderer {
         self.gpu_mode.get(&node_id).copied().unwrap_or(false)
     }
 
+    pub(crate) fn forget_node(&mut self, node_id: u32) {
+        self.fragments.remove(node_id);
+        self.gpu_mode.remove(&node_id);
+        self.scheduler.forget_node(node_id);
+    }
+
     /// Clean up all renderer state for a destroyed window node.
     pub(crate) fn destroy_window(&mut self, node_id: u32) {
         self.fragments.remove(node_id);
         self.gpu_mode.remove(&node_id);
         compositor::destroy_window_renderer_state(node_id);
         crate::accessibility::destroy_window_accessibility(node_id);
-        self.scheduler.clear_all();
+        self.scheduler.clear_window(node_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn forget_node_preserves_other_window_state() {
+        let mut renderer = Renderer::new();
+        renderer.fragments.ensure(2);
+        renderer.fragments.ensure(3);
+        renderer.scheduler.mark_dirty_node(2, 20);
+        renderer.scheduler.mark_dirty_node(3, 30);
+
+        renderer.forget_node(3);
+
+        assert!(renderer.fragments.with(2, |_| ()).is_some());
+        assert!(renderer.fragments.with(3, |_| ()).is_none());
+        assert_eq!(
+            renderer.scheduler.pending_state_snapshot(2).dirty_nodes,
+            HashSet::from([20_u32])
+        );
+        assert!(
+            renderer
+                .scheduler
+                .pending_state_snapshot(3)
+                .dirty_nodes
+                .is_empty()
+        );
     }
 }
 
