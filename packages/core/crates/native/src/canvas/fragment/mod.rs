@@ -108,7 +108,6 @@ pub fn fragment_store_set_image_data(
                 img.image_data = Some(image_data);
                 node.dirty = true;
                 tree.any_dirty = true;
-                tree.cached_scene = None;
             }
         }
         tree.invalidate_subtree_cache_for(fragment_id);
@@ -122,7 +121,6 @@ pub fn fragment_store_clear_image_data(canvas_node_id: u32, fragment_id: Fragmen
                 img.image_data = None;
                 node.dirty = true;
                 tree.any_dirty = true;
-                tree.cached_scene = None;
             }
         }
         tree.invalidate_subtree_cache_for(fragment_id);
@@ -162,7 +160,6 @@ pub fn fragment_store_set_prop(
             }
             tree.any_dirty = true;
             tree.aabbs_dirty = true;
-            tree.cached_scene = None;
             tree.invalidate_subtree_cache_for(fragment_id);
             return;
         }
@@ -224,7 +221,6 @@ pub fn fragment_store_set_prop(
                         }
                     });
                     tree.any_dirty = true;
-                    tree.cached_scene = None;
                 }
             }
         }
@@ -233,7 +229,6 @@ pub fn fragment_store_set_prop(
             apply_fragment_prop(node, key, value);
             node.dirty = true;
             tree.any_dirty = true;
-            tree.cached_scene = None;
         }
         // When a span child changes, invalidate parent text shaped cache.
         if let Some(node) = tree.nodes.get(&fragment_id) {
@@ -444,7 +439,6 @@ pub fn fragment_store_set_text_shape_cache(
             node.dirty = true;
         }
         tree.any_dirty = true;
-        tree.cached_scene = None;
         tree.invalidate_subtree_cache_for(fragment_id);
     });
 }
@@ -462,7 +456,6 @@ pub fn fragment_store_set_text_input_layout_cache(
             node.dirty = true;
         }
         tree.any_dirty = true;
-        tree.cached_scene = None;
         tree.invalidate_subtree_cache_for(fragment_id);
     });
 }
@@ -486,7 +479,6 @@ pub fn fragment_store_set_text_input_state(
             node.dirty = true;
         }
         tree.any_dirty = true;
-        tree.cached_scene = None;
         tree.invalidate_subtree_cache_for(fragment_id);
     });
 }
@@ -504,7 +496,6 @@ pub fn fragment_store_set_caret_visible(
             node.dirty = true;
         }
         tree.any_dirty = true;
-        tree.cached_scene = None;
         tree.invalidate_subtree_cache_for(fragment_id);
     });
 }

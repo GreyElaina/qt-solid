@@ -54,44 +54,51 @@ impl std::fmt::Debug for SendTaffy {
 
 #[derive(Debug)]
 pub struct FragmentTree {
+    // -- core storage -------------------------------------------------------
     pub(crate) nodes: HashMap<FragmentId, FragmentNode>,
     pub(crate) root_children: Vec<FragmentId>,
     pub(crate) next_id: u32,
-    pub(crate) cached_scene: Option<Scene>,
+
+    // -- layout (taffy) -----------------------------------------------------
+    pub(crate) taffy: SendTaffy,
+    pub(crate) taffy_root: Option<taffy::tree::NodeId>,
+    /// Cached available size from last `compute_layout` call (logical pixels).
+    pub(crate) last_layout_size: Option<(f64, f64)>,
+
+    // -- dirty tracking -----------------------------------------------------
     pub(crate) any_dirty: bool,
     pub(crate) aabbs_dirty: bool,
+    /// When true, next frame must do a full clear+render (resize, first frame, clear_all).
+    pub(crate) force_full_repaint: bool,
+    /// Root children whose subtree contains dirty nodes (cache invalid).
+    pub(crate) dirty_root_children: HashSet<FragmentId>,
+    /// Nodes marked dirty since last frame (for dirty rect computation).
+    pub(crate) dirty_node_ids: HashSet<FragmentId>,
+    /// Old world_aabb of invalidated nodes BEFORE the change, for dirty rect
+    /// coverage of both old and new positions.
+    pub(crate) stale_node_bounds: HashMap<FragmentId, Rect>,
+    /// Dirty clip rects in logical coordinates, set before paint for
+    /// subtree culling in `paint_node_culled`.
+    pub(crate) dirty_clips: Vec<Rect>,
+
+    // -- paint / compositing cache ------------------------------------------
+    /// Per-root-child subtree scene cache. Key = root child FragmentId.
+    pub(crate) subtree_scene_cache: HashMap<FragmentId, Scene>,
     pub(crate) promoted_node_count: u32,
     pub(crate) next_layer_key: u32,
     pub(crate) promoted_scene_cache: HashMap<FragmentId, Scene>,
     pub(crate) previous_promoted_keys: HashSet<FragmentLayerKey>,
-    /// Per-root-child subtree scene cache. Key = root child FragmentId.
-    pub(crate) subtree_scene_cache: HashMap<FragmentId, Scene>,
-    /// Root children whose subtree contains dirty nodes (cache invalid).
-    pub(crate) dirty_root_children: HashSet<FragmentId>,
-    pub(crate) taffy: SendTaffy,
-    pub(crate) taffy_root: Option<taffy::tree::NodeId>,
+
+    // -- interaction / a11y -------------------------------------------------
     pub(crate) focused: Option<FragmentId>,
-    /// Cached available size from last `compute_layout` call (logical pixels).
-    pub(crate) last_layout_size: Option<(f64, f64)>,
     /// Per-fragment scroll offset. Only scroll containers have entries.
     pub(crate) scroll_offsets: HashMap<FragmentId, Vec2>,
-    /// Fragment to highlight (devtools overlay).
-    pub(crate) debug_highlight: Option<FragmentId>,
-    /// When true, next frame must do a full clear+render (resize, first frame, clear_all).
-    pub(crate) force_full_repaint: bool,
-    /// Old bounds of invalidated nodes, keyed by FragmentId.
-    /// Stores the world_aabb BEFORE the change so dirty rects cover both
-    /// old and new positions. Multiple invalidations of the same node are
-    /// unioned into one entry.
-    pub(crate) stale_node_bounds: HashMap<FragmentId, Rect>,
-    /// Nodes that have been marked dirty since last frame. Used to compute
-    /// new bounds for dirty rect calculation.
-    pub(crate) dirty_node_ids: HashSet<FragmentId>,
-    /// Dirty clip rects in logical coordinates. Set before paint,
-    /// used by paint_node_culled for subtree culling.
-    pub(crate) dirty_clips: Vec<Rect>,
     /// Fragment IDs whose semantics data changed (role, label, bounds, etc.).
     pub(crate) semantics_dirty: HashSet<FragmentId>,
+
+    // -- devtools -----------------------------------------------------------
+    /// Fragment to highlight (devtools overlay).
+    pub(crate) debug_highlight: Option<FragmentId>,
 }
 
 impl Default for FragmentTree {
@@ -107,7 +114,6 @@ impl Default for FragmentTree {
             nodes: HashMap::new(),
             root_children: Vec::new(),
             next_id: 0,
-            cached_scene: None,
             any_dirty: false,
             aabbs_dirty: true,
             promoted_node_count: 0,
@@ -134,41 +140,6 @@ impl Default for FragmentTree {
 impl FragmentTree {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Dump the fragment tree to stderr for layout debugging.
-    pub fn dump_layout(&self) {
-        eprintln!("[frag-dump] root_children={:?}", self.root_children);
-        let mut ids: Vec<_> = self.nodes.keys().copied().collect();
-        ids.sort_by_key(|id| id.0);
-        for id in ids {
-            let node = &self.nodes[&id];
-            let (tag, w, h) = match &node.kind {
-                FragmentData::Rect(r) => {
-                    (format!("rect fill={}", r.fill.is_some()), r.width, r.height)
-                }
-                FragmentData::Text(t) => (
-                    format!("text \"{}\"", &t.text[..t.text.len().min(16)]),
-                    0.0,
-                    0.0,
-                ),
-                FragmentData::Group(_) => ("group".into(), node.layout.width, node.layout.height),
-                _ => ("other".into(), 0.0, 0.0),
-            };
-            eprintln!(
-                "[frag-dump] id={:<4} par={:<6} x={:<8.1} y={:<8.1} w={:<8.1} h={:<8.1} clip={} vis={} ch={:?}  {}",
-                id.0,
-                node.parent.map_or("-".into(), |p| p.0.to_string()),
-                node.render_x(),
-                node.render_y(),
-                w,
-                h,
-                node.props.clip as u8,
-                node.props.visible as u8,
-                node.children.iter().map(|c| c.0).collect::<Vec<_>>(),
-                tag,
-            );
-        }
     }
 
     pub fn allocate_id(&mut self) -> FragmentId {
@@ -230,27 +201,9 @@ impl FragmentTree {
         // Node not yet attached to a parent — just mark global dirty.
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
+
         self.semantics_dirty.insert(id);
         id
-    }
-
-    pub fn insert(&mut self, node: FragmentNode, parent: Option<FragmentId>) {
-        let id = node.id;
-        self.nodes.insert(id, node);
-        match parent {
-            Some(parent_id) => {
-                if let Some(parent_node) = self.nodes.get_mut(&parent_id) {
-                    parent_node.children.push(id);
-                }
-                self.nodes.get_mut(&id).map(|n| n.parent = Some(parent_id));
-            }
-            None => self.root_children.push(id),
-        }
-        self.any_dirty = true;
-        self.aabbs_dirty = true;
-        self.cached_scene = None;
-        self.invalidate_subtree_cache_for(id);
     }
 
     /// Insert `child` into `parent`'s children list. If `before` is `Some`,
@@ -282,7 +235,7 @@ impl FragmentTree {
                 self.sync_taffy_children(parent);
                 self.any_dirty = true;
                 self.aabbs_dirty = true;
-                self.cached_scene = None;
+        
                 self.invalidate_subtree_cache_for(child);
                 return;
             }
@@ -291,7 +244,7 @@ impl FragmentTree {
         self.sync_taffy_children(parent);
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
+
         self.invalidate_subtree_cache_for(child);
     }
 
@@ -338,7 +291,7 @@ impl FragmentTree {
         self.sync_taffy_children(parent);
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
+
     }
 
     pub fn remove(&mut self, id: FragmentId) {
@@ -376,7 +329,7 @@ impl FragmentTree {
         }
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
+
     }
 
     pub fn node(&self, id: FragmentId) -> Option<&FragmentNode> {
@@ -465,7 +418,7 @@ impl FragmentTree {
             node.dirty = true;
         }
         self.any_dirty = true;
-        self.cached_scene = None;
+
         self.invalidate_subtree_cache_for(id);
     }
 
@@ -474,7 +427,7 @@ impl FragmentTree {
             self.debug_highlight = id;
             // Debug overlay is cosmetic — just force scene rebuild, not full repaint.
             self.any_dirty = true;
-            self.cached_scene = None;
+    
         }
     }
 
@@ -621,7 +574,7 @@ impl FragmentTree {
                 if node.props.explicit_x.is_none() || node.props.explicit_y.is_none() {
                     node.dirty = true;
                     self.any_dirty = true;
-                    self.cached_scene = None;
+            
                     layout_dirty_ids.push(id);
                     self.semantics_dirty.insert(id);
                 }
@@ -634,7 +587,7 @@ impl FragmentTree {
                 node.layout.height = lh;
                 node.dirty = true;
                 self.any_dirty = true;
-                self.cached_scene = None;
+        
                 layout_dirty_ids.push(id);
                 self.semantics_dirty.insert(id);
             }
@@ -668,7 +621,7 @@ impl FragmentTree {
             if paint_size_changed {
                 node.dirty = true;
                 self.any_dirty = true;
-                self.cached_scene = None;
+        
                 layout_dirty_ids.push(id);
                 self.semantics_dirty.insert(id);
             }
@@ -707,18 +660,10 @@ impl FragmentTree {
     // -----------------------------------------------------------------------
 
     pub(crate) fn sorted_children_by_z(&self, children: &[FragmentId]) -> Vec<FragmentId> {
-        let needs_sort = children
-            .iter()
-            .any(|id| self.nodes.get(id).map_or(false, |n| n.props.z_index != 0));
-        if !needs_sort {
-            return children.to_vec();
-        }
-        let mut sorted: Vec<FragmentId> = children.to_vec();
-        sorted.sort_by_key(|id| self.nodes.get(id).map_or(0, |n| n.props.z_index));
-        sorted
+        Self::sorted_children_by_z_static(&self.nodes, children)
     }
 
-    fn sorted_children_by_z_static(
+    pub(crate) fn sorted_children_by_z_static(
         nodes: &HashMap<FragmentId, FragmentNode>,
         children: &[FragmentId],
     ) -> Vec<FragmentId> {

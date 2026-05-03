@@ -28,13 +28,6 @@ impl FragmentTree {
         }
 
         if self.promoted_node_count == 0 {
-            if !self.any_dirty {
-                if let Some(cached) = &self.cached_scene {
-                    scene.append_scene(cached.clone(), base_transform);
-                    return;
-                }
-            }
-
             let root_children = self.sorted_children_by_z(&self.root_children.clone());
             let dirty_clips = self.dirty_clips.clone();
             let mut fresh = Scene::new();
@@ -63,12 +56,7 @@ impl FragmentTree {
             self.any_dirty = false;
             self.dirty_root_children.clear();
 
-            scene.append_scene(fresh.clone(), base_transform);
-            // Only cache the full scene — partial (culled) paints must not be
-            // reused as the complete scene for future full renders.
-            if self.dirty_clips.is_empty() {
-                self.cached_scene = Some(fresh);
-            }
+            scene.append_scene(fresh, base_transform);
             self.paint_debug_highlight(scene, base_transform);
             return;
         }
@@ -129,15 +117,6 @@ impl FragmentTree {
         }
         self.any_dirty = false;
         self.dirty_root_children.clear();
-
-        // Cache merged scene for paint_into_scene compatibility.
-        if self.dirty_clips.is_empty() {
-            let mut fresh = Scene::new();
-            for (_, sub, _) in &result {
-                fresh.append_scene(sub.clone(), Affine::IDENTITY);
-            }
-            self.cached_scene = Some(fresh);
-        }
 
         result
     }
@@ -419,7 +398,6 @@ impl FragmentTree {
             node.pose_dirty = false;
         }
         self.any_dirty = false;
-        self.cached_scene = None;
 
         PaintPlan {
             chunks: collector.chunks,

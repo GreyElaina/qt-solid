@@ -38,7 +38,6 @@ impl FragmentTree {
         node.timeline = Some(timeline);
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
         self.invalidate_subtree_cache_for(id);
         animating
     }
@@ -76,7 +75,6 @@ impl FragmentTree {
         node.timeline = Some(timeline);
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
         self.invalidate_subtree_cache_for(id);
         animating
     }
@@ -138,7 +136,6 @@ impl FragmentTree {
                 .collect();
             self.any_dirty = true;
             self.aabbs_dirty = true;
-            self.cached_scene = None;
             for aid in animated_ids {
                 self.invalidate_subtree_cache_for(aid);
             }
@@ -175,7 +172,6 @@ impl FragmentTree {
             }
             self.any_dirty = true;
             self.aabbs_dirty = true;
-            self.cached_scene = None;
             self.invalidate_subtree_cache_for(id);
         }
     }
@@ -210,7 +206,6 @@ impl FragmentTree {
         }
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
         self.invalidate_subtree_cache_for(id);
     }
 
@@ -252,7 +247,6 @@ impl FragmentTree {
         }
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
         self.invalidate_subtree_cache_for(id);
         animating
     }
@@ -343,7 +337,6 @@ impl FragmentTree {
         node.timeline = Some(timeline);
         self.any_dirty = true;
         self.aabbs_dirty = true;
-        self.cached_scene = None;
         self.invalidate_subtree_cache_for(id);
         animating
     }
