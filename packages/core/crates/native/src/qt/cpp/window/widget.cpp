@@ -438,6 +438,17 @@ protected:
 #if defined(Q_OS_MACOS)
     void *wgpu_layer = reinterpret_cast<void *>(static_cast<quintptr>(
         qt_solid_spike::qt::qt_surface_renderer_metal_layer_ptr(rust_node_id_)));
+    // Destroy (not just stop) the display-link before synchronous resize
+    // present. CAMetalDisplayLink binds to the CAMetalLayer; while it
+    // exists (even paused), calling nextDrawable on the layer throws
+    // "-nextDrawable should not be called when using CAMetalDisplayLink".
+    // start_compositor_display_link() will lazily recreate it on the next
+    // request_compositor_frame().
+    stop_compositor_display_link();
+    if (compositor_display_link_handle_ != nullptr) {
+      ::qt_macos_display_link_destroy(compositor_display_link_handle_);
+      compositor_display_link_handle_ = nullptr;
+    }
     qt_wgpu_renderer::set_metal_layer_presents_with_transaction(wgpu_layer, true);
 #else
     // Force a compositor frame on resize — drive_compositor_frame() on Windows
