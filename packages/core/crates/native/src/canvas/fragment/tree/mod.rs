@@ -459,25 +459,33 @@ impl FragmentTree {
         }
 
         // Sync fixed measure for text input nodes with layout cache.
-        let input_sizes: Vec<(taffy::tree::NodeId, f32, f32)> = self
+        let input_sizes: Vec<(taffy::tree::NodeId, f32, f32, bool, bool)> = self
             .nodes
             .values()
             .filter_map(|node| {
                 if let (Some(tn), FragmentData::TextInput(ti)) = (node.taffy_node, &node.kind) {
-                    ti.layout
-                        .as_ref()
-                        .map(|l| (tn, l.width as f32, l.height as f32))
+                    ti.layout.as_ref().map(|l| {
+                        (
+                            tn,
+                            l.width as f32,
+                            l.height as f32,
+                            node.props.explicit_width.is_some(),
+                            node.props.explicit_height.is_some(),
+                        )
+                    })
                 } else {
                     None
                 }
             })
             .collect();
-        for (tn, w, h) in input_sizes {
+        for (tn, w, h, explicit_width, explicit_height) in input_sizes {
             let mut style = self.taffy.style(tn).cloned().unwrap_or_default();
-            style.size = taffy::geometry::Size {
-                width: taffy::style::Dimension::length(w),
-                height: taffy::style::Dimension::length(h),
-            };
+            if !explicit_width {
+                style.size.width = taffy::style::Dimension::length(w);
+            }
+            if !explicit_height {
+                style.size.height = taffy::style::Dimension::length(h);
+            }
             let _ = self.taffy.set_style(tn, style);
         }
 
@@ -613,12 +621,24 @@ impl FragmentTree {
                         img.height = new_h;
                     }
                 }
+                FragmentData::TextInput(input) => {
+                    if (input.viewport_width - lw).abs() > 0.01
+                        || (input.viewport_height - lh).abs() > 0.01
+                    {
+                        paint_size_changed = true;
+                        input.viewport_width = lw;
+                        input.viewport_height = lh;
+                    }
+                    if input.ensure_caret_visible() {
+                        paint_size_changed = true;
+                    }
+                }
                 _ => {}
             }
             if paint_size_changed {
                 node.dirty = true;
                 self.any_dirty = true;
-        
+
                 layout_dirty_ids.push(id);
                 self.semantics_dirty.insert(id);
             }

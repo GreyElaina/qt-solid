@@ -666,6 +666,10 @@ pub(crate) fn qt_canvas_focus_next(node_id: u32, forward: bool) -> bool {
 }
 
 /// Activate or deactivate the C++ TextEditSession based on current focus.
+///
+/// When the focused fragment is not itself a TextInput (e.g. a focusable
+/// `<rect>` wrapper), we search its subtree for the first TextInput child
+/// and activate that instead.
 pub(crate) fn sync_text_edit_session_for_focus(canvas_node_id: u32) {
     use crate::canvas::fragment::FragmentData;
 
@@ -673,21 +677,13 @@ pub(crate) fn sync_text_edit_session_for_focus(canvas_node_id: u32) {
         let focused_id = tree.focused()?;
         let node = tree.node(focused_id)?;
         if let FragmentData::TextInput(ref ti) = node.kind {
-            let cursor = ti.cursor_pos as i32;
-            let (sel_start, sel_end) = if ti.selection_anchor >= 0.0 {
-                let anchor = ti.selection_anchor as i32;
-                (cursor.min(anchor), cursor.max(anchor))
-            } else {
-                (-1, -1)
-            };
-            Some((
-                focused_id.0,
-                ti.text.clone(),
-                ti.font_size,
-                cursor,
-                sel_start,
-                sel_end,
-            ))
+            return Some(extract_text_input_info(focused_id, ti));
+        }
+        // Focused node is not a TextInput — search children for one.
+        let ti_id = find_first_text_input(tree, &node.children)?;
+        let ti_node = tree.node(ti_id)?;
+        if let FragmentData::TextInput(ref ti) = ti_node.kind {
+            Some(extract_text_input_info(ti_id, ti))
         } else {
             None
         }
@@ -711,6 +707,44 @@ pub(crate) fn sync_text_edit_session_for_focus(canvas_node_id: u32) {
             let _ = bridge::qt_text_edit_deactivate(canvas_node_id);
         }
     }
+}
+
+fn extract_text_input_info(
+    id: crate::canvas::fragment::FragmentId,
+    ti: &crate::canvas::fragment::TextInputFragment,
+) -> (u32, String, f64, i32, i32, i32) {
+    let cursor = ti.cursor_pos as i32;
+    let (sel_start, sel_end) = if ti.selection_anchor >= 0.0 {
+        let anchor = ti.selection_anchor as i32;
+        (cursor.min(anchor), cursor.max(anchor))
+    } else {
+        (-1, -1)
+    };
+    (
+        id.0,
+        ti.text.clone(),
+        ti.font_size,
+        cursor,
+        sel_start,
+        sel_end,
+    )
+}
+
+fn find_first_text_input(
+    tree: &crate::canvas::fragment::FragmentTree,
+    children: &[crate::canvas::fragment::FragmentId],
+) -> Option<crate::canvas::fragment::FragmentId> {
+    use crate::canvas::fragment::FragmentData;
+    for &child_id in children {
+        let child = tree.node(child_id)?;
+        if matches!(child.kind, FragmentData::TextInput(_)) {
+            return Some(child_id);
+        }
+        if let Some(found) = find_first_text_input(tree, &child.children) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 pub(crate) fn qt_window_event_close_requested(node_id: u32) {
@@ -809,17 +843,13 @@ pub(crate) fn qt_mark_window_compositor_pixels_dirty_region(
     });
 }
 
-
 pub(crate) fn qt_drive_window_compositor_frame(
     node_id: u32,
     target: QtCompositorTarget,
 ) -> napi::Result<QtWindowCompositorDriveStatus> {
     let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)?;
     #[cfg(not(target_os = "macos"))]
-    qt_compositor::compositor_actor::register_surface_node_id(
-        render_target.surface_key(),
-        node_id,
-    );
+    qt_compositor::compositor_actor::register_surface_node_id(render_target.surface_key(), node_id);
     qt_compositor::load_or_create_compositor(render_target)
         .and_then(|compositor| compositor.begin_drive(render_target))
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?;

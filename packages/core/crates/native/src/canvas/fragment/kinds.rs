@@ -1,4 +1,5 @@
 use fragment_derive::Fragment;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::super::vello::peniko::{
     Color, ImageData,
@@ -121,6 +122,8 @@ pub(crate) const SELECTION_COLOR: Color = Color::from_rgba8(51, 153, 255, 128);
 pub(crate) const CARET_COLOR: Color = Color::from_rgba8(255, 255, 255, 255);
 /// Caret width in logical pixels.
 pub(crate) const CARET_WIDTH: f64 = 1.0;
+/// Keep the caret away from the clipped edge while scrolling horizontal text.
+pub(crate) const TEXT_INPUT_SCROLL_PADDING: f64 = 4.0;
 
 #[derive(Fragment, Debug, Clone)]
 #[fragment(tag = "textinput", bounds = text_input)]
@@ -147,6 +150,12 @@ pub struct TextInputFragment {
     pub layout: Option<ShapedTextLayout>,
     #[fragment(skip)]
     pub caret_visible: bool,
+    #[fragment(skip)]
+    pub viewport_width: f64,
+    #[fragment(skip)]
+    pub viewport_height: f64,
+    #[fragment(skip)]
+    pub scroll_x: f64,
 }
 
 impl Default for TextInputFragment {
@@ -162,7 +171,230 @@ impl Default for TextInputFragment {
             selection_anchor: -1.0,
             layout: None,
             caret_visible: true,
+            viewport_width: 0.0,
+            viewport_height: 0.0,
+            scroll_x: 0.0,
         }
+    }
+}
+
+impl TextInputFragment {
+    pub(crate) fn visible_width(&self) -> f64 {
+        if self.viewport_width > 0.0 {
+            self.viewport_width
+        } else {
+            self.layout.as_ref().map_or(0.0, |layout| layout.width)
+        }
+    }
+
+    pub(crate) fn visible_height(&self) -> f64 {
+        if self.viewport_height > 0.0 {
+            self.viewport_height
+        } else {
+            self.layout.as_ref().map_or(0.0, |layout| layout.height)
+        }
+    }
+
+    pub(crate) fn text_offset_to_cursor_position(&self, text_offset: f64) -> usize {
+        let target = if text_offset.is_finite() && text_offset > 0.0 {
+            text_offset as usize
+        } else {
+            0
+        };
+
+        let mut utf16_offset = 0usize;
+        for grapheme in self.text.graphemes(true) {
+            if target <= utf16_offset {
+                return utf16_offset;
+            }
+            utf16_offset += grapheme.chars().map(char::len_utf16).sum::<usize>();
+            if target <= utf16_offset {
+                return utf16_offset;
+            }
+        }
+        utf16_offset
+    }
+
+    pub(crate) fn cursor_x_for_text_offset(&self, text_offset: f64) -> f64 {
+        let Some(layout) = &self.layout else {
+            return 0.0;
+        };
+        let cursor = self.text_offset_to_cursor_position(text_offset);
+        let max_pos = layout.cursor_x_positions.len().saturating_sub(1);
+        layout
+            .cursor_x_positions
+            .get(cursor.min(max_pos))
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    pub(crate) fn cursor_x(&self) -> f64 {
+        self.cursor_x_for_text_offset(self.cursor_pos)
+    }
+
+    pub(crate) fn max_scroll_x(&self) -> f64 {
+        let Some(layout) = &self.layout else {
+            return 0.0;
+        };
+        let visible_width = self.visible_width();
+        let content_width = layout.width + CARET_WIDTH;
+        if visible_width <= 0.0 || content_width <= visible_width {
+            0.0
+        } else {
+            content_width - visible_width
+        }
+    }
+
+    pub(crate) fn horizontal_scroll(&self) -> f64 {
+        self.scroll_x.clamp(0.0, self.max_scroll_x())
+    }
+
+    pub(crate) fn ensure_caret_visible(&mut self) -> bool {
+        if self.layout.is_none() {
+            return false;
+        }
+
+        let previous = self.scroll_x;
+        let visible_width = self.visible_width();
+        let max_scroll = self.max_scroll_x();
+        if max_scroll <= 0.0 {
+            self.scroll_x = 0.0;
+            return (previous - self.scroll_x).abs() > 0.01;
+        }
+
+        let padding = TEXT_INPUT_SCROLL_PADDING.min((visible_width - CARET_WIDTH).max(0.0) / 2.0);
+        let cursor_x = self.cursor_x();
+        let left_edge = self.scroll_x + padding;
+        let right_edge = self.scroll_x + visible_width - padding;
+
+        if cursor_x < left_edge {
+            self.scroll_x = (cursor_x - padding).clamp(0.0, max_scroll);
+        } else if cursor_x + CARET_WIDTH > right_edge {
+            self.scroll_x =
+                (cursor_x + CARET_WIDTH + padding - visible_width).clamp(0.0, max_scroll);
+        } else {
+            self.scroll_x = self.scroll_x.clamp(0.0, max_scroll);
+        }
+
+        (previous - self.scroll_x).abs() > 0.01
+    }
+
+    pub(crate) fn visible_x_to_text_x(&self, local_x: f64) -> f64 {
+        local_x + self.horizontal_scroll()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vello::peniko::kurbo::BezPath;
+
+    fn input_with_cursor(cursor_pos: f64, viewport_width: f64, scroll_x: f64) -> TextInputFragment {
+        TextInputFragment {
+            text: "abcdef".to_string(),
+            cursor_pos,
+            viewport_width,
+            viewport_height: 16.0,
+            scroll_x,
+            layout: Some(ShapedTextLayout {
+                path: BezPath::new(),
+                rasterized_glyphs: Vec::new(),
+                cursor_x_positions: vec![0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+                width: 60.0,
+                height: 16.0,
+                ascent: 12.0,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn input_with_text(text: &str, cursor_pos: f64) -> TextInputFragment {
+        let utf16_len = text.encode_utf16().count();
+        TextInputFragment {
+            text: text.to_string(),
+            cursor_pos,
+            layout: Some(ShapedTextLayout {
+                path: BezPath::new(),
+                rasterized_glyphs: Vec::new(),
+                cursor_x_positions: (0..=utf16_len).map(|idx| idx as f64 * 10.0).collect(),
+                width: utf16_len as f64 * 10.0,
+                height: 16.0,
+                ascent: 12.0,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scroll_stays_when_caret_remains_inside_padded_viewport() {
+        let mut input = input_with_cursor(2.0, 30.0, 10.0);
+
+        assert!(!input.ensure_caret_visible());
+        assert_eq!(input.horizontal_scroll(), 10.0);
+    }
+
+    #[test]
+    fn scroll_moves_right_after_caret_crosses_right_padding() {
+        let mut input = input_with_cursor(3.0, 30.0, 0.0);
+
+        assert!(input.ensure_caret_visible());
+        assert_eq!(input.horizontal_scroll(), 5.0);
+    }
+
+    #[test]
+    fn scroll_moves_left_after_caret_crosses_left_padding() {
+        let mut input = input_with_cursor(1.0, 30.0, 20.0);
+
+        assert!(input.ensure_caret_visible());
+        assert_eq!(input.horizontal_scroll(), 6.0);
+    }
+
+    #[test]
+    fn scroll_clamps_at_right_edge() {
+        let mut input = input_with_cursor(6.0, 30.0, 0.0);
+
+        assert!(input.ensure_caret_visible());
+        assert_eq!(input.horizontal_scroll(), 31.0);
+    }
+
+    #[test]
+    fn scroll_clamps_at_left_edge() {
+        let mut input = input_with_cursor(0.0, 30.0, 20.0);
+
+        assert!(input.ensure_caret_visible());
+        assert_eq!(input.horizontal_scroll(), 0.0);
+    }
+
+    #[test]
+    fn scroll_resets_when_text_fits() {
+        let mut input = input_with_cursor(6.0, 80.0, 10.0);
+
+        assert!(input.ensure_caret_visible());
+        assert_eq!(input.horizontal_scroll(), 0.0);
+    }
+
+    #[test]
+    fn visible_x_to_text_x_uses_persisted_scroll() {
+        let input = input_with_cursor(2.0, 30.0, 12.0);
+
+        assert_eq!(input.visible_x_to_text_x(3.0), 15.0);
+    }
+
+    #[test]
+    fn text_offset_to_cursor_position_snaps_inside_zwj_grapheme_to_trailing_boundary() {
+        let input = input_with_text("a👨‍👩‍👦b", 0.0);
+
+        assert_eq!(input.text_offset_to_cursor_position(1.0), 1);
+        assert_eq!(input.text_offset_to_cursor_position(2.0), 9);
+        assert_eq!(input.text_offset_to_cursor_position(8.0), 9);
+        assert_eq!(input.text_offset_to_cursor_position(9.0), 9);
+    }
+
+    #[test]
+    fn cursor_x_snaps_inside_zwj_grapheme_to_trailing_boundary() {
+        let input = input_with_text("a👨‍👩‍👦b", 3.0);
+
+        assert_eq!(input.cursor_x(), 90.0);
     }
 }
 

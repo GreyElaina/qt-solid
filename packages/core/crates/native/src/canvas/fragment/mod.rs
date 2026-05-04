@@ -227,6 +227,9 @@ pub fn fragment_store_set_prop(
 
         if let Some(node) = tree.nodes.get_mut(&fragment_id) {
             apply_fragment_prop(node, key, value);
+            if let FragmentData::TextInput(ref mut input) = node.kind {
+                input.ensure_caret_visible();
+            }
             node.dirty = true;
             tree.any_dirty = true;
         }
@@ -452,6 +455,7 @@ pub fn fragment_store_set_text_input_layout_cache(
         if let Some(node) = tree.nodes.get_mut(&fragment_id) {
             if let FragmentData::TextInput(ref mut ti) = node.kind {
                 ti.layout = Some(layout);
+                ti.ensure_caret_visible();
             }
             node.dirty = true;
         }
@@ -475,6 +479,7 @@ pub fn fragment_store_set_text_input_state(
                 ti.cursor_pos = cursor_pos;
                 ti.selection_anchor = selection_anchor;
                 ti.layout = Some(layout);
+                ti.ensure_caret_visible();
             }
             node.dirty = true;
         }
@@ -642,40 +647,67 @@ pub fn fragment_store_click_to_cursor(
     window_x: f64,
     _window_y: f64,
 ) {
-    let local_x = runtime::with_fragment_tree(canvas_node_id, |tree| {
-        let node = tree.node(fragment_id)?;
-        if !matches!(node.kind, FragmentData::TextInput(_)) {
-            return None;
-        }
-        let world = tree.world_transform(fragment_id);
+    let text_x = runtime::with_fragment_tree(canvas_node_id, |tree| {
+        let target = resolve_text_input(tree, fragment_id)?;
+        let world = tree.world_transform(target);
         let inv = world.inverse();
         let local = inv * Point::new(window_x, 0.0);
-        Some(local.x)
+        let node = tree.node(target)?;
+        if let FragmentData::TextInput(ref input) = node.kind {
+            Some(input.visible_x_to_text_x(local.x))
+        } else {
+            Some(local.x)
+        }
     })
     .flatten();
 
-    if let Some(lx) = local_x {
-        let _ = crate::qt::ffi::qt_text_edit_click_to_cursor(canvas_node_id, lx);
+    if let Some(x) = text_x {
+        let _ = crate::qt::ffi::qt_text_edit_click_to_cursor(canvas_node_id, x);
     }
 }
 
 pub fn fragment_store_drag_to_cursor(canvas_node_id: u32, window_x: f64, _window_y: f64) {
-    let local_x = runtime::with_fragment_tree(canvas_node_id, |tree| {
+    let text_x = runtime::with_fragment_tree(canvas_node_id, |tree| {
         let focused_id = tree.focused()?;
-        let node = tree.node(focused_id)?;
-        if !matches!(node.kind, FragmentData::TextInput(_)) {
-            return None;
-        }
-        let world = tree.world_transform(focused_id);
+        let target = resolve_text_input(tree, focused_id)?;
+        let world = tree.world_transform(target);
         let inv = world.inverse();
         let local = inv * Point::new(window_x, 0.0);
-        Some(local.x)
+        let node = tree.node(target)?;
+        if let FragmentData::TextInput(ref input) = node.kind {
+            Some(input.visible_x_to_text_x(local.x))
+        } else {
+            Some(local.x)
+        }
     })
     .flatten();
 
-    if let Some(lx) = local_x {
-        let _ = crate::qt::ffi::qt_text_edit_drag_to_cursor(canvas_node_id, lx);
+    if let Some(x) = text_x {
+        let _ = crate::qt::ffi::qt_text_edit_drag_to_cursor(canvas_node_id, x);
     }
+}
+
+/// If `id` is a TextInput, return it; otherwise DFS-search its children
+/// for the first TextInput descendant.
+fn resolve_text_input(tree: &FragmentTree, id: FragmentId) -> Option<FragmentId> {
+    let node = tree.node(id)?;
+    if matches!(node.kind, FragmentData::TextInput(_)) {
+        return Some(id);
+    }
+    find_first_text_input_child(tree, &node.children)
+}
+
+fn find_first_text_input_child(tree: &FragmentTree, children: &[FragmentId]) -> Option<FragmentId> {
+    for &child_id in children {
+        let child = tree.node(child_id)?;
+        if matches!(child.kind, FragmentData::TextInput(_)) {
+            return Some(child_id);
+        }
+        if let Some(found) = find_first_text_input_child(tree, &child.children) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 pub fn fragment_store_mark_dirty(canvas_node_id: u32, fragment_id: FragmentId) {

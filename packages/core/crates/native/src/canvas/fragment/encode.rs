@@ -286,44 +286,69 @@ impl FragmentEncode for TextInputFragment {
     fn encode(&self, scene: &mut Scene, transform: Affine) {
         let Some(layout) = &self.layout else { return };
 
-        // Draw text path.
-        scene.fill(Fill::NonZero, transform, self.color, None, &layout.path);
+        let visible_width = self.visible_width();
+        let visible_height = self.visible_height();
+        let text_transform = transform * Affine::translate((-self.horizontal_scroll(), 0.0));
 
-        let cursor = self.cursor_pos as usize;
-        let anchor_raw = self.selection_anchor as i64;
-        let has_selection = anchor_raw >= 0 && anchor_raw as usize != cursor;
-
-        // Draw selection highlight.
-        if has_selection {
-            let anchor = anchor_raw as usize;
-            let sel_start = cursor.min(anchor);
-            let sel_end = cursor.max(anchor);
-            let max_pos = layout.cursor_x_positions.len().saturating_sub(1);
-            let x0 = layout
-                .cursor_x_positions
-                .get(sel_start.min(max_pos))
-                .copied()
-                .unwrap_or(0.0);
-            let x1 = layout
-                .cursor_x_positions
-                .get(sel_end.min(max_pos))
-                .copied()
-                .unwrap_or(layout.width);
-            let sel_rect = Rect::new(x0, 0.0, x1, layout.height);
-            scene.fill(Fill::NonZero, transform, SELECTION_COLOR, None, &sel_rect);
+        if visible_width > 0.0 && visible_height > 0.0 {
+            let viewport = Rect::new(0.0, 0.0, visible_width, visible_height);
+            scene.push_clip_layer(transform, &viewport);
+            encode_text_input_contents(self, layout, scene, text_transform);
+            scene.pop_layer();
+        } else {
+            encode_text_input_contents(self, layout, scene, text_transform);
         }
+    }
+}
 
-        // Draw caret (only when no selection and caret is visible).
-        if !has_selection && self.caret_visible {
-            let max_pos = layout.cursor_x_positions.len().saturating_sub(1);
-            let cx = layout
-                .cursor_x_positions
-                .get(cursor.min(max_pos))
-                .copied()
-                .unwrap_or(0.0);
-            let caret_rect = Rect::new(cx, 0.0, cx + CARET_WIDTH, layout.height);
-            scene.fill(Fill::NonZero, transform, CARET_COLOR, None, &caret_rect);
-        }
+fn encode_text_input_contents(
+    input: &TextInputFragment,
+    layout: &ShapedTextLayout,
+    scene: &mut Scene,
+    transform: Affine,
+) {
+    // Draw text path.
+    scene.fill(Fill::NonZero, transform, input.color, None, &layout.path);
+    encode_rasterized_glyphs(scene, transform, &layout.rasterized_glyphs);
+
+    let cursor = input.text_offset_to_cursor_position(input.cursor_pos);
+    let has_anchor = input.selection_anchor >= 0.0;
+    let anchor = if has_anchor {
+        input.text_offset_to_cursor_position(input.selection_anchor)
+    } else {
+        cursor
+    };
+    let has_selection = has_anchor && anchor != cursor;
+
+    // Draw selection highlight.
+    if has_selection {
+        let sel_start = cursor.min(anchor);
+        let sel_end = cursor.max(anchor);
+        let max_pos = layout.cursor_x_positions.len().saturating_sub(1);
+        let x0 = layout
+            .cursor_x_positions
+            .get(sel_start.min(max_pos))
+            .copied()
+            .unwrap_or(0.0);
+        let x1 = layout
+            .cursor_x_positions
+            .get(sel_end.min(max_pos))
+            .copied()
+            .unwrap_or(layout.width);
+        let sel_rect = Rect::new(x0, 0.0, x1, layout.height);
+        scene.fill(Fill::NonZero, transform, SELECTION_COLOR, None, &sel_rect);
+    }
+
+    // Draw caret (only when no selection and caret is visible).
+    if !has_selection && input.caret_visible {
+        let max_pos = layout.cursor_x_positions.len().saturating_sub(1);
+        let cx = layout
+            .cursor_x_positions
+            .get(cursor.min(max_pos))
+            .copied()
+            .unwrap_or(0.0);
+        let caret_rect = Rect::new(cx, 0.0, cx + CARET_WIDTH, layout.height);
+        scene.fill(Fill::NonZero, transform, CARET_COLOR, None, &caret_rect);
     }
 }
 

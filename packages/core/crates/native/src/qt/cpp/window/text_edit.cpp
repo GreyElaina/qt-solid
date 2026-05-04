@@ -53,6 +53,10 @@ public:
     if (control_ == nullptr) {
       return false;
     }
+    if (process_grapheme_backspace(event)) {
+      sync_to_rust();
+      return true;
+    }
     control_->processKeyEvent(event);
     sync_to_rust();
     return true;
@@ -124,6 +128,37 @@ public:
   }
 
 private:
+  bool process_grapheme_backspace(QKeyEvent *event) {
+    if (event->key() != Qt::Key_Backspace) {
+      return false;
+    }
+    const Qt::KeyboardModifiers modifiers =
+        event->modifiers() & ~(Qt::ShiftModifier | Qt::KeypadModifier);
+    if (modifiers != Qt::NoModifier) {
+      return false;
+    }
+
+    if (control_->hasSelectedText()) {
+      control_->del();
+      event->accept();
+      return true;
+    }
+
+    const int cursor = control_->cursor();
+    if (cursor <= 0) {
+      event->accept();
+      return true;
+    }
+
+    const int previous = control_->textLayout()->previousCursorPosition(cursor);
+    if (previous < cursor) {
+      control_->setSelection(previous, cursor - previous);
+      control_->del();
+    }
+    event->accept();
+    return true;
+  }
+
   void sync_to_rust() {
     if (control_ == nullptr) {
       return;

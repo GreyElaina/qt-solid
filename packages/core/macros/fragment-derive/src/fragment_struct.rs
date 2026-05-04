@@ -291,7 +291,9 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         },
         BoundsKind::TextInput => quote! {
             self.layout.as_ref().map(|s| {
-                crate::vello::peniko::kurbo::Rect::new(0.0, 0.0, s.width, s.height)
+                let width = if self.viewport_width > 0.0 { self.viewport_width } else { s.width };
+                let height = if self.viewport_height > 0.0 { self.viewport_height } else { s.height };
+                crate::vello::peniko::kurbo::Rect::new(0.0, 0.0, width, height)
             })
         },
         BoundsKind::None => quote! { None },
