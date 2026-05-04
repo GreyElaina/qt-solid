@@ -7,8 +7,10 @@ use std::{ffi::c_void, ptr::NonNull};
 
 use once_cell::sync::Lazy;
 pub(crate) mod effects;
+#[cfg(not(target_os = "macos"))]
+pub(crate) mod surface;
 use crate::canvas::fragment::{FragmentId, FragmentLayerKey, RenderPlan};
-use crate::image::{HybridImageCache, sweep_stale_images};
+use crate::image::{ImageCache, sweep_stale_images};
 use vello::wgpu;
 use vello_hybrid::{AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene};
 use anyrender_vello_hybrid::Recording;
@@ -36,7 +38,7 @@ struct WindowSurface {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
-    image_cache: HybridImageCache,
+    image_cache: ImageCache,
     /// Retained base texture — vello renders here. Persists across frames for
     /// partial rendering (LoadOp::Load retains last frame pixels).
     base_texture: wgpu::Texture,
@@ -98,7 +100,7 @@ const COMPOSITE_LAYER_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_D
 /// for Recording-based strip caching. GPU path only (CPU falls back to merged).
 pub(crate) fn render_and_present_subtrees(
     node_id: u32,
-    target: qt_compositor::QtCompositorTarget,
+    target: crate::renderer::types::SurfaceTarget,
     scale_factor: f64,
     subtrees: Vec<(crate::canvas::fragment::FragmentId, Scene, bool)>,
     backdrop_blurs: &[effects::BackdropBlurEffect],
@@ -172,7 +174,7 @@ pub(crate) fn render_and_present_subtrees(
 
 fn render_cpu_and_present(
     node_id: u32,
-    target: qt_compositor::QtCompositorTarget,
+    target: crate::renderer::types::SurfaceTarget,
     scale_factor: f64,
     scene: &Scene,
     cached: Option<CpuRenderState>,
@@ -427,7 +429,7 @@ fn render_gpu_and_present_subtrees(
 /// layers to per-layer textures, then composite everything onto the surface.
 pub(crate) fn render_composited_and_present(
     node_id: u32,
-    target: qt_compositor::QtCompositorTarget,
+    target: crate::renderer::types::SurfaceTarget,
     scale_factor: f64,
     render_plan: RenderPlan,
     backdrop_blurs: &[effects::BackdropBlurEffect],
@@ -794,8 +796,66 @@ pub(crate) fn resize_surface(node_id: u32, width_px: u32, height_px: u32) {
     }
 }
 
+/// Convert a SurfaceTarget to wgpu's SurfaceTargetUnsafe via raw-window-handle.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn compositor_surface_target(
+    target: &crate::renderer::types::SurfaceTarget,
+) -> napi::Result<wgpu::SurfaceTargetUnsafe> {
+    use crate::renderer::types::SurfaceHandle;
+    use raw_window_handle::*;
+
+    match target.handle {
+        SurfaceHandle::Win32(hwnd) => Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: RawDisplayHandle::Windows(WindowsDisplayHandle::new()),
+            raw_window_handle: RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)),
+        }),
+        SurfaceHandle::Xcb { window, connection } => Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: RawDisplayHandle::Xcb(XcbDisplayHandle::new(
+                Some(connection),
+                0,
+            )),
+            raw_window_handle: RawWindowHandle::Xcb(XcbWindowHandle::new(window)),
+        }),
+        SurfaceHandle::Wayland { surface, display } => Ok(wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: RawDisplayHandle::Wayland(WaylandDisplayHandle::new(display)),
+            raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(surface)),
+        }),
+        _ => Err(qt_error("unsupported surface handle for compositor_surface_target")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn resolve_metal_layer_for_ns_view(ns_view: NonNull<c_void>) -> NonNull<c_void> {
+    use objc2::msg_send;
+    use objc2::runtime::AnyClass;
+    use objc2_foundation::NSObjectProtocol;
+    use objc2_quartz_core::CALayer;
+
+    let view: &objc2::runtime::AnyObject = unsafe { ns_view.cast().as_ref() };
+    let root_layer: Option<objc2::rc::Retained<CALayer>> = unsafe { msg_send![view, layer] };
+    if let Some(root_layer) = root_layer {
+        let sublayers: Option<objc2::rc::Retained<objc2_foundation::NSArray<CALayer>>> =
+            unsafe { msg_send![&*root_layer, sublayers] };
+        if let Some(sublayers) = sublayers {
+            let metal_cls =
+                AnyClass::get(c"CAMetalLayer").expect("CAMetalLayer class not found");
+            for i in 0..sublayers.count() {
+                let sub: &CALayer = unsafe { msg_send![&*sublayers, objectAtIndex: i] };
+                if sub.isKindOfClass(metal_cls) {
+                    let ptr = sub as *const CALayer as *mut c_void;
+                    return NonNull::new(ptr).unwrap();
+                }
+            }
+        }
+    }
+    let layer = unsafe { raw_window_metal::Layer::from_ns_view(ns_view) };
+    let ptr = layer.as_ptr().as_ptr() as *mut c_void;
+    std::mem::forget(layer);
+    NonNull::new(ptr).unwrap()
+}
+
 fn create_window_surface(
-    target: qt_compositor::QtCompositorTarget,
+    target: crate::renderer::types::SurfaceTarget,
 ) -> Result<WindowSurface, SurfaceCreationError> {
     if cfg!(target_os = "windows") {
         // Vulkan has lower per-device memory overhead than GL or DX12 on
@@ -809,7 +869,7 @@ fn create_window_surface(
 }
 
 fn create_window_surface_with_backends(
-    target: qt_compositor::QtCompositorTarget,
+    target: crate::renderer::types::SurfaceTarget,
     backends: wgpu::Backends,
 ) -> Result<WindowSurface, SurfaceCreationError> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -826,9 +886,11 @@ fn create_window_surface_with_backends(
 
     #[cfg(target_os = "macos")]
     let surface = {
-        let ns_view = NonNull::new(target.primary_handle as *mut c_void)
-            .ok_or_else(|| SurfaceCreationError::NoGpu("NSView handle is null".into()))?;
-        let layer_ptr = qt_compositor::resolve_metal_layer_for_ns_view(ns_view).as_ptr();
+        use crate::renderer::types::SurfaceHandle;
+        let SurfaceHandle::AppKit(ns_view) = target.handle else {
+            return Err(SurfaceCreationError::NoGpu("expected AppKit handle on macOS".into()));
+        };
+        let layer_ptr = resolve_metal_layer_for_ns_view(ns_view).as_ptr();
         let surface = unsafe {
             instance
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
@@ -841,7 +903,7 @@ fn create_window_surface_with_backends(
 
     #[cfg(not(target_os = "macos"))]
     let surface = {
-        let surface_target = unsafe { qt_compositor::compositor_surface_target(target) }
+        let surface_target = compositor_surface_target(&target)
             .map_err(|e| SurfaceCreationError::NoGpu(format!("resolve surface target: {e}")))?;
         unsafe {
             instance
@@ -922,8 +984,8 @@ fn create_window_surface_with_backends(
 
     if configure_failed.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(SurfaceCreationError::NotReady(format!(
-            "surface.configure failed for hwnd=0x{:x} adapter={:?}",
-            target.primary_handle, adapter.get_info().name,
+            "surface.configure failed for target={:?} adapter={:?}",
+            target.handle, adapter.get_info().name,
         )));
     }
 
@@ -1093,7 +1155,7 @@ fn create_window_surface_with_backends(
         queue,
         config,
         renderer,
-        image_cache: HybridImageCache::default(),
+        image_cache: ImageCache::default(),
         base_texture,
         base_view,
         base_bind_group,
@@ -1193,7 +1255,7 @@ fn build_hybrid_scene(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
-    image_cache: &mut HybridImageCache,
+    image_cache: &mut ImageCache,
     retained: Option<HybridScene>,
 ) -> napi::Result<HybridScene> {
     let width_u16 = u16::try_from(width_px)
@@ -1229,7 +1291,7 @@ fn build_hybrid_scene_from_subtrees(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
-    image_cache: &mut HybridImageCache,
+    image_cache: &mut ImageCache,
     retained: Option<HybridScene>,
     recordings: &mut HashMap<FragmentId, Recording>,
 ) -> napi::Result<HybridScene> {

@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::qt::ffi::QtCompositorTarget;
+use crate::renderer::types::SurfaceTarget;
 use crate::runtime::capture::WidgetCapture;
 
 #[derive(Debug, Clone, Copy)]
@@ -66,115 +66,123 @@ pub(crate) struct WindowCaptureComposingPart {
     pub(crate) capture: Arc<WidgetCapture>,
 }
 
+pub(crate) struct FrameSchedulingState {
+    pub(crate) requested: bool,
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) frame_signal: Option<super::frame_signal::FrameSignal>,
+}
+
+impl Default for FrameSchedulingState {
+    fn default() -> Self {
+        Self {
+            requested: false,
+            #[cfg(not(target_os = "macos"))]
+            frame_signal: None,
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl FrameSchedulingState {
+    pub(crate) fn ensure_frame_signal(&mut self, node_id: u32) -> &mut super::frame_signal::FrameSignal {
+        self.frame_signal.get_or_insert_with(|| super::frame_signal::FrameSignal::new(node_id))
+    }
+}
+
+/// Per-window state aggregated into a single struct to avoid N separate HashMaps.
+pub(crate) struct WindowState {
+    pub(crate) target: Option<SurfaceTarget>,
+    pub(crate) frame_clock: FrameClockState,
+    pub(crate) frame_scheduling: FrameSchedulingState,
+    pub(crate) geometry_nodes: HashSet<u32>,
+    pub(crate) scene_nodes: HashSet<u32>,
+    pub(crate) scene_subtrees: HashSet<u32>,
+    pub(crate) frame_tick_nodes: HashSet<u32>,
+    pub(crate) dirty_nodes: HashSet<u32>,
+    pub(crate) dirty_regions: Vec<WindowCompositorDirtyRegion>,
+}
+
+impl Default for WindowState {
+    fn default() -> Self {
+        Self {
+            target: None,
+            frame_clock: FrameClockState::default(),
+            frame_scheduling: FrameSchedulingState::default(),
+            geometry_nodes: HashSet::new(),
+            scene_nodes: HashSet::new(),
+            scene_subtrees: HashSet::new(),
+            frame_tick_nodes: HashSet::new(),
+            dirty_nodes: HashSet::new(),
+            dirty_regions: Vec::new(),
+        }
+    }
+}
+
 pub(crate) struct Scheduler {
-    targets: HashMap<u32, QtCompositorTarget>,
-    geometry_nodes: HashMap<u32, HashSet<u32>>,
-    scene_nodes: HashMap<u32, HashSet<u32>>,
-    scene_subtrees: HashMap<u32, HashSet<u32>>,
-    frame_tick_nodes: HashMap<u32, HashSet<u32>>,
-    dirty_nodes: HashMap<u32, HashSet<u32>>,
-    dirty_regions: HashMap<u32, Vec<WindowCompositorDirtyRegion>>,
-    frame_clocks: HashMap<u32, FrameClockState>,
+    windows: HashMap<u32, WindowState>,
 }
 
 impl Scheduler {
     pub(crate) fn new() -> Self {
         Self {
-            targets: HashMap::new(),
-            geometry_nodes: HashMap::new(),
-            scene_nodes: HashMap::new(),
-            scene_subtrees: HashMap::new(),
-            frame_tick_nodes: HashMap::new(),
-            dirty_nodes: HashMap::new(),
-            dirty_regions: HashMap::new(),
-            frame_clocks: HashMap::new(),
+            windows: HashMap::new(),
         }
     }
 
-    fn remove_node_from_sets(map: &mut HashMap<u32, HashSet<u32>>, node_id: u32) {
-        map.remove(&node_id);
-        map.retain(|_, nodes| {
-            nodes.remove(&node_id);
-            !nodes.is_empty()
-        });
+    fn window(&self, window_id: u32) -> Option<&WindowState> {
+        self.windows.get(&window_id)
+    }
+
+    fn window_mut(&mut self, window_id: u32) -> &mut WindowState {
+        self.windows.entry(window_id).or_default()
     }
 
     pub(crate) fn clear_all(&mut self) {
-        self.targets.clear();
-        self.geometry_nodes.clear();
-        self.scene_nodes.clear();
-        self.scene_subtrees.clear();
-        self.frame_tick_nodes.clear();
-        self.dirty_nodes.clear();
-        self.dirty_regions.clear();
-        self.frame_clocks.clear();
+        self.windows.clear();
     }
 
     pub(crate) fn clear_window(&mut self, window_id: u32) {
-        self.targets.remove(&window_id);
-        self.geometry_nodes.remove(&window_id);
-        self.scene_nodes.remove(&window_id);
-        self.scene_subtrees.remove(&window_id);
-        self.frame_tick_nodes.remove(&window_id);
-        self.dirty_nodes.remove(&window_id);
-        self.dirty_regions.remove(&window_id);
-        self.frame_clocks.remove(&window_id);
+        self.windows.remove(&window_id);
     }
 
     pub(crate) fn forget_node(&mut self, node_id: u32) {
-        self.clear_window(node_id);
-        Self::remove_node_from_sets(&mut self.geometry_nodes, node_id);
-        Self::remove_node_from_sets(&mut self.scene_nodes, node_id);
-        Self::remove_node_from_sets(&mut self.scene_subtrees, node_id);
-        Self::remove_node_from_sets(&mut self.frame_tick_nodes, node_id);
-        Self::remove_node_from_sets(&mut self.dirty_nodes, node_id);
-        self.dirty_regions.retain(|_, regions| {
-            regions.retain(|region| region.node_id != node_id);
-            !regions.is_empty()
-        });
+        self.windows.remove(&node_id);
+        for ws in self.windows.values_mut() {
+            ws.geometry_nodes.remove(&node_id);
+            ws.scene_nodes.remove(&node_id);
+            ws.scene_subtrees.remove(&node_id);
+            ws.frame_tick_nodes.remove(&node_id);
+            ws.dirty_nodes.remove(&node_id);
+            ws.dirty_regions.retain(|r| r.node_id != node_id);
+        }
     }
 
-    pub(crate) fn set_target(&mut self, window_id: u32, target: QtCompositorTarget) {
-        self.targets.insert(window_id, target);
+    pub(crate) fn set_target(&mut self, window_id: u32, target: SurfaceTarget) {
+        self.window_mut(window_id).target = Some(target);
     }
 
-    pub(crate) fn target(&self, window_id: u32) -> Option<QtCompositorTarget> {
-        self.targets.get(&window_id).copied()
+    pub(crate) fn target(&self, window_id: u32) -> Option<SurfaceTarget> {
+        self.window(window_id).and_then(|ws| ws.target)
     }
 
     pub(crate) fn mark_dirty_node(&mut self, window_id: u32, node_id: u32) {
-        self.dirty_nodes
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
+        self.window_mut(window_id).dirty_nodes.insert(node_id);
     }
 
     pub(crate) fn mark_geometry_node(&mut self, window_id: u32, node_id: u32) {
-        self.geometry_nodes
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
+        self.window_mut(window_id).geometry_nodes.insert(node_id);
     }
 
     pub(crate) fn mark_scene_node(&mut self, window_id: u32, node_id: u32) {
-        self.scene_nodes
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
+        self.window_mut(window_id).scene_nodes.insert(node_id);
     }
 
     pub(crate) fn mark_scene_subtree(&mut self, window_id: u32, node_id: u32) {
-        self.scene_subtrees
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
+        self.window_mut(window_id).scene_subtrees.insert(node_id);
     }
 
     pub(crate) fn mark_frame_tick_node(&mut self, window_id: u32, node_id: u32) {
-        self.frame_tick_nodes
-            .entry(window_id)
-            .or_default()
-            .insert(node_id);
+        self.window_mut(window_id).frame_tick_nodes.insert(node_id);
     }
 
     pub(crate) fn mark_dirty_region(
@@ -185,27 +193,27 @@ impl Scheduler {
         if region.width <= 0 || region.height <= 0 {
             return;
         }
-        self.mark_dirty_node(window_id, region.node_id);
-        self.dirty_regions
-            .entry(window_id)
-            .or_default()
-            .push(region);
+        let ws = self.window_mut(window_id);
+        ws.dirty_nodes.insert(region.node_id);
+        ws.dirty_regions.push(region);
     }
 
     #[cfg(test)]
     pub(crate) fn take_geometry_nodes(&mut self, window_id: u32) -> HashSet<u32> {
-        self.geometry_nodes.remove(&window_id).unwrap_or_default()
+        self.windows
+            .get_mut(&window_id)
+            .map(|ws| std::mem::take(&mut ws.geometry_nodes))
+            .unwrap_or_default()
     }
 
     pub(crate) fn frame_clock(&self, window_id: u32) -> FrameClockState {
-        self.frame_clocks
-            .get(&window_id)
-            .copied()
+        self.window(window_id)
+            .map(|ws| ws.frame_clock)
             .unwrap_or_default()
     }
 
     pub(crate) fn frame_clock_mut(&mut self, window_id: u32) -> &mut FrameClockState {
-        self.frame_clocks.entry(window_id).or_default()
+        &mut self.window_mut(window_id).frame_clock
     }
 
     pub(crate) fn tick_frame(&mut self, window_id: u32, now_ns: u64) {
@@ -234,51 +242,50 @@ impl Scheduler {
     }
 
     pub(crate) fn clear_dirty_nodes(&mut self, window_id: u32) {
-        self.geometry_nodes.remove(&window_id);
-        self.scene_nodes.remove(&window_id);
-        self.scene_subtrees.remove(&window_id);
-        self.frame_tick_nodes.remove(&window_id);
-        self.dirty_nodes.remove(&window_id);
-        self.dirty_regions.remove(&window_id);
+        if let Some(ws) = self.windows.get_mut(&window_id) {
+            ws.geometry_nodes.clear();
+            ws.scene_nodes.clear();
+            ws.scene_subtrees.clear();
+            ws.frame_tick_nodes.clear();
+            ws.dirty_nodes.clear();
+            ws.dirty_regions.clear();
+        }
     }
 
     pub(crate) fn pending_state_snapshot(&self, window_id: u32) -> WindowCompositorPendingState {
-        WindowCompositorPendingState {
-            geometry_nodes: self
-                .geometry_nodes
-                .get(&window_id)
-                .cloned()
-                .unwrap_or_default(),
-            scene_nodes: self
-                .scene_nodes
-                .get(&window_id)
-                .cloned()
-                .unwrap_or_default(),
-            scene_subtrees: self
-                .scene_subtrees
-                .get(&window_id)
-                .cloned()
-                .unwrap_or_default(),
-            frame_tick_nodes: self
-                .frame_tick_nodes
-                .get(&window_id)
-                .cloned()
-                .unwrap_or_default(),
-            dirty_nodes: self
-                .dirty_nodes
-                .get(&window_id)
-                .cloned()
-                .unwrap_or_default(),
-            dirty_regions: self
-                .dirty_regions
-                .get(&window_id)
-                .cloned()
-                .unwrap_or_default(),
+        match self.window(window_id) {
+            Some(ws) => WindowCompositorPendingState {
+                geometry_nodes: ws.geometry_nodes.clone(),
+                scene_nodes: ws.scene_nodes.clone(),
+                scene_subtrees: ws.scene_subtrees.clone(),
+                frame_tick_nodes: ws.frame_tick_nodes.clone(),
+                dirty_nodes: ws.dirty_nodes.clone(),
+                dirty_regions: ws.dirty_regions.clone(),
+            },
+            None => WindowCompositorPendingState::default(),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn dirty_nodes_for_test(&self, window_id: u32) -> Option<&HashSet<u32>> {
-        self.dirty_nodes.get(&window_id)
+        self.window(window_id).map(|ws| &ws.dirty_nodes)
+    }
+
+    pub(crate) fn frame_state(&self, node_id: u32) -> Option<&FrameSchedulingState> {
+        self.window(node_id).map(|ws| &ws.frame_scheduling)
+    }
+
+    pub(crate) fn frame_state_mut(&mut self, node_id: u32) -> &mut FrameSchedulingState {
+        &mut self.window_mut(node_id).frame_scheduling
+    }
+
+    pub(crate) fn is_configured(&self, node_id: u32) -> bool {
+        self.window(node_id).is_some_and(|ws| ws.target.is_some())
+    }
+
+    pub(crate) fn remove_frame_state(&mut self, node_id: u32) {
+        if let Some(ws) = self.windows.get_mut(&node_id) {
+            ws.frame_scheduling = FrameSchedulingState::default();
+        }
     }
 }

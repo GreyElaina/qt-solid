@@ -2167,7 +2167,7 @@ pub fn capture_fragment_isolated(
             .unwrap_or(canvas_node_id);
 
     let target = crate::renderer::with_renderer(|r| r.scheduler.target(window_id))?;
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target).ok()?;
+    let render_target = target;
 
     let layout = crate::qt::qt_capture_widget_layout(canvas_node_id).ok()?;
     let scale = layout.scale_factor;

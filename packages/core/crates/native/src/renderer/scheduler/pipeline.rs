@@ -9,7 +9,7 @@ use crate::{
         QtCapturedWidgetComposingPart, QtDebugNodeBounds, QtWindowCaptureFrame,
         QtWindowCaptureGrouping,
     },
-    qt::{self, ffi::QtCompositorTarget},
+    qt::{self},
     runtime::{
         NodeHandle, current_app_generation, debug_node_bounds, ensure_live_node, invalid_arg,
         node_by_id, qt_error, subtree_node_ids,
@@ -20,7 +20,6 @@ use super::state::WindowCaptureComposingPart;
 use super::texture_widget::capture_painted_widget_exact_with_children;
 use super::{
     capture_qt_widget_exact_with_children, capture_widget_visible_rects,
-    compositor_target_to_renderer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,13 +241,6 @@ pub(crate) fn capture_window_frame_exact(
     })
 }
 
-pub(crate) fn drive_frame(
-    node_id: u32,
-    target: QtCompositorTarget,
-) -> Result<QtWindowCompositorDriveStatus> {
-    drive_fragment_surface_frame(node_id, target)
-}
-
 fn velocity_to_desired_fps(velocity: f64) -> f32 {
     // Conservative thresholds — stay at higher fps until velocity is clearly low.
     // Scroll settling lingers at 30-80 px/s, so the 60fps floor must be below that.
@@ -269,9 +261,9 @@ fn compositor_trace(args: std::fmt::Arguments<'_>) {
     }
 }
 
-fn drive_fragment_surface_frame(
+pub(crate) fn drive_fragment_surface_frame(
     node_id: u32,
-    target: QtCompositorTarget,
+    target: crate::renderer::types::SurfaceTarget,
 ) -> Result<QtWindowCompositorDriveStatus> {
     use crate::canvas::vello::peniko::kurbo::Affine;
 
@@ -402,7 +394,7 @@ fn drive_fragment_surface_frame(
             Some(plan) => {
                 crate::renderer::compositor::render_composited_and_present(
                     node_id,
-                    compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
+                    target,
                     layout.scale_factor,
                     plan,
                     &backdrop_blurs,
@@ -518,7 +510,7 @@ fn drive_fragment_surface_frame(
 
         crate::renderer::compositor::render_and_present_subtrees(
             node_id,
-            compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
+            target,
             layout.scale_factor,
             subtrees,
             &backdrop_blurs,
@@ -536,7 +528,13 @@ fn drive_fragment_surface_frame(
     crate::canvas::fragment::fragment_store_consume_dirty_state(node_id);
 
     // Initialize accessibility adapter on first successful present.
-    crate::accessibility::init_window_accessibility(node_id, target.primary_handle);
+    let primary_handle = match target.handle {
+        crate::renderer::types::SurfaceHandle::AppKit(ptr) => ptr.as_ptr() as u64,
+        crate::renderer::types::SurfaceHandle::Win32(hwnd) => hwnd.get() as u64,
+        crate::renderer::types::SurfaceHandle::Xcb { window, .. } => window.get() as u64,
+        crate::renderer::types::SurfaceHandle::Wayland { surface, .. } => surface.as_ptr() as u64,
+    };
+    crate::accessibility::init_window_accessibility(node_id, primary_handle);
 
     // Push updated fragment tree to accessibility adapter.
     crate::accessibility::update_window_accessibility_tree(node_id);

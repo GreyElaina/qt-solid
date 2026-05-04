@@ -12,24 +12,11 @@ use window_host::NativeFrameNotifier;
 
 type MacosDisplayLinkCallback = unsafe extern "C" fn(*mut c_void);
 
-fn trace_enabled() -> bool {
-    static ENABLED: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| std::env::var_os("QT_SOLID_WGPU_TRACE").is_some());
-    *ENABLED
-}
-
-fn trace(args: std::fmt::Arguments<'_>) {
-    if !trace_enabled() {
-        return;
-    }
-    println!("[qt-display-link] {args}");
-}
-
 struct DisplayLinkTargetIvars {
     context_ptr: usize,
     callback_ptr: usize,
-    notifier_ptr: usize, // *const NativeFrameNotifier (Arc-cloned, owned by Handle)
-    alive_ptr: usize,    // *const AtomicBool (Arc-cloned, shared with Handle)
+    notifier_ptr: usize,
+    alive_ptr: usize,
 }
 
 define_class!(
@@ -40,30 +27,19 @@ define_class!(
 
     unsafe impl NSObjectProtocol for DisplayLinkTarget {}
 
-    // CADisplayLink calls this selector on each vsync.
     impl DisplayLinkTarget {
         #[unsafe(method(tick:))]
         fn tick(&self, _link: &CADisplayLink) {
             let ivars = self.ivars();
 
-            // Check revocation flag before touching any borrowed pointers.
             if ivars.alive_ptr != 0 {
                 let alive = unsafe { &*(ivars.alive_ptr as *const AtomicBool) };
                 if !alive.load(Ordering::Acquire) {
-                    trace(format_args!(
-                        "callback revoked context=0x{:x}",
-                        ivars.context_ptr,
-                    ));
                     return;
                 }
             }
 
             let callback: MacosDisplayLinkCallback = unsafe { mem::transmute(ivars.callback_ptr) };
-            trace(format_args!(
-                "callback context=0x{:x}",
-                ivars.context_ptr,
-            ));
-            // Notify main run loop that display-link has fired.
             if ivars.notifier_ptr != 0 {
                 let notifier = unsafe { &*(ivars.notifier_ptr as *const NativeFrameNotifier) };
                 notifier.notify();
@@ -114,7 +90,6 @@ pub unsafe extern "C" fn qt_macos_display_link_create(
     let notifier = if notifier.is_null() {
         None
     } else {
-        // Clone the notifier from the opaque pointer (caller retains ownership of original).
         let notifier_ref = unsafe { &*(notifier as *const NativeFrameNotifier) };
         Some(Box::new(notifier_ref.clone()))
     };
@@ -151,27 +126,19 @@ pub unsafe extern "C" fn qt_macos_display_link_start(
             notifier_ptr,
             alive_ptr,
         );
-        // Safety: `target` is a valid NSObject, `sel!(tick:)` matches the method defined above.
         let display_link = unsafe {
             CADisplayLink::displayLinkWithTarget_selector(&target, sel!(tick:))
         };
         let main_run_loop = NSRunLoop::mainRunLoop();
         let common_modes = unsafe { NSRunLoopCommonModes };
         unsafe { display_link.addToRunLoop_forMode(&main_run_loop, common_modes) };
-        trace(format_args!(
-            "start create context=0x{:x}",
-            handle.context_ptr
-        ));
         handle.target = Some(target);
         handle.display_link = Some(display_link);
     }
 
     if let Some(display_link) = handle.display_link.as_ref() {
-        // Reset to max frame rate on resume — a prior animation's settling
-        // phase may have lowered it, and the new animation should start smooth.
         display_link.setPreferredFrameRateRange(CAFrameRateRange::new(15.0, 120.0, 120.0));
         display_link.setPaused(false);
-        trace(format_args!("start resume context=0x{:x}", handle.context_ptr));
         return true;
     }
 
@@ -188,7 +155,6 @@ pub unsafe extern "C" fn qt_macos_display_link_stop(handle: *mut MacosDisplayLin
     };
     if let Some(display_link) = handle.display_link.as_ref() {
         display_link.setPaused(true);
-        trace(format_args!("stop pause context=0x{:x}", handle.context_ptr));
     }
 }
 
@@ -204,7 +170,6 @@ pub unsafe extern "C" fn qt_macos_display_link_destroy(handle: *mut MacosDisplay
     }
 
     let mut handle = unsafe { Box::from_raw(handle.as_ptr()) };
-    // Revoke first — any trailing callback will see this and no-op.
     handle.alive.store(false, Ordering::Release);
     if let Some(display_link) = handle.display_link.take() {
         display_link.setPaused(true);
@@ -231,8 +196,4 @@ pub unsafe extern "C" fn qt_macos_display_link_set_preferred_fps(
     let minimum = (preferred * 0.5).max(1.0);
     let maximum = preferred;
     display_link.setPreferredFrameRateRange(CAFrameRateRange::new(minimum, maximum, preferred));
-    trace(format_args!(
-        "set-preferred-fps context=0x{:x} min={:.0} max={:.0} preferred={:.0}",
-        handle.context_ptr, minimum, maximum, preferred
-    ));
 }

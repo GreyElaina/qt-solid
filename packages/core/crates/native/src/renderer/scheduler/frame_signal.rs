@@ -7,38 +7,22 @@ use std::{
     time::Duration,
 };
 
-use crate::compositor_actor::FrameSignalSource;
-use crate::types::QtCompositorSurfaceKey;
-
 const FALLBACK_INTERVAL: Duration = Duration::from_millis(16);
 
-fn trace_enabled() -> bool {
-    static ENABLED: std::sync::LazyLock<bool> =
-        std::sync::LazyLock::new(|| std::env::var_os("QT_SOLID_WGPU_TRACE").is_some());
-    *ENABLED
-}
-
-fn trace(args: std::fmt::Arguments<'_>) {
-    if !trace_enabled() {
-        return;
-    }
-    println!("[qt-frame-signal] {args}");
-}
-
-pub struct FrameSignal {
-    surface_key: QtCompositorSurfaceKey,
+pub(crate) struct FrameSignal {
+    node_id: u32,
     alive: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
 
-// SAFETY: surface_key is Copy, atomics are Arc'd, thread handle is only joined on drop.
+// SAFETY: u32 is Send, atomics are Arc'd, thread handle is only joined on drop.
 unsafe impl Send for FrameSignal {}
 
 impl FrameSignal {
-    pub fn new(surface_key: QtCompositorSurfaceKey) -> Self {
+    pub(crate) fn new(node_id: u32) -> Self {
         Self {
-            surface_key,
+            node_id,
             alive: Arc::new(AtomicBool::new(true)),
             running: Arc::new(AtomicBool::new(false)),
             thread: None,
@@ -51,32 +35,24 @@ impl FrameSignal {
         }
         let alive = Arc::clone(&self.alive);
         let running = Arc::clone(&self.running);
-        let key = self.surface_key;
+        let node_id = self.node_id;
         self.thread = Some(
             thread::Builder::new()
                 .name("qt-frame-signal".into())
-                .spawn(move || vsync_thread_main(key, alive, running))
+                .spawn(move || vsync_thread_main(node_id, alive, running))
                 .expect("failed to spawn frame signal thread"),
         );
     }
 }
 
-impl FrameSignalSource for FrameSignal {
-    fn start(&mut self) {
+impl FrameSignal {
+    pub(crate) fn start(&mut self) {
         self.ensure_thread();
         self.running.store(true, Ordering::Release);
-        trace(format_args!(
-            "start kind={} primary=0x{:x}",
-            self.surface_key.surface_kind, self.surface_key.primary_handle,
-        ));
     }
 
-    fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         self.running.store(false, Ordering::Release);
-        trace(format_args!(
-            "stop kind={} primary=0x{:x}",
-            self.surface_key.surface_kind, self.surface_key.primary_handle,
-        ));
     }
 }
 
@@ -95,44 +71,19 @@ unsafe extern "C" {
 }
 
 fn vsync_thread_main(
-    key: QtCompositorSurfaceKey,
+    node_id: u32,
     alive: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
 ) {
-    trace(format_args!(
-        "vsync thread started kind={} primary=0x{:x}",
-        key.surface_kind, key.primary_handle,
-    ));
-
-    let pci_bus_id = crate::surface::window_compositor_adapter_pci_bus_id(
-        crate::types::QtCompositorTarget {
-            surface_kind: key.surface_kind,
-            primary_handle: key.primary_handle,
-            secondary_handle: key.secondary_handle,
-            width_px: 1,
-            height_px: 1,
-            scale_factor: 1.0,
-        },
-    );
+    let pci_bus_id = crate::renderer::compositor::surface::window_compositor_adapter_pci_bus_id_by_node(node_id);
     let mut vblank = platform_vblank::VblankWaiter::new(pci_bus_id.as_deref());
 
     while alive.load(Ordering::Acquire) {
         if running.load(Ordering::Acquire) {
-            if let Some(node_id) = crate::compositor_actor::lookup_surface_node_id(&key) {
-                trace(format_args!(
-                    "vsync fire node={node_id} kind={} primary=0x{:x}",
-                    key.surface_kind, key.primary_handle,
-                ));
-                unsafe { qt_solid_post_frame_signal_for_node(node_id) };
-            }
+            unsafe { qt_solid_post_frame_signal_for_node(node_id) };
         }
         vblank.wait();
     }
-
-    trace(format_args!(
-        "vsync thread exiting kind={} primary=0x{:x}",
-        key.surface_kind, key.primary_handle,
-    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -141,23 +92,17 @@ fn vsync_thread_main(
 
 #[cfg(target_os = "windows")]
 mod platform_vblank {
-    use super::{FALLBACK_INTERVAL, trace};
+    use super::FALLBACK_INTERVAL;
     use std::time::Instant;
 
-    pub struct VblankWaiter {
-        initialized: bool,
-    }
+    pub struct VblankWaiter;
 
     impl VblankWaiter {
         pub fn new(_pci_bus_id: Option<&str>) -> Self {
-            Self { initialized: false }
+            Self
         }
 
         pub fn wait(&mut self) {
-            if !self.initialized {
-                self.initialized = true;
-                trace(format_args!("vblank-windows: using DwmFlush"));
-            }
             let start = Instant::now();
             let hr = unsafe { windows_sys::Win32::Graphics::Dwm::DwmFlush() };
             let elapsed = start.elapsed();
@@ -175,7 +120,7 @@ mod platform_vblank {
     any(feature = "x11", feature = "wayland"),
 ))]
 mod platform_vblank {
-    use super::{FALLBACK_INTERVAL, trace};
+    use super::FALLBACK_INTERVAL;
     use std::os::fd::AsFd;
 
     pub struct VblankWaiter {
@@ -201,9 +146,6 @@ mod platform_vblank {
                 if let Some(card) = Self::open_from_sysfs(bus_id) {
                     return Some(card);
                 }
-                trace(format_args!(
-                    "vblank-drm: sysfs lookup failed for {bus_id}, falling back to enumeration"
-                ));
             }
             Self::open_by_enumeration()
         }
@@ -225,10 +167,6 @@ mod platform_vblank {
                 .write(true)
                 .open(&path)
                 .ok()?;
-            trace(format_args!(
-                "vblank-drm: matched {} via sysfs for PCI {pci_bus_id}",
-                path.display()
-            ));
             Some(Self { fd })
         }
 
@@ -258,13 +196,7 @@ mod platform_vblank {
 
     impl VblankWaiter {
         pub fn new(pci_bus_id: Option<&str>) -> Self {
-            let device = DrmCard::open(pci_bus_id);
-            if device.is_some() {
-                trace(format_args!("vblank-drm: opened DRM device"));
-            } else {
-                trace(format_args!("vblank-drm: no DRM device, falling back to timer"));
-            }
-            Self { device }
+            Self { device: DrmCard::open(pci_bus_id) }
         }
 
         pub fn wait(&mut self) {
@@ -278,7 +210,6 @@ mod platform_vblank {
                     Ok(_) => return,
                     Err(_) => {
                         // DRM vblank failed — drop device and fall back permanently.
-                        trace(format_args!("vblank-drm: ioctl failed, falling back to timer"));
                         self.device = None;
                     }
                 }

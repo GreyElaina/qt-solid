@@ -1,4 +1,4 @@
-#include "qt_wgpu_platform.h"
+#include "qt/wgpu_platform.h"
 
 #include "native/src/qt/ffi.rs.h"
 
@@ -685,26 +685,20 @@ UnifiedCompositorDriveStatus drive_unified_compositor_window_frame(
 
 bool unified_compositor_window_frame_ready(QWindow *window,
                                            double source_device_pixel_ratio) {
+  Q_UNUSED(source_device_pixel_ratio);
   if (!unified_compositor_active() || window == nullptr) {
     return false;
   }
 
-  const qreal scale_factor = source_device_pixel_ratio;
-  const QSize pixel_size = window_pixel_size(window, scale_factor);
-  if (pixel_size.isEmpty()) {
+  const QVariant node_id_value = window->property(kRootNodeIdProperty);
+  if (!node_id_value.isValid()) {
     return false;
   }
-
-  const auto target = resolve_compositor_target(
-      window, static_cast<std::uint32_t>(pixel_size.width()),
-      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
-  if (!target.has_value()) {
-    return false;
-  }
+  const auto node_id = node_id_value.toUInt();
 
   try {
     return qt_solid_spike::qt::qt_window_compositor_frame_is_initialized(
-        *target);
+        node_id);
   } catch (const rust::Error &error) {
     qWarning() << "qt wgpu compositor init probe failed:" << error.what();
     return false;
@@ -713,22 +707,18 @@ bool unified_compositor_window_frame_ready(QWindow *window,
 
 bool unified_compositor_window_request_frame(QWindow *window,
                                              double source_device_pixel_ratio) {
+  Q_UNUSED(source_device_pixel_ratio);
   if (window == nullptr) {
     return false;
   }
-  const qreal scale_factor = source_device_pixel_ratio;
-  const QSize pixel_size = window_pixel_size(window, scale_factor);
-  if (pixel_size.isEmpty()) {
+  const QVariant node_id_value = window->property(kRootNodeIdProperty);
+  if (!node_id_value.isValid()) {
     return false;
   }
-  const auto target = resolve_compositor_target(
-      window, static_cast<std::uint32_t>(pixel_size.width()),
-      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
-  if (!target.has_value()) {
-    return false;
-  }
+  const auto node_id = node_id_value.toUInt();
+
   try {
-    return qt_solid_spike::qt::qt_window_compositor_request_frame(*target);
+    return qt_solid_spike::qt::qt_window_compositor_request_frame(node_id);
   } catch (const rust::Error &error) {
     qWarning() << "qt wgpu compositor request-frame failed:" << error.what();
     return false;
@@ -737,23 +727,19 @@ bool unified_compositor_window_request_frame(QWindow *window,
 
 bool unified_compositor_window_display_link_should_run(
     QWindow *window, double source_device_pixel_ratio) {
+  Q_UNUSED(source_device_pixel_ratio);
   if (window == nullptr) {
     return false;
   }
-  const qreal scale_factor = source_device_pixel_ratio;
-  const QSize pixel_size = window_pixel_size(window, scale_factor);
-  if (pixel_size.isEmpty()) {
+  const QVariant node_id_value = window->property(kRootNodeIdProperty);
+  if (!node_id_value.isValid()) {
     return false;
   }
-  const auto target = resolve_compositor_target(
-      window, static_cast<std::uint32_t>(pixel_size.width()),
-      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
-  if (!target.has_value()) {
-    return false;
-  }
+  const auto node_id = node_id_value.toUInt();
+
   try {
     return qt_solid_spike::qt::qt_window_compositor_display_link_should_run(
-        *target);
+        node_id);
   } catch (const rust::Error &error) {
     qWarning() << "qt wgpu compositor display-link-state probe failed:"
                << error.what();
@@ -811,9 +797,17 @@ bool unified_compositor_active() {
 
 void destroy_unified_compositor_window(QWindow *window,
                                        double source_device_pixel_ratio) {
-  auto target = resolve_compositor_target(window, 1, 1, source_device_pixel_ratio);
-  if (target.has_value()) {
-    qt_solid_spike::qt::qt_destroy_window_compositor(*target);
+  Q_UNUSED(source_device_pixel_ratio);
+  const QVariant node_id_value = window->property(kRootNodeIdProperty);
+  if (!node_id_value.isValid()) {
+    return;
+  }
+  const auto node_id = node_id_value.toUInt();
+
+  try {
+    qt_solid_spike::qt::qt_destroy_window_compositor(node_id);
+  } catch (const rust::Error &error) {
+    qWarning() << "qt wgpu compositor destroy failed:" << error.what();
   }
 }
 

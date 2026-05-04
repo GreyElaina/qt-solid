@@ -2,12 +2,16 @@ pub(crate) mod frame_clock;
 pub(crate) mod pipeline;
 pub(crate) mod state;
 pub(crate) mod texture_widget;
+#[cfg(not(target_os = "macos"))]
+pub(crate) mod frame_signal;
+#[cfg(target_os = "macos")]
+pub(crate) mod display_link;
 
 use crate::runtime::capture::{WidgetCapture, WidgetCaptureFormat};
 use napi::Result;
 
 use crate::{
-    qt::{self, ffi::QtCompositorTarget},
+    qt,
     runtime::{NodeHandle, qt_error},
 };
 
@@ -18,38 +22,6 @@ pub(crate) use pipeline::{
 pub(crate) use state::Scheduler;
 pub(crate) use texture_widget::capture_painted_widget_exact_with_children;
 pub(crate) use texture_widget::capture_vello_widget_exact;
-
-fn compositor_surface_kind_to_renderer(kind: qt::ffi::QtCompositorSurfaceKind) -> Result<u8> {
-    let surface_kind = match kind {
-        qt::ffi::QtCompositorSurfaceKind::AppKitNsView => {
-            qt_compositor::QT_COMPOSITOR_SURFACE_APPKIT_NS_VIEW
-        }
-        qt::ffi::QtCompositorSurfaceKind::Win32Hwnd => {
-            qt_compositor::QT_COMPOSITOR_SURFACE_WIN32_HWND
-        }
-        qt::ffi::QtCompositorSurfaceKind::XcbWindow => {
-            qt_compositor::QT_COMPOSITOR_SURFACE_XCB_WINDOW
-        }
-        qt::ffi::QtCompositorSurfaceKind::WaylandSurface => {
-            qt_compositor::QT_COMPOSITOR_SURFACE_WAYLAND_SURFACE
-        }
-        _ => return Err(qt_error("unsupported qt compositor surface kind tag")),
-    };
-    Ok(surface_kind)
-}
-
-pub(crate) fn compositor_target_to_renderer(
-    target: QtCompositorTarget,
-) -> Result<qt_compositor::QtCompositorTarget> {
-    Ok(qt_compositor::QtCompositorTarget {
-        surface_kind: compositor_surface_kind_to_renderer(target.surface_kind)?,
-        primary_handle: target.primary_handle,
-        secondary_handle: target.secondary_handle,
-        width_px: target.width_px,
-        height_px: target.height_px,
-        scale_factor: target.scale_factor,
-    })
-}
 
 fn widget_capture_format_from_qt(tag: u8) -> Result<WidgetCaptureFormat> {
     match tag {

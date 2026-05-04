@@ -7,7 +7,7 @@ mod cpu;
 mod wgpu_hybrid;
 
 pub(crate) fn render_scene_to_capture(
-    target: qt_compositor::QtCompositorTarget,
+    target: crate::renderer::types::SurfaceTarget,
     node_id: u32,
     width_px: u32,
     height_px: u32,

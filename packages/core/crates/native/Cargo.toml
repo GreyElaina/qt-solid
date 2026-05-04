@@ -17,7 +17,6 @@ napi = { version = "3.8.6", features = ["napi8"] }
 napi-derive = "3.5.5"
 once_cell = "1.21.4"
 taffy = "0.10.1"
-qt-compositor = { version = "0.1.0", path = "../qt-compositor" }
 tokio = { version = "1.52.1", features = ["rt-multi-thread", "time"] }
 vello = { version = "0.8.0" }
 vello_cpu = "0.0.7"
@@ -42,6 +41,19 @@ accesskit_macos = "0.26.0"
 objc2-app-kit = { version = "0.3.2", features = ["NSView", "NSWindow", "NSAccessibility"] }
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
+objc2-quartz-core = { version = "0.3.2", features = ["CADisplayLink", "CAFrameRateRange"] }
+raw-window-metal = "1.1.0"
+window-host = { version = "0.1.0", path = "../window-host" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Dwm"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+drm = "0.15.0"
+
+[features]
+wayland = []
+x11 = []
 
 [build-dependencies]
 cc = "1.2.61"

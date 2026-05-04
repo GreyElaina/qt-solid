@@ -1,5 +1,5 @@
 #include "qt/ffi.h"
-#include "qt_wgpu_platform.h"
+#include "qt/wgpu_platform.h"
 #include "native/src/qt/ffi.rs.h"
 #include "qt/widget_host.h"
 #include "qt_host/host.h"
