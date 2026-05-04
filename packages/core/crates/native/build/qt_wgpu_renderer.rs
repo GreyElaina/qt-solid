@@ -12,11 +12,10 @@ pub(crate) fn spec() -> QtWgpuRendererBuildSpec {
         rerun_if_changed: &[
             "../qt-compositor/include/qt_wgpu_platform.h",
             "../qt-compositor/src/cpp/qt_wgpu_platform.cpp",
-            "../qt-compositor/src/cpp/qt_wgpu_platform_macos.mm",
         ],
         include_dirs: &["../qt-compositor/include"],
         cpp_sources: &["../qt-compositor/src/cpp/qt_wgpu_platform.cpp"],
-        objc_sources: &["../qt-compositor/src/cpp/qt_wgpu_platform_macos.mm"],
+        objc_sources: &[],
     }
 }
 

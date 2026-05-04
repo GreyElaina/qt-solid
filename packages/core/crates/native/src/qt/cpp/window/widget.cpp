@@ -221,12 +221,10 @@ public:
   void post_compositor_frame_drive();
   void drive_compositor_frame();
 #if defined(Q_OS_MACOS)
-  static void compositor_display_link_callback(void *context, void *drawable);
+  static void compositor_display_link_callback(void *context);
   void start_compositor_display_link();
   void stop_compositor_display_link();
   void shutdown_compositor_display_link();
-  void post_compositor_frame_drive_from_display_link(void *drawable);
-  void handle_compositor_display_link_tick(void *drawable);
   void set_display_link_frame_rate(float fps);
 #endif
 
@@ -429,37 +427,16 @@ protected:
         std::max(0, qRound(static_cast<qreal>(s.height()) * dpr)));
 
     qt_solid_spike::qt::qt_surface_renderer_resize(rust_node_id_, width_px, height_px);
-
     qt_solid_spike::qt::qt_window_event_resize(
       rust_node_id_,
       static_cast<double>(s.width()),
       static_cast<double>(s.height()));
-
-#if defined(Q_OS_MACOS)
-    void *wgpu_layer = reinterpret_cast<void *>(static_cast<quintptr>(
-        qt_solid_spike::qt::qt_surface_renderer_metal_layer_ptr(rust_node_id_)));
-    // Destroy (not just stop) the display-link before synchronous resize
-    // present. CAMetalDisplayLink binds to the CAMetalLayer; while it
-    // exists (even paused), calling nextDrawable on the layer throws
-    // "-nextDrawable should not be called when using CAMetalDisplayLink".
-    // start_compositor_display_link() will lazily recreate it on the next
-    // request_compositor_frame().
-    stop_compositor_display_link();
-    if (compositor_display_link_handle_ != nullptr) {
-      ::qt_macos_display_link_destroy(compositor_display_link_handle_);
-      compositor_display_link_handle_ = nullptr;
-    }
-    qt_wgpu_renderer::set_metal_layer_presents_with_transaction(wgpu_layer, true);
-#else
     // Force a compositor frame on resize — drive_compositor_frame() on Windows
     // early-returns when compositor_frame_requested_ is false, but resize must
     // unconditionally produce a new frame at the updated dimensions.
     compositor_frame_requested_ = true;
-#endif
     drive_compositor_frame();
-#if defined(Q_OS_MACOS)
-    qt_wgpu_renderer::set_metal_layer_presents_with_transaction(wgpu_layer, false);
-#endif
+    request_compositor_frame();
   }
 
   void changeEvent(QEvent *event) override {
@@ -538,7 +515,6 @@ private:
 #if defined(Q_OS_MACOS)
   ::MacosDisplayLinkHandle *compositor_display_link_handle_ = nullptr;
   bool compositor_display_link_running_ = false;
-  std::atomic_bool compositor_display_link_tick_posted_ = false;
 #endif
   bool close_pending_ = false;
   bool tearing_down_ = false;

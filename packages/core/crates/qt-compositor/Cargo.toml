@@ -21,7 +21,7 @@ objc2 = "0.6.4"
 objc2-core-foundation = "0.3.2"
 objc2-foundation = "0.3.2"
 objc2-metal = "0.3.2"
-objc2-quartz-core = { version = "0.3.2", features = ["CAFrameRateRange"] }
+objc2-quartz-core = { version = "0.3.2", features = ["CADisplayLink", "CAFrameRateRange"] }
 raw-window-metal = "1.1.0"
 wgpu-hal = "28.0.0"
 window-host = { version = "0.1.0", path = "../window-host" }

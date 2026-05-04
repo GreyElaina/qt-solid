@@ -142,6 +142,20 @@ impl FragmentTree {
         Self::default()
     }
 
+    pub fn request_full_repaint(&mut self) {
+        self.force_full_repaint = true;
+        self.any_dirty = true;
+        self.aabbs_dirty = true;
+        self.subtree_scene_cache.clear();
+        self.promoted_scene_cache.clear();
+        self.dirty_root_children
+            .extend(self.root_children.iter().copied());
+        for (id, node) in &mut self.nodes {
+            node.dirty = true;
+            self.dirty_node_ids.insert(*id);
+        }
+    }
+
     pub fn allocate_id(&mut self) -> FragmentId {
         let id = FragmentId(self.next_id);
         self.next_id += 1;
@@ -693,5 +707,30 @@ impl FragmentTree {
         let mut sorted: Vec<FragmentId> = children.to_vec();
         sorted.sort_by_key(|id| nodes.get(id).map_or(0, |n| n.props.z_index));
         sorted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_repaint_request_marks_all_fragments_dirty() {
+        let mut tree = FragmentTree::new();
+        let child = tree.create_node(FragmentData::Group(Default::default()));
+        tree.insert_child(None, child, None);
+        tree.consume_dirty_state();
+        tree.any_dirty = false;
+        for node in tree.nodes.values_mut() {
+            node.dirty = false;
+        }
+
+        tree.request_full_repaint();
+
+        assert!(tree.force_full_repaint);
+        assert!(tree.any_dirty);
+        assert_eq!(tree.dirty_root_children, HashSet::from([child]));
+        assert_eq!(tree.dirty_node_ids, HashSet::from([child]));
+        assert!(tree.nodes.get(&child).is_some_and(|node| node.dirty));
     }
 }

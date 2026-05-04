@@ -1189,7 +1189,6 @@ dependencies = [
  "cc",
  "cxx",
  "cxx-build",
- "foreign-types",
  "fragment-derive",
  "image",
  "motion",
@@ -1199,8 +1198,6 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
- "objc2-metal 0.3.2",
- "objc2-quartz-core 0.3.2",
  "once_cell",
  "peniko",
  "png",
@@ -1209,7 +1206,6 @@ dependencies = [
  "qt-compositor",
  "qt-host",
  "raw-window-handle",
- "raw-window-metal",
  "rustc-hash 2.1.2",
  "taffy",
  "tokio",
@@ -1218,7 +1214,6 @@ dependencies = [
  "vello_common",
  "vello_cpu",
  "vello_hybrid",
- "wgpu-hal",
 ]
 
 [[package]]

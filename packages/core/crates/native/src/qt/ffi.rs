@@ -242,8 +242,6 @@ pub(crate) mod bridge {
         fn qt_window_event_focus_change(node_id: u32, gained: bool);
         fn qt_window_event_resize(node_id: u32, width: f64, height: f64);
         fn qt_surface_renderer_resize(node_id: u32, width_px: u32, height_px: u32);
-        fn qt_surface_renderer_blit_and_present(node_id: u32);
-        fn qt_surface_renderer_metal_layer_ptr(node_id: u32) -> u64;
         fn qt_window_event_state_change(node_id: u32, state: u8);
         fn qt_system_color_scheme_changed(scheme: u8);
         fn qt_screen_dpi_changed(dpi: f64);
@@ -251,6 +249,7 @@ pub(crate) mod bridge {
         fn qt_mark_window_compositor_scene_dirty(window_id: u32, node_id: u32);
         fn qt_mark_window_compositor_geometry_dirty(window_id: u32, node_id: u32);
         fn qt_mark_window_compositor_pixels_dirty(window_id: u32, node_id: u32);
+        fn qt_mark_window_compositor_frame_tick(window_id: u32, node_id: u32);
         fn qt_window_frame_tick(node_id: u32) -> Result<()>;
         fn qt_window_take_next_frame_request(node_id: u32) -> Result<bool>;
         fn qt_mark_window_compositor_pixels_dirty_region(
@@ -265,21 +264,10 @@ pub(crate) mod bridge {
             node_id: u32,
             target: QtCompositorTarget,
         ) -> Result<QtWindowCompositorDriveStatus>;
-        fn qt_drive_window_compositor_frame_from_display_link(
-            node_id: u32,
-            target: QtCompositorTarget,
-            drawable_handle: u64,
-        ) -> Result<QtWindowCompositorDriveStatus>;
         fn qt_window_compositor_frame_is_initialized(target: QtCompositorTarget) -> Result<bool>;
         fn qt_window_compositor_request_frame(target: QtCompositorTarget) -> Result<bool>;
         fn qt_window_compositor_display_link_should_run(target: QtCompositorTarget)
         -> Result<bool>;
-        fn qt_window_compositor_metal_layer_handle(target: QtCompositorTarget) -> Result<u64>;
-        fn qt_window_compositor_note_metal_display_link_drawable(
-            target: QtCompositorTarget,
-            drawable_handle: u64,
-        ) -> Result<()>;
-        fn qt_window_compositor_release_metal_drawable(drawable_handle: u64) -> Result<()>;
         fn qt_destroy_window_compositor(target: QtCompositorTarget) -> Result<()>;
         fn qt_window_motion_hit_test(
             window_id: u32,
@@ -771,20 +759,6 @@ pub(crate) fn qt_surface_renderer_resize(node_id: u32, width_px: u32, height_px:
     crate::renderer::compositor::resize_surface(node_id, width_px, height_px);
 }
 
-pub(crate) fn qt_surface_renderer_blit_and_present(node_id: u32) {
-    let _ = crate::renderer::compositor::blit_and_present(node_id);
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn qt_surface_renderer_metal_layer_ptr(node_id: u32) -> u64 {
-    crate::renderer::compositor::metal_layer_ptr(node_id)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn qt_surface_renderer_metal_layer_ptr(_node_id: u32) -> u64 {
-    0
-}
-
 pub(crate) fn qt_window_event_state_change(node_id: u32, state: u8) {
     super::runtime::qt_window_event_state_change(node_id, state);
 }
@@ -811,6 +785,10 @@ pub(crate) fn qt_mark_window_compositor_geometry_dirty(window_id: u32, node_id: 
 
 pub(crate) fn qt_mark_window_compositor_pixels_dirty(window_id: u32, node_id: u32) {
     crate::renderer::with_renderer_mut(|r| r.scheduler.mark_dirty_node(window_id, node_id));
+}
+
+pub(crate) fn qt_mark_window_compositor_frame_tick(window_id: u32, node_id: u32) {
+    crate::renderer::with_renderer_mut(|r| r.scheduler.mark_frame_tick_node(window_id, node_id));
 }
 
 pub(crate) fn qt_window_frame_tick(node_id: u32) -> napi::Result<()> {
@@ -857,33 +835,6 @@ pub(crate) fn qt_drive_window_compositor_frame(
     crate::renderer::scheduler::pipeline::drive_frame(node_id, target)
 }
 
-pub(crate) fn qt_drive_window_compositor_frame_from_display_link(
-    node_id: u32,
-    target: QtCompositorTarget,
-    drawable_handle: u64,
-) -> napi::Result<QtWindowCompositorDriveStatus> {
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)?;
-    let compositor = qt_compositor::load_or_create_compositor(render_target)
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    compositor
-        .begin_drive(render_target)
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    crate::renderer::scheduler::frame_clock::qt_window_frame_tick(node_id)?;
-    let status = crate::renderer::scheduler::pipeline::drive_frame_with_drawable(
-        node_id,
-        target,
-        drawable_handle,
-    )?;
-
-    if matches!(status, QtWindowCompositorDriveStatus::Busy) {
-        let _ = compositor.request_frame(
-            render_target,
-            qt_compositor::FrameReason::OverlayInvalidated,
-        );
-    }
-    Ok(status)
-}
-
 pub(crate) fn qt_window_compositor_frame_is_initialized(
     target: QtCompositorTarget,
 ) -> napi::Result<bool> {
@@ -915,34 +866,6 @@ pub(crate) fn qt_window_compositor_display_link_should_run(
     Ok(qt_compositor::load_or_create_compositor(render_target)
         .map(|compositor| compositor.should_run_frame_source())
         .map_err(|error| crate::runtime::qt_error(error.to_string()))?)
-}
-
-pub(crate) fn qt_window_compositor_metal_layer_handle(
-    target: QtCompositorTarget,
-) -> napi::Result<u64> {
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    qt_compositor::load_or_create_compositor(render_target)
-        .and_then(|compositor| compositor.layer_handle(render_target))
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))
-}
-
-pub(crate) fn qt_window_compositor_note_metal_display_link_drawable(
-    _target: QtCompositorTarget,
-    drawable_handle: u64,
-) -> napi::Result<()> {
-    // note_drawable is no longer used; release the drawable to avoid leaks.
-    #[cfg(target_os = "macos")]
-    qt_compositor::release_metal_drawable(drawable_handle);
-    Ok(())
-}
-
-pub(crate) fn qt_window_compositor_release_metal_drawable(
-    drawable_handle: u64,
-) -> napi::Result<()> {
-    #[cfg(target_os = "macos")]
-    qt_compositor::release_metal_drawable(drawable_handle);
-    Ok(())
 }
 
 pub(crate) fn qt_destroy_window_compositor(target: QtCompositorTarget) -> napi::Result<()> {

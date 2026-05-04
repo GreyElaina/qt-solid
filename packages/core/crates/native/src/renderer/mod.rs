@@ -155,6 +155,31 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[test]
+    fn pending_state_includes_non_pixel_frame_work() {
+        let mut renderer = Renderer::new();
+
+        renderer.scheduler.mark_scene_subtree(2, 20);
+        renderer.scheduler.mark_frame_tick_node(2, 21);
+
+        let pending = renderer.scheduler.pending_state_snapshot(2);
+        assert_eq!(pending.scene_subtrees, HashSet::from([20_u32]));
+        assert_eq!(pending.frame_tick_nodes, HashSet::from([21_u32]));
+    }
+
+    #[test]
+    fn frame_clock_tracks_elapsed_and_delta_time() {
+        let mut renderer = Renderer::new();
+
+        renderer.scheduler.tick_frame(2, 1_000_000_000);
+        renderer.scheduler.tick_frame(2, 1_016_500_000);
+
+        let clock = renderer.scheduler.frame_clock(2);
+        assert_eq!(clock.seq, 2.0);
+        assert_eq!(clock.elapsed_ms, 16.5);
+        assert_eq!(clock.delta_ms, 16.5);
+    }
 }
 
 static RENDERER: Lazy<Mutex<Renderer>> = Lazy::new(|| Mutex::new(Renderer::new()));

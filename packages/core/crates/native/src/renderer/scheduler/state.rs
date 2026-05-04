@@ -11,6 +11,8 @@ pub(crate) struct FrameClockState {
     pub(crate) seq: f64,
     pub(crate) elapsed_ms: f64,
     pub(crate) delta_ms: f64,
+    started_ns: Option<u64>,
+    last_tick_ns: Option<u64>,
     pub(crate) next_frame_requested: bool,
 }
 
@@ -20,6 +22,8 @@ impl Default for FrameClockState {
             seq: 0.0,
             elapsed_ms: 0.0,
             delta_ms: 0.0,
+            started_ns: None,
+            last_tick_ns: None,
             next_frame_requested: false,
         }
     }
@@ -46,6 +50,8 @@ pub(crate) struct WindowCompositorDirtyRegion {
 pub(crate) struct WindowCompositorPendingState {
     pub(crate) geometry_nodes: HashSet<u32>,
     pub(crate) scene_nodes: HashSet<u32>,
+    pub(crate) scene_subtrees: HashSet<u32>,
+    pub(crate) frame_tick_nodes: HashSet<u32>,
     pub(crate) dirty_nodes: HashSet<u32>,
     pub(crate) dirty_regions: Vec<WindowCompositorDirtyRegion>,
 }
@@ -202,8 +208,16 @@ impl Scheduler {
         self.frame_clocks.entry(window_id).or_default()
     }
 
-    pub(crate) fn tick_frame(&mut self, window_id: u32) {
-        self.frame_clock_mut(window_id).seq += 1.0;
+    pub(crate) fn tick_frame(&mut self, window_id: u32, now_ns: u64) {
+        let clock = self.frame_clock_mut(window_id);
+        let started_ns = *clock.started_ns.get_or_insert(now_ns);
+        clock.seq += 1.0;
+        clock.elapsed_ms = now_ns.saturating_sub(started_ns) as f64 / 1_000_000.0;
+        clock.delta_ms = clock
+            .last_tick_ns
+            .map(|last_tick_ns| now_ns.saturating_sub(last_tick_ns) as f64 / 1_000_000.0)
+            .unwrap_or(0.0);
+        clock.last_tick_ns = Some(now_ns);
     }
 
     pub(crate) fn take_next_frame_request(&mut self, window_id: u32) -> bool {
@@ -237,6 +251,16 @@ impl Scheduler {
                 .unwrap_or_default(),
             scene_nodes: self
                 .scene_nodes
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+            scene_subtrees: self
+                .scene_subtrees
+                .get(&window_id)
+                .cloned()
+                .unwrap_or_default(),
+            frame_tick_nodes: self
+                .frame_tick_nodes
                 .get(&window_id)
                 .cloned()
                 .unwrap_or_default(),

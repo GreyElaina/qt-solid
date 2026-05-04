@@ -246,15 +246,7 @@ pub(crate) fn drive_frame(
     node_id: u32,
     target: QtCompositorTarget,
 ) -> Result<QtWindowCompositorDriveStatus> {
-    drive_fragment_surface_frame(node_id, target, 0)
-}
-
-pub(crate) fn drive_frame_with_drawable(
-    node_id: u32,
-    target: QtCompositorTarget,
-    drawable_handle: u64,
-) -> Result<QtWindowCompositorDriveStatus> {
-    drive_fragment_surface_frame(node_id, target, drawable_handle)
+    drive_fragment_surface_frame(node_id, target)
 }
 
 fn velocity_to_desired_fps(velocity: f64) -> f32 {
@@ -271,10 +263,15 @@ fn velocity_to_desired_fps(velocity: f64) -> f32 {
     }
 }
 
+fn compositor_trace(args: std::fmt::Arguments<'_>) {
+    if std::env::var_os("QT_SOLID_WGPU_TRACE").is_some() {
+        println!("[qt-pipeline] {args}");
+    }
+}
+
 fn drive_fragment_surface_frame(
     node_id: u32,
     target: QtCompositorTarget,
-    drawable_handle: u64,
 ) -> Result<QtWindowCompositorDriveStatus> {
     use crate::canvas::vello::peniko::kurbo::Affine;
 
@@ -293,19 +290,29 @@ fn drive_fragment_surface_frame(
         prev.width_px != target.width_px || prev.height_px != target.height_px
     });
 
-    // Check whether anything is dirty before doing GPU work.
-    let has_dirty = !pending.dirty_nodes.is_empty()
+    let has_frame_work = !pending.dirty_nodes.is_empty()
         || !pending.dirty_regions.is_empty()
         || !pending.scene_nodes.is_empty()
-        || !pending.geometry_nodes.is_empty();
+        || !pending.scene_subtrees.is_empty()
+        || !pending.geometry_nodes.is_empty()
+        || !pending.frame_tick_nodes.is_empty();
     // Also check if fragment tree has running animations — must not skip tick.
     let has_animation = crate::canvas::fragment::fragment_store_has_animating(node_id);
-    if !has_dirty && !size_changed && !has_animation {
-        // Release display-link drawable — nothing to render this frame.
-        #[cfg(target_os = "macos")]
-        if drawable_handle != 0 {
-            qt_compositor::release_metal_drawable(drawable_handle);
-        }
+    compositor_trace(format_args!(
+        "drive node={} target={}x{} size_changed={} dirty={} regions={} scene={} subtrees={} geometry={} frame_tick={} animation={}",
+        node_id,
+        target.width_px,
+        target.height_px,
+        size_changed,
+        pending.dirty_nodes.len(),
+        pending.dirty_regions.len(),
+        pending.scene_nodes.len(),
+        pending.scene_subtrees.len(),
+        pending.geometry_nodes.len(),
+        pending.frame_tick_nodes.len(),
+        has_animation,
+    ));
+    if !has_frame_work && !size_changed && !has_animation {
         return Ok(QtWindowCompositorDriveStatus::Idle);
     }
 
@@ -338,6 +345,10 @@ fn drive_fragment_surface_frame(
     } else {
         crate::canvas::fragment::fragment_store_compute_dirty_rects(node_id, layout.scale_factor)
     };
+    compositor_trace(format_args!(
+        "dirty node={} result={:?} still_animating={} max_velocity={:.3}",
+        node_id, dirty_result, still_animating, max_velocity,
+    ));
 
     // Extract device-pixel dirty rects for the surface renderer.
     let dirty_rects_device: Option<Vec<(u32, u32, u32, u32)>> = match &dirty_result {
@@ -373,6 +384,7 @@ fn drive_fragment_surface_frame(
     crate::canvas::fragment::fragment_store_set_dirty_clips(node_id, dirty_clips_logical.clone());
 
     let presented = if has_promoted {
+        compositor_trace(format_args!("render node={} path=promoted", node_id));
         // Composited path: build RenderPlan with partitioned layers.
         let render_plan = crate::canvas::fragment::fragment_store_build_render_plan(node_id);
         crate::canvas::fragment::fragment_store_set_dirty_clips(node_id, Vec::new());
@@ -388,12 +400,6 @@ fn drive_fragment_surface_frame(
 
         match render_plan {
             Some(plan) => {
-                // Promoted path still uses wgpu Surface — release display-link
-                // drawable to avoid holding it during get_current_texture().
-                #[cfg(target_os = "macos")]
-                if drawable_handle != 0 {
-                    qt_compositor::release_metal_drawable(drawable_handle);
-                }
                 crate::renderer::compositor::render_composited_and_present(
                     node_id,
                     compositor_target_to_renderer(target).map_err(|e| qt_error(e.to_string()))?,
@@ -410,6 +416,13 @@ fn drive_fragment_surface_frame(
         // Non-promoted path: per-subtree Recording strip caching.
         // Paint per-subtree scenes, then render with strip cache.
         let mut subtrees = crate::canvas::fragment::fragment_store_paint_subtrees(node_id);
+        let dirty_subtrees = subtrees.iter().filter(|(_, _, dirty)| *dirty).count();
+        compositor_trace(format_args!(
+            "render node={} path=subtrees count={} dirty={}",
+            node_id,
+            subtrees.len(),
+            dirty_subtrees,
+        ));
 
         // Clear dirty clips after paint.
         crate::canvas::fragment::fragment_store_set_dirty_clips(node_id, Vec::new());
@@ -511,7 +524,6 @@ fn drive_fragment_surface_frame(
             &backdrop_blurs,
             &inner_shadows,
             dirty_rects_device.as_deref(),
-            drawable_handle,
         )?
     };
 
@@ -529,13 +541,13 @@ fn drive_fragment_surface_frame(
     // Push updated fragment tree to accessibility adapter.
     crate::accessibility::update_window_accessibility_tree(node_id);
 
+    crate::renderer::with_renderer_mut(|r| r.scheduler.clear_dirty_nodes(node_id));
+
     if still_animating {
         let desired_fps = velocity_to_desired_fps(max_velocity);
         crate::qt::ffi::bridge::qt_macos_set_display_link_frame_rate(node_id, desired_fps);
         crate::runtime::request_overlay_next_frame_exact(&node, node_id)?;
     }
-
-    crate::renderer::with_renderer_mut(|r| r.scheduler.clear_dirty_nodes(node_id));
 
     Ok(QtWindowCompositorDriveStatus::Presented)
 }

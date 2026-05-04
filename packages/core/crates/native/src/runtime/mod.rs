@@ -991,9 +991,16 @@ pub(crate) fn debug_emit_app_event(name: String) -> Result<()> {
 }
 
 pub(crate) fn request_next_frame_exact(node: &impl NodeHandle) -> Result<()> {
+    ensure_live_node(node)?;
     let window_id = node.inner().id;
     crate::renderer::with_renderer_mut(|r| r.scheduler.set_next_frame_requested(window_id, true));
-    request_window_repaint_exact(node)
+    if qt::qt_request_window_compositor_frame(window_id)
+        .map_err(|error| qt_error(error.what().to_owned()))?
+    {
+        Ok(())
+    } else {
+        request_window_repaint_exact(node)
+    }
 }
 
 pub(crate) fn read_window_frame_state_exact(node: &impl NodeHandle) -> Result<QtWindowFrameState> {
@@ -1242,6 +1249,8 @@ pub(crate) fn qt_window_event_focus_change(node_id: u32, gained: bool) {
 }
 
 pub(crate) fn qt_window_event_resize(node_id: u32, width: f64, height: f64) {
+    crate::canvas::fragment::fragment_store_request_full_repaint(node_id);
+    crate::renderer::with_renderer_mut(|r| r.scheduler.mark_geometry_node(node_id, node_id));
     emit_js_event(QtHostEvent::WindowResize {
         node_id,
         width,

@@ -28,11 +28,6 @@
 #include "qplatformwindow_p.h"
 #endif
 
-#if defined(Q_OS_MACOS)
-extern "C" void qt_wgpu_platform_set_metal_layer_presents_with_transaction(
-    void *metal_layer, bool presents_with_transaction);
-#endif
-
 #include <memory>
 #include <cstdio>
 #include <cstdint>
@@ -716,34 +711,6 @@ bool unified_compositor_window_frame_ready(QWindow *window,
   }
 }
 
-#if defined(Q_OS_MACOS)
-void *unified_compositor_window_metal_layer(QWindow *window,
-                                            double source_device_pixel_ratio) {
-  if (window == nullptr) {
-    return nullptr;
-  }
-  const qreal scale_factor = source_device_pixel_ratio;
-  const QSize pixel_size = window_pixel_size(window, scale_factor);
-  if (pixel_size.isEmpty()) {
-    return nullptr;
-  }
-  const auto target = resolve_compositor_target(
-      window, static_cast<std::uint32_t>(pixel_size.width()),
-      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
-  if (!target.has_value()) {
-    return nullptr;
-  }
-  try {
-    const auto handle =
-        qt_solid_spike::qt::qt_window_compositor_metal_layer_handle(*target);
-    return reinterpret_cast<void *>(static_cast<quintptr>(handle));
-  } catch (const rust::Error &error) {
-    qWarning() << "qt wgpu compositor metal layer probe failed:" << error.what();
-    return nullptr;
-  }
-}
-#endif
-
 bool unified_compositor_window_request_frame(QWindow *window,
                                              double source_device_pixel_ratio) {
   if (window == nullptr) {
@@ -794,84 +761,6 @@ bool unified_compositor_window_display_link_should_run(
   }
 }
 
-#if defined(Q_OS_MACOS)
-bool unified_compositor_window_note_metal_display_link_drawable(
-    QWindow *window, double source_device_pixel_ratio,
-    std::uint64_t drawable_handle) {
-  if (window == nullptr || drawable_handle == 0) {
-    return false;
-  }
-  const qreal scale_factor = source_device_pixel_ratio;
-  const QSize pixel_size = window_pixel_size(window, scale_factor);
-  if (pixel_size.isEmpty()) {
-    return false;
-  }
-  const auto target = resolve_compositor_target(
-      window, static_cast<std::uint32_t>(pixel_size.width()),
-      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
-  if (!target.has_value()) {
-    return false;
-  }
-  try {
-    qt_solid_spike::qt::qt_window_compositor_note_metal_display_link_drawable(
-        *target, drawable_handle);
-    return true;
-  } catch (const rust::Error &error) {
-    qWarning() << "qt wgpu compositor drawable note failed:" << error.what();
-    return false;
-  }
-}
-
-UnifiedCompositorDriveStatus
-drive_unified_compositor_window_frame_from_display_link(
-    QWindow *window, std::uint32_t node_id, double source_device_pixel_ratio,
-    std::uint64_t drawable_handle) {
-  if (!unified_compositor_active() || window == nullptr || drawable_handle == 0) {
-    return UnifiedCompositorDriveStatus::Idle;
-  }
-
-  const qreal scale_factor = source_device_pixel_ratio;
-  const QSize pixel_size = window_pixel_size(window, scale_factor);
-  if (pixel_size.isEmpty()) {
-    return UnifiedCompositorDriveStatus::Idle;
-  }
-
-  const auto target = resolve_compositor_target(
-      window, static_cast<std::uint32_t>(pixel_size.width()),
-      static_cast<std::uint32_t>(pixel_size.height()), scale_factor);
-  if (!target.has_value()) {
-    return UnifiedCompositorDriveStatus::NeedsQtRepaint;
-  }
-
-  try {
-    switch (qt_solid_spike::qt::qt_drive_window_compositor_frame_from_display_link(
-        node_id, *target, drawable_handle)) {
-    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Idle:
-      return UnifiedCompositorDriveStatus::Idle;
-    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Presented:
-      return UnifiedCompositorDriveStatus::Presented;
-    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::Busy:
-      return UnifiedCompositorDriveStatus::Busy;
-    case qt_solid_spike::qt::QtWindowCompositorDriveStatus::NeedsQtRepaint:
-      return UnifiedCompositorDriveStatus::NeedsQtRepaint;
-    }
-  } catch (const rust::Error &error) {
-    qWarning() << "qt wgpu compositor display-link drive failed:" << error.what();
-  }
-
-  return UnifiedCompositorDriveStatus::NeedsQtRepaint;
-}
-
-void release_unified_compositor_metal_drawable(std::uint64_t drawable_handle) {
-  try {
-    qt_solid_spike::qt::qt_window_compositor_release_metal_drawable(
-        drawable_handle);
-  } catch (const rust::Error &error) {
-    qWarning() << "qt wgpu compositor drawable release failed:" << error.what();
-  }
-}
-#endif
-
 void register_static_platform_plugins() {
   static std::once_flag once;
   std::call_once(once, []() {
@@ -918,17 +807,6 @@ bool unified_compositor_active() {
     return qApp->property(kUnifiedCompositorActiveProperty).toBool();
   }
   return unified_compositor_requested();
-}
-
-void set_metal_layer_presents_with_transaction(void *metal_layer,
-                                               bool presents_with_transaction) {
-#if defined(Q_OS_MACOS)
-  qt_wgpu_platform_set_metal_layer_presents_with_transaction(
-      metal_layer, presents_with_transaction);
-#else
-  (void)metal_layer;
-  (void)presents_with_transaction;
-#endif
 }
 
 void destroy_unified_compositor_window(QWindow *window,

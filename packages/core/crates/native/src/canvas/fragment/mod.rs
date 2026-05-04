@@ -312,6 +312,12 @@ pub fn fragment_store_force_full_repaint(canvas_node_id: u32) -> bool {
     runtime::with_fragment_tree(canvas_node_id, |tree| tree.force_full_repaint).unwrap_or(true)
 }
 
+pub fn fragment_store_request_full_repaint(canvas_node_id: u32) {
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.request_full_repaint();
+    });
+}
+
 pub fn fragment_store_paint_single(
     canvas_node_id: u32,
     fragment_id: FragmentId,

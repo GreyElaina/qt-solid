@@ -3,14 +3,14 @@
 #include <cstdint>
 
 struct MacosDisplayLinkHandle;
-using MacosDisplayLinkCallback = void (*)(void *, void *);
+using MacosDisplayLinkCallback = void (*)(void *);
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 MacosDisplayLinkHandle *qt_macos_display_link_create(
-    void *metal_layer, void *context, MacosDisplayLinkCallback callback,
+    void *context, MacosDisplayLinkCallback callback,
     const void *notifier);
 bool qt_macos_display_link_start(MacosDisplayLinkHandle *handle);
 void qt_macos_display_link_stop(MacosDisplayLinkHandle *handle);
