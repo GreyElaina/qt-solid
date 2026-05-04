@@ -389,6 +389,7 @@ pub struct FragmentBoxShadow {
 #[derive(Debug, Clone)]
 pub struct ShapedTextLayout {
     pub path: BezPath,
+    pub rasterized_glyphs: Vec<RasterizedGlyph>,
     pub cursor_x_positions: Vec<f64>,
     pub width: f64,
     pub height: f64,

@@ -144,13 +144,16 @@ private:
         shaped.elements.data(), shaped.elements.size());
     rust::Slice<const double> cursor_positions(
         shaped.cursor_x_positions.data(), shaped.cursor_x_positions.size());
+    rust::Slice<const qt_solid_spike::qt::QtRasterizedGlyph> rasterized_glyphs(
+        shaped.rasterized_glyphs.data(), shaped.rasterized_glyphs.size());
 
     qt_solid_spike::qt::qt_text_edit_sync(
         canvas_node_id_, fragment_id_,
         rust::Str(utf8.constData(), utf8.size()),
         cursor, sel_start, sel_end,
         elements, cursor_positions,
-        shaped.ascent, shaped.descent, shaped.total_width);
+        shaped.ascent, shaped.descent, shaped.total_width,
+        rasterized_glyphs);
   }
 
   QWidgetLineControl *control_ = nullptr;

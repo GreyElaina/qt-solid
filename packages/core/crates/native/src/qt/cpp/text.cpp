@@ -133,25 +133,6 @@ QFont make_qfont(rust::Str font_family, double font_size, std::int32_t font_weig
   return font;
 }
 
-// Helper: collect all glyphs from a QTextLayout into a single QPainterPath.
-QPainterPath collect_glyph_path(const QTextLayout &layout) {
-  QPainterPath combined_path;
-  const auto glyph_runs = layout.glyphRuns();
-  for (const QGlyphRun &run : glyph_runs) {
-    QRawFont raw_font = run.rawFont();
-    const auto indexes = run.glyphIndexes();
-    const auto positions = run.positions();
-    for (int i = 0; i < indexes.size(); ++i) {
-      QPainterPath glyph_path = raw_font.pathForGlyph(indexes[i]);
-      if (!glyph_path.isEmpty()) {
-        glyph_path.translate(positions[i]);
-        combined_path.addPath(glyph_path);
-      }
-    }
-  }
-  return combined_path;
-}
-
 // Helper: serialize a QPainterPath into Vec<QtShapedPathEl>.
 rust::Vec<QtShapedPathEl> serialize_painter_path(const QPainterPath &path) {
   rust::Vec<QtShapedPathEl> elements;

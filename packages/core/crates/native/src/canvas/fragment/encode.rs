@@ -8,7 +8,7 @@ use super::kinds::{
     CARET_COLOR, CARET_WIDTH, CircleFragment, GroupFragment, ImageFragment, PathFragment,
     RectFragment, SELECTION_COLOR, SpanFragment, TextFragment, TextInputFragment,
 };
-use super::types::{FragmentBrush, GradientStop};
+use super::types::{FragmentBrush, GradientStop, RasterizedGlyph, ShapedTextLayout};
 
 fn push_gradient_stops(gradient: &mut Gradient, stops: &[GradientStop]) {
     for stop in stops {
@@ -252,29 +252,33 @@ impl FragmentEncode for TextFragment {
                 }
             }
             // Rasterized color glyphs (emoji) — rendered as image fills.
-            for rg in &cache.rasterized_glyphs {
-                if rg.image.width == 0 || rg.image.height == 0 {
-                    continue;
-                }
-                let sf = rg.scale_factor.max(1.0);
-                let logical_w = rg.image.width as f64 / sf;
-                let logical_h = rg.image.height as f64 / sf;
-                let dest = Rect::new(rg.x, rg.y, rg.x + logical_w, rg.y + logical_h);
-                let brush: ImageBrushRef = (&rg.image).into();
-                let brush_transform = Affine::translate((rg.x, rg.y))
-                    * Affine::scale_non_uniform(
-                        logical_w / rg.image.width as f64,
-                        logical_h / rg.image.height as f64,
-                    );
-                scene.fill(
-                    Fill::NonZero,
-                    transform,
-                    brush,
-                    Some(brush_transform),
-                    &dest,
-                );
-            }
+            encode_rasterized_glyphs(scene, transform, &cache.rasterized_glyphs);
         }
+    }
+}
+
+fn encode_rasterized_glyphs(scene: &mut Scene, transform: Affine, glyphs: &[RasterizedGlyph]) {
+    for rg in glyphs {
+        if rg.image.width == 0 || rg.image.height == 0 {
+            continue;
+        }
+        let sf = rg.scale_factor.max(1.0);
+        let logical_w = rg.image.width as f64 / sf;
+        let logical_h = rg.image.height as f64 / sf;
+        let dest = Rect::new(rg.x, rg.y, rg.x + logical_w, rg.y + logical_h);
+        let brush: ImageBrushRef = (&rg.image).into();
+        let brush_transform = Affine::translate((rg.x, rg.y))
+            * Affine::scale_non_uniform(
+                logical_w / rg.image.width as f64,
+                logical_h / rg.image.height as f64,
+            );
+        scene.fill(
+            Fill::NonZero,
+            transform,
+            brush,
+            Some(brush_transform),
+            &dest,
+        );
     }
 }
 

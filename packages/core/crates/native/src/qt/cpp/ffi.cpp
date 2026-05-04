@@ -566,8 +566,10 @@ QtShapedTextWithCursorsResult qt_shape_text_with_cursors(rust::Str text, double 
   }
   layout.endLayout();
 
-  QPainterPath combined_path = collect_glyph_path(layout);
-  rust::Vec<QtShapedPathEl> elements = serialize_painter_path(combined_path);
+  auto glyph_result = collect_glyphs_with_color_fallback(layout);
+  rust::Vec<QtShapedPathEl> elements = serialize_painter_path(glyph_result.outline_path);
+  rust::Vec<QtRasterizedGlyph> rasterized_glyphs;
+  fill_rasterized_glyph_wire(glyph_result, rasterized_glyphs);
 
   QFontMetricsF metrics(font);
   double total_width =
@@ -592,6 +594,7 @@ QtShapedTextWithCursorsResult qt_shape_text_with_cursors(rust::Str text, double 
       metrics.ascent(),
       metrics.descent(),
       total_width,
+      std::move(rasterized_glyphs),
   };
 }
 

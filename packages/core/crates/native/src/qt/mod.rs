@@ -2,10 +2,10 @@ pub(crate) mod ffi;
 mod runtime;
 
 pub(crate) use ffi::{
-    QtClipboardEntry, QtRealizedNodeState, debug_clear_highlight, debug_click_node,
-    debug_close_node, debug_highlight_node, debug_input_insert_text, debug_node_at_point,
-    debug_node_bounds, debug_set_inspect_mode, focus_widget, get_screen_geometry,
-    get_widget_size_hint, qt_capture_widget_into, qt_capture_widget_layout,
+    QtClipboardEntry, QtRealizedNodeState, build_rasterized_glyphs, debug_clear_highlight,
+    debug_click_node, debug_close_node, debug_highlight_node, debug_input_insert_text,
+    debug_node_at_point, debug_node_bounds, debug_set_inspect_mode, focus_widget,
+    get_screen_geometry, get_widget_size_hint, qt_capture_widget_into, qt_capture_widget_layout,
     qt_capture_widget_visible_rects, qt_clipboard_clear, qt_clipboard_formats, qt_clipboard_get,
     qt_clipboard_get_text, qt_clipboard_has_text, qt_clipboard_set, qt_clipboard_set_text,
     qt_create_widget, qt_debug_node_state, qt_destroy_widget, qt_host_shutdown, qt_host_start,

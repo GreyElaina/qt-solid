@@ -153,6 +153,7 @@ pub(crate) mod bridge {
         ascent: f64,
         descent: f64,
         total_width: f64,
+        rasterized_glyphs: Vec<QtRasterizedGlyph>,
     }
 
     struct QtTextStyleRun {
@@ -232,6 +233,7 @@ pub(crate) mod bridge {
             ascent: f64,
             descent: f64,
             width: f64,
+            rasterized_glyphs: &[QtRasterizedGlyph],
         );
         fn qt_text_edit_set_caret_visible(canvas_node_id: u32, fragment_id: u32, visible: bool);
         fn qt_window_event_close_requested(node_id: u32);
@@ -456,6 +458,36 @@ pub(crate) use bridge::{
     qt_window_wire_hover_leave, schedule_debug_event, trace_now_ns,
 };
 
+pub(crate) fn build_rasterized_glyphs(
+    rasterized: &[bridge::QtRasterizedGlyph],
+    dy: f64,
+) -> Vec<crate::canvas::fragment::RasterizedGlyph> {
+    use crate::canvas::vello::peniko as peniko_crate;
+
+    rasterized
+        .iter()
+        .filter_map(|rg| {
+            if rg.width == 0 || rg.height == 0 || rg.pixels.is_empty() {
+                return None;
+            }
+            let blob = peniko_crate::Blob::new(std::sync::Arc::new(rg.pixels.clone()));
+            let image = peniko_crate::ImageData {
+                data: blob,
+                format: peniko_crate::ImageFormat::Rgba8,
+                alpha_type: peniko_crate::ImageAlphaType::AlphaPremultiplied,
+                width: rg.width,
+                height: rg.height,
+            };
+            Some(crate::canvas::fragment::RasterizedGlyph {
+                image,
+                x: rg.x + rg.bearing_x,
+                y: rg.y + rg.bearing_y + dy,
+                scale_factor: rg.scale_factor,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn emit_app_event(name: &str) {
     super::runtime::emit_app_event(name);
 }
@@ -532,6 +564,7 @@ pub(crate) fn qt_text_edit_sync(
     ascent: f64,
     descent: f64,
     width: f64,
+    rasterized_glyphs: &[bridge::QtRasterizedGlyph],
 ) {
     use crate::canvas::fragment::{
         FragmentId, ShapedTextLayout, fragment_store_set_text_input_state,
@@ -555,6 +588,7 @@ pub(crate) fn qt_text_edit_sync(
     let height = ascent + descent;
     let layout = ShapedTextLayout {
         path,
+        rasterized_glyphs: build_rasterized_glyphs(rasterized_glyphs, 0.0),
         cursor_x_positions: cursor_x_positions.to_vec(),
         width,
         height,

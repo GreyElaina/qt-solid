@@ -978,39 +978,10 @@ fn lower_per_property_transitions(
 
 use crate::canvas::fragment::decl::FragmentValue;
 use crate::canvas::fragment::{
-    self as fragment_store, FragmentId, RasterizedGlyph, ShapedRun, ShapedTextCache,
-    ShapedTextLayout, ShapedTextLine,
+    self as fragment_store, FragmentId, ShapedRun, ShapedTextCache, ShapedTextLayout,
+    ShapedTextLine,
 };
-use crate::canvas::vello::peniko as peniko_crate;
 use crate::canvas::vello::peniko::kurbo::{BezPath, PathEl, Point};
-
-fn build_rasterized_glyphs(
-    rasterized: &[crate::qt::ffi::bridge::QtRasterizedGlyph],
-    dy: f64,
-) -> Vec<RasterizedGlyph> {
-    rasterized
-        .iter()
-        .filter_map(|rg| {
-            if rg.width == 0 || rg.height == 0 || rg.pixels.is_empty() {
-                return None;
-            }
-            let blob = peniko_crate::Blob::new(std::sync::Arc::new(rg.pixels.clone()));
-            let image = peniko_crate::ImageData {
-                data: blob,
-                format: peniko_crate::ImageFormat::Rgba8,
-                alpha_type: peniko_crate::ImageAlphaType::AlphaPremultiplied,
-                width: rg.width,
-                height: rg.height,
-            };
-            Some(RasterizedGlyph {
-                image,
-                x: rg.x + rg.bearing_x,
-                y: rg.y + rg.bearing_y + dy,
-                scale_factor: rg.scale_factor,
-            })
-        })
-        .collect()
-}
 
 fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
     // Rich text path: if text_runs are present, use styled shaping.
@@ -1085,7 +1056,7 @@ fn reshape_text_fragment_if_needed(canvas_node_id: u32, fragment_id: u32) {
         )));
     }
 
-    let rasterized_glyphs = build_rasterized_glyphs(&result.rasterized_glyphs, dy);
+    let rasterized_glyphs = crate::qt::build_rasterized_glyphs(&result.rasterized_glyphs, dy);
 
     let lines: Vec<ShapedTextLine> = result
         .lines
@@ -1240,7 +1211,7 @@ fn reshape_styled_text_fragment(canvas_node_id: u32, fragment_id: u32) {
         })
         .collect();
 
-    let rasterized_glyphs = build_rasterized_glyphs(&result.rasterized_glyphs, dy);
+    let rasterized_glyphs = crate::qt::build_rasterized_glyphs(&result.rasterized_glyphs, dy);
 
     let cache = ShapedTextCache {
         path: combined_path,
@@ -1300,6 +1271,7 @@ fn reshape_text_input_with(
             FragmentId(fragment_id),
             ShapedTextLayout {
                 path: BezPath::new(),
+                rasterized_glyphs: Vec::new(),
                 cursor_x_positions: vec![0.0],
                 width: 0.0,
                 height: font_size,
@@ -1331,8 +1303,11 @@ fn reshape_text_input_with(
         }
     }
 
+    let rasterized_glyphs = crate::qt::build_rasterized_glyphs(&result.rasterized_glyphs, 0.0);
+
     let layout = ShapedTextLayout {
         path,
+        rasterized_glyphs,
         cursor_x_positions: result.cursor_x_positions,
         width: result.total_width,
         height: result.ascent + result.descent,
