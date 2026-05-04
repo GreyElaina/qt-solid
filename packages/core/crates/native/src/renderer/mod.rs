@@ -46,6 +46,18 @@ impl FragmentStore {
         self.trees.remove(&node_id);
     }
 
+    pub(crate) fn motion_root_ids(&self, candidates: &[u32]) -> Vec<u32> {
+        candidates
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.trees
+                    .get(id)
+                    .map_or(false, |tree| tree.has_active_motion())
+            })
+            .collect()
+    }
+
     fn clear_all(&mut self) {
         self.trees.clear();
     }
