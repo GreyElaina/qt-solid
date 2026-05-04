@@ -4,7 +4,7 @@ use napi::Result;
 
 mod cpu;
 #[cfg(not(target_os = "macos"))]
-mod wgpu_hybrid;
+mod gpu;
 
 pub(crate) fn render_scene_to_capture(
     target: crate::renderer::types::SurfaceTarget,
@@ -22,7 +22,7 @@ pub(crate) fn render_scene_to_capture(
 
     #[cfg(not(target_os = "macos"))]
     {
-        wgpu_hybrid::render_scene_to_capture(
+        gpu::render_scene_to_capture(
             target,
             node_id,
             width_px,

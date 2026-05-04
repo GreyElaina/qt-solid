@@ -6,11 +6,11 @@ use crate::image::{ImageCache, sweep_stale_images};
 use crate::runtime::capture::{WidgetCapture, WidgetCaptureFormat};
 use anyrender::PaintScene;
 use vello::wgpu;
-use vello_hybrid::{RenderSize, Renderer, Scene as HybridScene};
+use vello_hybrid::{RenderSize, Renderer, Scene as GpuScene};
 
 use crate::runtime::qt_error;
 
-fn hybrid_scene_from_logical_scene(
+fn gpu_scene_from_logical_scene(
     width_px: u32,
     height_px: u32,
     scale_factor: f64,
@@ -20,7 +20,7 @@ fn hybrid_scene_from_logical_scene(
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     image_cache: &mut ImageCache,
-) -> napi::Result<HybridScene> {
+) -> napi::Result<GpuScene> {
     let started = Instant::now();
     let width_u16 = u16::try_from(width_px).map_err(|_| {
         qt_error("scene width exceeds vello_hybrid range")
@@ -28,14 +28,14 @@ fn hybrid_scene_from_logical_scene(
     let height_u16 = u16::try_from(height_px).map_err(|_| {
         qt_error("scene height exceeds vello_hybrid range")
     })?;
-    let mut hybrid_scene = HybridScene::new(width_u16, height_u16);
+    let mut gpu_scene = GpuScene::new(width_u16, height_u16);
     let image_manager =
         anyrender_vello_hybrid::ImageManager::new(renderer, device, queue, encoder, image_cache);
     let mut painter =
-        anyrender_vello_hybrid::VelloHybridScenePainter::new(&mut hybrid_scene, image_manager);
+        anyrender_vello_hybrid::VelloHybridScenePainter::new(&mut gpu_scene, image_manager);
     painter.append_scene(scene.clone(), Affine::scale(scale_factor));
     record_append_scene_metric(started.elapsed());
-    Ok(hybrid_scene)
+    Ok(gpu_scene)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -56,15 +56,15 @@ fn read_rgba_texture(
     let padded_bytes_per_row = align_copy_stride(bytes_per_row);
     let readback_size = padded_bytes_per_row
         .checked_mul(height_px as usize)
-        .ok_or_else(|| qt_error("qt hybrid readback size overflow"))?;
+        .ok_or_else(|| qt_error("qt gpu readback size overflow"))?;
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("qt-solid-hybrid-readback-buffer"),
+        label: Some("qt-solid-gpu-readback-buffer"),
         size: readback_size as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("qt-solid-hybrid-readback-encoder"),
+        label: Some("qt-solid-gpu-readback-encoder"),
     });
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
@@ -99,7 +99,7 @@ fn read_rgba_texture(
     receiver
         .recv()
         .map_err(|_| {
-            qt_error("qt hybrid readback map channel closed")
+            qt_error("qt gpu readback map channel closed")
         })?
         .map_err(|error| qt_error(error.to_string()))?;
     let mapped = slice.get_mapped_range();
@@ -128,7 +128,7 @@ pub(crate) fn render_scene_to_capture(
         node_id, &target, width_px, height_px,
         |device, queue, renderer, image_cache| {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("qt-solid-hybrid-capture-texture"),
+                label: Some("qt-solid-gpu-capture-texture"),
                 size: wgpu::Extent3d {
                     width: width_px.max(1),
                     height: height_px.max(1),
@@ -143,13 +143,13 @@ pub(crate) fn render_scene_to_capture(
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("qt-solid-hybrid-capture-encoder"),
+                label: Some("qt-solid-gpu-capture-encoder"),
             });
             // Clear render target to transparent — vello uses LoadOp::Load so
             // stale GPU memory would bleed through without an explicit clear.
             {
                 let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("qt-solid-hybrid-capture-clear"),
+                    label: Some("qt-solid-gpu-capture-clear"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &view,
                         resolve_target: None,
@@ -162,7 +162,7 @@ pub(crate) fn render_scene_to_capture(
                     ..Default::default()
                 });
             }
-            let hybrid_scene = hybrid_scene_from_logical_scene(
+            let gpu_scene = gpu_scene_from_logical_scene(
                 width_px,
                 height_px,
                 scale_factor,
@@ -183,7 +183,7 @@ pub(crate) fn render_scene_to_capture(
             );
             renderer
                 .render(
-                    &hybrid_scene,
+                    &gpu_scene,
                     device,
                     queue,
                     &mut encoder,
