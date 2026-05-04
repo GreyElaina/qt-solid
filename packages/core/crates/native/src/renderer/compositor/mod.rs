@@ -12,7 +12,7 @@ pub(crate) mod surface;
 use crate::canvas::fragment::{FragmentId, FragmentLayerKey, RenderPlan};
 use crate::image::{ImageCache, sweep_stale_images};
 use vello::wgpu;
-use vello_hybrid::{AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as HybridScene};
+use vello_hybrid::{AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as GpuScene};
 use anyrender_vello_hybrid::Recording;
 
 use crate::canvas::vello::Scene;
@@ -58,9 +58,9 @@ struct WindowSurface {
     composite_bind_group_layout: wgpu::BindGroupLayout,
     /// Per-promoted-layer retained textures.
     layer_textures: HashMap<FragmentLayerKey, LayerTextureState>,
-    /// Retained vello_hybrid Scene to avoid per-frame alloc/dealloc.
+    /// Retained GPU Scene (vello_hybrid) to avoid per-frame alloc/dealloc.
     /// Reused via `reset()` when viewport size hasn't changed.
-    retained_hybrid_scene: Option<HybridScene>,
+    retained_gpu_scene: Option<GpuScene>,
     /// Retained zero buffer for dirty rect clearing. Avoids per-frame
     /// staging buffer allocation in `write_texture`.
     zero_buffer: Option<(wgpu::Buffer, usize)>,
@@ -307,9 +307,9 @@ fn render_gpu_and_present_subtrees(
         }
     }
 
-    // Build hybrid scene using per-subtree Recording cache.
-    let retained = ws.retained_hybrid_scene.take();
-    let hybrid_scene = build_hybrid_scene_from_subtrees(
+    // Build GPU scene using per-subtree Recording cache.
+    let retained = ws.retained_gpu_scene.take();
+    let gpu_scene = build_gpu_scene_from_subtrees(
         width_px, height_px, scale_factor, subtrees,
         &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
         &mut ws.image_cache,
@@ -327,7 +327,7 @@ fn render_gpu_and_present_subtrees(
 
     ws.renderer
         .render(
-            &hybrid_scene,
+            &gpu_scene,
             &ws.device,
             &ws.queue,
             &mut encoder,
@@ -420,7 +420,7 @@ fn render_gpu_and_present_subtrees(
     }
 
     ws.queue.submit([encoder.finish()]);
-    ws.retained_hybrid_scene = Some(hybrid_scene);
+    ws.retained_gpu_scene = Some(gpu_scene);
     surface_texture.present();
     Ok(true)
 }
@@ -557,8 +557,8 @@ pub(crate) fn render_composited_and_present(
         }
 
         // Vello render base scene into base_texture.
-        let retained = ws.retained_hybrid_scene.take();
-        let hybrid_scene = build_hybrid_scene(
+        let retained = ws.retained_gpu_scene.take();
+        let gpu_scene = build_gpu_scene(
             width_px, height_px, scale_factor, &render_plan.base_scene,
             &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
             &mut ws.image_cache,
@@ -569,11 +569,11 @@ pub(crate) fn render_composited_and_present(
             &mut ws.image_cache,
         );
         ws.renderer.render(
-            &hybrid_scene, &ws.device, &ws.queue, &mut encoder,
+            &gpu_scene, &ws.device, &ws.queue, &mut encoder,
             &RenderSize { width: width_px, height: height_px },
             &ws.base_view,
         ).map_err(|e| qt_error(format!("vello base render: {e}")))?;
-        ws.retained_hybrid_scene = Some(hybrid_scene);
+        ws.retained_gpu_scene = Some(gpu_scene);
     }
 
     // --- Step 2: Render each composited layer into its own texture ---
@@ -655,7 +655,7 @@ pub(crate) fn render_composited_and_present(
         }
 
         // Vello render layer scene into layer texture.
-        let hybrid_scene = build_hybrid_scene(
+        let gpu_scene = build_gpu_scene(
             lw, lh, scale_factor, &layer.scene,
             &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
             &mut ws.image_cache,
@@ -666,7 +666,7 @@ pub(crate) fn render_composited_and_present(
             &mut ws.image_cache,
         );
         ws.renderer.render(
-            &hybrid_scene, &ws.device, &ws.queue, &mut encoder,
+            &gpu_scene, &ws.device, &ws.queue, &mut encoder,
             &RenderSize { width: lw, height: lh },
             &lt.view,
         ).map_err(|e| qt_error(format!("vello layer render: {e}")))?;
@@ -1168,7 +1168,7 @@ fn create_window_surface_with_backends(
         composite_pipeline,
         composite_bind_group_layout,
         layer_textures: HashMap::new(),
-        retained_hybrid_scene: None,
+        retained_gpu_scene: None,
         zero_buffer: None,
         subtree_recordings: HashMap::new(),
     })
@@ -1246,7 +1246,7 @@ fn recreate_render_textures(ws: &mut WindowSurface, width_px: u32, height_px: u3
     ws.subtree_recordings.clear();
 }
 
-fn build_hybrid_scene(
+fn build_gpu_scene(
     width_px: u32,
     height_px: u32,
     scale_factor: f64,
@@ -1256,33 +1256,33 @@ fn build_hybrid_scene(
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     image_cache: &mut ImageCache,
-    retained: Option<HybridScene>,
-) -> napi::Result<HybridScene> {
+    retained: Option<GpuScene>,
+) -> napi::Result<GpuScene> {
     let width_u16 = u16::try_from(width_px)
         .map_err(|_| qt_error("scene width exceeds vello_hybrid range"))?;
     let height_u16 = u16::try_from(height_px)
         .map_err(|_| qt_error("scene height exceeds vello_hybrid range"))?;
     // Reuse retained scene if viewport size matches, else allocate new.
-    let mut hybrid_scene = match retained {
+    let mut gpu_scene = match retained {
         Some(mut s) if s.width() == width_u16 && s.height() == height_u16 => {
             s.reset();
             s
         }
-        _ => HybridScene::new(width_u16, height_u16),
+        _ => GpuScene::new(width_u16, height_u16),
     };
     let image_manager = anyrender_vello_hybrid::ImageManager::new(
         renderer, device, queue, encoder, image_cache,
     );
     let mut painter = anyrender_vello_hybrid::VelloHybridScenePainter::new(
-        &mut hybrid_scene, image_manager,
+        &mut gpu_scene, image_manager,
     );
     painter.append_scene(scene.clone(), Affine::scale(scale_factor));
-    Ok(hybrid_scene)
+    Ok(gpu_scene)
 }
 
-/// Build hybrid scene from per-subtree scenes, using Recording cache for clean subtrees.
+/// Build GPU scene from per-subtree scenes, using Recording cache for clean subtrees.
 /// Dirty subtrees get record+prepare+execute; clean ones replay cached recordings.
-fn build_hybrid_scene_from_subtrees(
+fn build_gpu_scene_from_subtrees(
     width_px: u32,
     height_px: u32,
     scale_factor: f64,
@@ -1292,21 +1292,21 @@ fn build_hybrid_scene_from_subtrees(
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     image_cache: &mut ImageCache,
-    retained: Option<HybridScene>,
+    retained: Option<GpuScene>,
     recordings: &mut HashMap<FragmentId, Recording>,
-) -> napi::Result<HybridScene> {
+) -> napi::Result<GpuScene> {
     use vello_common::recording::Recordable;
 
     let width_u16 = u16::try_from(width_px)
         .map_err(|_| qt_error("scene width exceeds vello_hybrid range"))?;
     let height_u16 = u16::try_from(height_px)
         .map_err(|_| qt_error("scene height exceeds vello_hybrid range"))?;
-    let mut hybrid_scene = match retained {
+    let mut gpu_scene = match retained {
         Some(mut s) if s.width() == width_u16 && s.height() == height_u16 => {
             s.reset();
             s
         }
-        _ => HybridScene::new(width_u16, height_u16),
+        _ => GpuScene::new(width_u16, height_u16),
     };
 
     let scale_transform = Affine::scale(scale_factor);
@@ -1317,7 +1317,7 @@ fn build_hybrid_scene_from_subtrees(
         if !is_dirty && has_cached {
             // Clean subtree with cached recording — skip strip generation.
             let recording = recordings.get(id).unwrap();
-            hybrid_scene.execute_recording(recording);
+            gpu_scene.execute_recording(recording);
         } else {
             // Dirty or first-time: record, prepare strips, execute, cache.
             let mut recording = recordings.remove(id).unwrap_or_else(Recording::new);
@@ -1327,14 +1327,14 @@ fn build_hybrid_scene_from_subtrees(
                 renderer, device, queue, encoder, image_cache,
             );
             anyrender_vello_hybrid::record_anyrender_scene(
-                &mut hybrid_scene,
+                &mut gpu_scene,
                 &mut recording,
                 scene,
                 scale_transform,
                 &mut image_manager,
             );
-            hybrid_scene.prepare_recording(&mut recording);
-            hybrid_scene.execute_recording(&recording);
+            gpu_scene.prepare_recording(&mut recording);
+            gpu_scene.execute_recording(&recording);
             recordings.insert(*id, recording);
         }
     }
@@ -1344,7 +1344,7 @@ fn build_hybrid_scene_from_subtrees(
         subtrees.iter().map(|(id, _, _)| *id).collect();
     recordings.retain(|id, _| active_ids.contains(id));
 
-    Ok(hybrid_scene)
+    Ok(gpu_scene)
 }
 
 /// Build 64-byte uniform for composite_layer.wgsl LayerUniforms.
