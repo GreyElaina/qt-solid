@@ -94,6 +94,7 @@ interface StoryDef {
   axes: Record<string, unknown[]>
   defaults: Record<string, unknown>
   scenarios?: Record<string, Record<string, unknown>>
+  interactive?: () => JSX.Element
 }
 
 function cartesian(axes: Record<string, unknown[]>): Record<string, unknown>[] {
@@ -636,6 +637,93 @@ const ContextMenuDemo: Component = () => {
 }
 
 // ---------------------------------------------------------------------------
+// Interactive demos — stateful wrappers for verifying real behavior
+// ---------------------------------------------------------------------------
+
+const InteractiveToggle: Component = () => {
+  const [checked, setChecked] = createSignal(false)
+  return (
+    <group flexDirection="row" gap={12} alignItems="center">
+      <Toggle checked={checked()} onChange={setChecked} />
+      <BodyLabel text={checked() ? "ON" : "OFF"} />
+    </group>
+  )
+}
+
+const InteractiveCheckBox: Component = () => {
+  const [a, setA] = createSignal(false)
+  const [b, setB] = createSignal(true)
+  return (
+    <group flexDirection="column" gap={8}>
+      <CheckBox label="Option A" checked={a()} onChange={setA} />
+      <CheckBox label="Option B" checked={b()} onChange={setB} />
+      <CaptionLabel text={`A=${a()}, B=${b()}`} />
+    </group>
+  )
+}
+
+const InteractiveRadioButton: Component = () => {
+  const [selected, setSelected] = createSignal(0)
+  const options = ["Alpha", "Beta", "Gamma"]
+  return (
+    <group flexDirection="column" gap={8}>
+      <Index each={options}>
+        {(label, i) => (
+          <RadioButton
+            label={label()}
+            checked={selected() === i}
+            onChange={() => setSelected(i)}
+          />
+        )}
+      </Index>
+      <CaptionLabel text={`Selected: ${options[selected()]}`} />
+    </group>
+  )
+}
+
+const InteractiveSlider: Component = () => {
+  const [value, setValue] = createSignal(50)
+  return (
+    <group flexDirection="column" gap={8}>
+      <Slider value={value()} width={200} onChange={setValue} />
+      <CaptionLabel text={`Value: ${value().toFixed(0)}`} />
+    </group>
+  )
+}
+
+const InteractiveLineEdit: Component = () => {
+  const [text, setText] = createSignal("")
+  const [submitted, setSubmitted] = createSignal("")
+  return (
+    <group flexDirection="column" gap={8}>
+      <LineEdit
+        value={text()}
+        placeholder="Type and press Enter..."
+        width={220}
+        onChange={setText}
+        onSubmit={() => setSubmitted(text())}
+      />
+      <CaptionLabel text={`Live: "${text()}"`} />
+      <Show when={submitted()}>
+        <CaptionLabel text={`Submitted: "${submitted()}"`} />
+      </Show>
+    </group>
+  )
+}
+
+const InteractiveToggleButton: Component = () => {
+  const [checked, setChecked] = createSignal(false)
+  return (
+    <group flexDirection="row" gap={12} alignItems="center">
+      <ToggleButton checked={checked()} onChange={setChecked}>
+        {checked() ? "Active" : "Inactive"}
+      </ToggleButton>
+      <CaptionLabel text={checked() ? "ON" : "OFF"} />
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Routing · Router + Outlet + Breadcrumb demo
 // ---------------------------------------------------------------------------
 
@@ -813,18 +901,21 @@ const STORIES: StoryDef[] = [
     render: (p) => <Toggle {...p as any} />,
     axes: { checked: [false, true], disabled: [false, true] },
     defaults: {},
+    interactive: () => <InteractiveToggle />,
   },
   {
     name: "CheckBox",
     render: (p) => <CheckBox {...p as any} />,
     axes: { checked: [false, true], disabled: [false, true] },
     defaults: { label: "Option" },
+    interactive: () => <InteractiveCheckBox />,
   },
   {
     name: "RadioButton",
     render: (p) => <RadioButton {...p as any} />,
     axes: { checked: [false, true], disabled: [false, true] },
     defaults: { label: "Choice" },
+    interactive: () => <InteractiveRadioButton />,
   },
   {
     name: "Slider",
@@ -835,12 +926,14 @@ const STORIES: StoryDef[] = [
       "empty": { value: 0, width: 160 },
       "full": { value: 100, width: 160 },
     },
+    interactive: () => <InteractiveSlider />,
   },
   {
     name: "LineEdit",
     render: (p) => <LineEdit {...p as any} />,
     axes: { disabled: [false, true], error: [false, true] },
     defaults: { placeholder: "Type here...", width: 180 },
+    interactive: () => <InteractiveLineEdit />,
   },
   {
     name: "ProgressBar",
@@ -893,6 +986,7 @@ const STORIES: StoryDef[] = [
     render: (p) => <ToggleButton {...p as any}>{(p.children as string) ?? "Toggle"}</ToggleButton>,
     axes: { checked: [false, true], disabled: [false, true] },
     defaults: { children: "Toggle" },
+    interactive: () => <InteractiveToggleButton />,
   },
   {
     name: "PillButton",
@@ -1167,6 +1261,23 @@ const StoryDetail: Component<{ story: StoryDef }> = (props) => {
           </For>
         </ResponsiveGrid>
       </Show>
+
+      {/* Interactive */}
+      <Show when={props.story.interactive}>
+        <rect height={1} fill={chrome.border()} />
+        <text text="Interactive" fontSize={14} fontWeight={600} color={chrome.text()} />
+        <rect
+          fill="transparent"
+          stroke={chrome.border()}
+          strokeWidth={1}
+          cornerRadius={6}
+          padding={16}
+          flexDirection="column"
+          alignItems="flex-start"
+        >
+          {props.story.interactive!()}
+        </rect>
+      </Show>
     </group>
   )
 }
@@ -1220,7 +1331,7 @@ const StoryboardChrome: Component<{
   const activeStory = createMemo(() => STORIES[props.selectedIndex()]!)
 
   return (
-    <rect fill={chrome.bg()} flexGrow={1} flexDirection="row">
+    <rect fill={chrome.bg()} width="100%" height="100%" flexGrow={1} flexShrink={1} flexDirection="row">
       {/* Sidebar */}
       <rect
         width={200}
@@ -1267,8 +1378,8 @@ const StoryboardChrome: Component<{
       <rect width={1} fill={chrome.border()} />
 
       {/* Content area */}
-      <rect fill={chrome.bg()} flexGrow={1} flexDirection="column">
-        <ScrollView flexGrow={1}>
+      <rect fill={chrome.bg()} flexGrow={1} flexShrink={1} flexDirection="column">
+        <ScrollView flexGrow={1} flexShrink={1}>
           <StoryDetail story={activeStory()} />
         </ScrollView>
       </rect>
