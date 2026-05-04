@@ -595,7 +595,9 @@ pub(crate) fn window_motion_map_point_to_root(
     })
 }
 
-pub(crate) fn window_motion_hit_root_ids(_window_id: u32) -> Result<Vec<u32>> {
-    // TODO: implement motion root enumeration once fragment store supports it.
-    Ok(Vec::new())
+pub(crate) fn window_motion_hit_root_ids(window_id: u32) -> Result<Vec<u32>> {
+    let generation = current_app_generation()?;
+    let subtree = subtree_node_ids(generation, window_id)?;
+    let ids = crate::renderer::with_renderer(|r| r.fragments.motion_root_ids(&subtree));
+    Ok(ids)
 }

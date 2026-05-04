@@ -79,6 +79,12 @@ impl FragmentTree {
         animating
     }
 
+    pub fn has_active_motion(&self) -> bool {
+        self.nodes
+            .values()
+            .any(|node| node.timeline.as_ref().map_or(false, |t| t.is_animating()))
+    }
+
     /// Tick all fragment timelines. Returns (still_animating, completed_fragment_ids, max_visual_velocity).
     pub fn tick_motion(&mut self, now: f64) -> (bool, Vec<FragmentId>, f64) {
         let ids: Vec<FragmentId> = self.nodes.keys().copied().collect();
