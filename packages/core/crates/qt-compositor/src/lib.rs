@@ -15,7 +15,7 @@ pub use compositor_core::*;
 pub use platform::macos::{
     load_or_create_compositor, present_compositor_frame, present_compositor_frame_async,
     compositor_frame_is_busy, compositor_frame_is_initialized,
-    release_metal_drawable, destroy_compositor,
+    destroy_compositor,
 };
 
 #[cfg(target_os = "windows")]

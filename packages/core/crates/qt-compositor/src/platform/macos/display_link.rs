@@ -1,20 +1,16 @@
 use std::{ffi::c_void, mem, ptr::NonNull, sync::Arc, sync::atomic::{AtomicBool, Ordering}};
 
 use objc2::{
-    AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send,
+    AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send, sel,
     rc::Retained,
-    runtime::ProtocolObject,
 };
 use objc2_foundation::{
     NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes,
 };
-use objc2_quartz_core::{
-    CAFrameRateRange, CAMetalDisplayLink, CAMetalDisplayLinkDelegate, CAMetalDisplayLinkUpdate,
-    CAMetalLayer as ObjcCAMetalLayer,
-};
+use objc2_quartz_core::{CADisplayLink, CAFrameRateRange};
 use window_host::NativeFrameNotifier;
 
-type MacosDisplayLinkCallback = unsafe extern "C" fn(*mut c_void, *mut c_void);
+type MacosDisplayLinkCallback = unsafe extern "C" fn(*mut c_void);
 
 fn trace_enabled() -> bool {
     static ENABLED: std::sync::LazyLock<bool> =
@@ -29,7 +25,7 @@ fn trace(args: std::fmt::Arguments<'_>) {
     println!("[qt-display-link] {args}");
 }
 
-struct DisplayLinkDelegateIvars {
+struct DisplayLinkTargetIvars {
     context_ptr: usize,
     callback_ptr: usize,
     notifier_ptr: usize, // *const NativeFrameNotifier (Arc-cloned, owned by Handle)
@@ -39,42 +35,33 @@ struct DisplayLinkDelegateIvars {
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = AnyThread]
-    #[ivars = DisplayLinkDelegateIvars]
-    struct DisplayLinkDelegate;
+    #[ivars = DisplayLinkTargetIvars]
+    struct DisplayLinkTarget;
 
-    unsafe impl NSObjectProtocol for DisplayLinkDelegate {}
+    unsafe impl NSObjectProtocol for DisplayLinkTarget {}
 
-    unsafe impl CAMetalDisplayLinkDelegate for DisplayLinkDelegate {
-        #[unsafe(method(metalDisplayLink:needsUpdate:))]
-        fn metal_display_link_needs_update(
-            &self,
-            _link: &CAMetalDisplayLink,
-            update: &CAMetalDisplayLinkUpdate,
-        ) {
+    // CADisplayLink calls this selector on each vsync.
+    impl DisplayLinkTarget {
+        #[unsafe(method(tick:))]
+        fn tick(&self, _link: &CADisplayLink) {
             let ivars = self.ivars();
-            let drawable = update.drawable();
-            let drawable_handle = Retained::into_raw(drawable) as *mut c_void;
 
             // Check revocation flag before touching any borrowed pointers.
             if ivars.alive_ptr != 0 {
                 let alive = unsafe { &*(ivars.alive_ptr as *const AtomicBool) };
                 if !alive.load(Ordering::Acquire) {
                     trace(format_args!(
-                        "callback revoked context=0x{:x} drawable=0x{:x}",
+                        "callback revoked context=0x{:x}",
                         ivars.context_ptr,
-                        drawable_handle as usize
                     ));
-                    // Release the retained drawable to avoid Metal resource leak.
-                    drop(unsafe { Retained::from_raw(drawable_handle as *mut ProtocolObject<dyn objc2_quartz_core::CAMetalDrawable>) });
                     return;
                 }
             }
 
             let callback: MacosDisplayLinkCallback = unsafe { mem::transmute(ivars.callback_ptr) };
             trace(format_args!(
-                "callback context=0x{:x} drawable=0x{:x}",
+                "callback context=0x{:x}",
                 ivars.context_ptr,
-                drawable_handle as usize
             ));
             // Notify main run loop that display-link has fired.
             if ivars.notifier_ptr != 0 {
@@ -82,15 +69,15 @@ define_class!(
                 notifier.notify();
             }
             unsafe {
-                callback(ivars.context_ptr as *mut c_void, drawable_handle);
+                callback(ivars.context_ptr as *mut c_void);
             }
         }
     }
 );
 
-impl DisplayLinkDelegate {
+impl DisplayLinkTarget {
     fn new_with_parts(context_ptr: usize, callback_ptr: usize, notifier_ptr: usize, alive_ptr: usize) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(DisplayLinkDelegateIvars {
+        let this = Self::alloc().set_ivars(DisplayLinkTargetIvars {
             context_ptr,
             callback_ptr,
             notifier_ptr,
@@ -102,18 +89,12 @@ impl DisplayLinkDelegate {
 
 #[repr(C)]
 pub struct MacosDisplayLinkHandle {
-    layer_ptr: usize,
     context_ptr: usize,
     callback: MacosDisplayLinkCallback,
     notifier: Option<Box<NativeFrameNotifier>>,
     alive: Arc<AtomicBool>,
-    delegate: Option<Retained<DisplayLinkDelegate>>,
-    display_link: Option<Retained<CAMetalDisplayLink>>,
-}
-
-fn borrowed_metal_layer(layer_ptr: usize) -> Option<&'static ObjcCAMetalLayer> {
-    let ptr = NonNull::new(layer_ptr as *mut ObjcCAMetalLayer)?;
-    Some(unsafe { ptr.as_ref() })
+    target: Option<Retained<DisplayLinkTarget>>,
+    display_link: Option<Retained<CADisplayLink>>,
 }
 
 fn on_main_thread() -> bool {
@@ -122,7 +103,6 @@ fn on_main_thread() -> bool {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn qt_macos_display_link_create(
-    metal_layer: *mut c_void,
     context: *mut c_void,
     callback: Option<MacosDisplayLinkCallback>,
     notifier: *const c_void,
@@ -130,9 +110,6 @@ pub unsafe extern "C" fn qt_macos_display_link_create(
     let Some(callback) = callback else {
         return std::ptr::null_mut();
     };
-    if metal_layer.is_null() {
-        return std::ptr::null_mut();
-    }
 
     let notifier = if notifier.is_null() {
         None
@@ -143,12 +120,11 @@ pub unsafe extern "C" fn qt_macos_display_link_create(
     };
 
     let handle = MacosDisplayLinkHandle {
-        layer_ptr: metal_layer as usize,
         context_ptr: context as usize,
         callback,
         notifier,
         alive: Arc::new(AtomicBool::new(true)),
-        delegate: None,
+        target: None,
         display_link: None,
     };
     Box::into_raw(Box::new(handle))
@@ -166,31 +142,27 @@ pub unsafe extern "C" fn qt_macos_display_link_start(
     };
 
     if handle.display_link.is_none() {
-        let Some(layer) = borrowed_metal_layer(handle.layer_ptr) else {
-            return false;
-        };
         let notifier_ptr = handle.notifier.as_deref()
             .map_or(0, |n| n as *const NativeFrameNotifier as usize);
         let alive_ptr = Arc::into_raw(Arc::clone(&handle.alive)) as usize;
-        let delegate = DisplayLinkDelegate::new_with_parts(
+        let target = DisplayLinkTarget::new_with_parts(
             handle.context_ptr,
             handle.callback as usize,
             notifier_ptr,
             alive_ptr,
         );
-        let display_link =
-            CAMetalDisplayLink::initWithMetalLayer(CAMetalDisplayLink::alloc(), layer);
-        display_link.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-        display_link.setPreferredFrameLatency(1.0);
+        // Safety: `target` is a valid NSObject, `sel!(tick:)` matches the method defined above.
+        let display_link = unsafe {
+            CADisplayLink::displayLinkWithTarget_selector(&target, sel!(tick:))
+        };
         let main_run_loop = NSRunLoop::mainRunLoop();
         let common_modes = unsafe { NSRunLoopCommonModes };
         unsafe { display_link.addToRunLoop_forMode(&main_run_loop, common_modes) };
         trace(format_args!(
-            "start create layer=0x{:x} context=0x{:x}",
-            handle.layer_ptr,
+            "start create context=0x{:x}",
             handle.context_ptr
         ));
-        handle.delegate = Some(delegate);
+        handle.target = Some(target);
         handle.display_link = Some(display_link);
     }
 
@@ -240,9 +212,8 @@ pub unsafe extern "C" fn qt_macos_display_link_destroy(handle: *mut MacosDisplay
         let common_modes = unsafe { NSRunLoopCommonModes };
         unsafe { display_link.removeFromRunLoop_forMode(&main_run_loop, common_modes) };
         display_link.invalidate();
-        display_link.setDelegate(None);
     }
-    handle.delegate.take();
+    handle.target.take();
 }
 
 #[unsafe(no_mangle)]

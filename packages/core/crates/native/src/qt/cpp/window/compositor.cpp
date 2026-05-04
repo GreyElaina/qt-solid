@@ -27,6 +27,8 @@ bool HostWindowWidget::request_compositor_frame() {
   }
   autonomous_repaint_timer_.stop();
 #if defined(Q_OS_MACOS)
+  qt_solid_spike::qt::qt_mark_window_compositor_frame_tick(
+      rust_node_id_, rust_node_id_);
   const bool requested = qt_wgpu_renderer::unified_compositor_window_request_frame(
       windowHandle(), capture_device_pixel_ratio());
   qt_solid_wgpu_trace("request-frame node=%u requested=%d active=%d visible=%d",
@@ -195,44 +197,34 @@ void HostWindowWidget::drive_compositor_frame() {
 }
 
 #if defined(Q_OS_MACOS)
-void HostWindowWidget::compositor_display_link_callback(void *context, void *drawable) {
+void HostWindowWidget::compositor_display_link_callback(void *context) {
   auto *host = static_cast<HostWindowWidget *>(context);
   if (host == nullptr) {
-    if (drawable != nullptr) {
-      qt_wgpu_renderer::release_unified_compositor_metal_drawable(
-          reinterpret_cast<std::uint64_t>(drawable));
-    }
     return;
   }
   if (host->thread() == QThread::currentThread()) {
-    qt_solid_wgpu_trace("display-link-callback direct node=%u drawable=%p",
-                        host->rust_node_id_, drawable);
-    host->post_compositor_frame_drive_from_display_link(drawable);
+    qt_solid_wgpu_trace("display-link-callback direct node=%u",
+                        host->rust_node_id_);
+    host->post_compositor_frame_drive();
     return;
   }
 
-  qt_solid_wgpu_trace("display-link-callback queued node=%u drawable=%p host_thread=%p current_thread=%p",
-                      host->rust_node_id_, drawable,
+  qt_solid_wgpu_trace("display-link-callback queued node=%u host_thread=%p current_thread=%p",
+                      host->rust_node_id_,
                       static_cast<void *>(host->thread()),
                       static_cast<void *>(QThread::currentThread()));
 
   QPointer<HostWindowWidget> deferred_host(host);
   const bool invoked = QMetaObject::invokeMethod(
       host,
-      [deferred_host, drawable]() {
+      [deferred_host]() {
         if (deferred_host == nullptr) {
-          if (drawable != nullptr) {
-            qt_wgpu_renderer::release_unified_compositor_metal_drawable(
-                reinterpret_cast<std::uint64_t>(drawable));
-          }
           return;
         }
-        deferred_host->post_compositor_frame_drive_from_display_link(drawable);
+        deferred_host->post_compositor_frame_drive();
       },
       Qt::QueuedConnection);
-  if (!invoked && drawable != nullptr) {
-    qt_wgpu_renderer::release_unified_compositor_metal_drawable(
-        reinterpret_cast<std::uint64_t>(drawable));
+  if (!invoked) {
     return;
   }
   request_qt_pump();
@@ -250,16 +242,8 @@ void HostWindowWidget::start_compositor_display_link() {
       post_compositor_frame_drive();
       return;
     }
-    void *metal_layer = qt_wgpu_renderer::unified_compositor_window_metal_layer(
-        windowHandle(), capture_device_pixel_ratio());
-    if (metal_layer == nullptr) {
-      qt_solid_wgpu_trace("start-link no-layer node=%u", rust_node_id_);
-      post_compositor_frame_drive();
-      return;
-    }
     compositor_display_link_handle_ = ::qt_macos_display_link_create(
-        metal_layer, this,
-        &HostWindowWidget::compositor_display_link_callback,
+        this, &HostWindowWidget::compositor_display_link_callback,
         ::qt_solid_native_frame_notifier());
     if (compositor_display_link_handle_ == nullptr) {
       qt_solid_wgpu_trace("start-link create-failed node=%u", rust_node_id_);
@@ -278,7 +262,6 @@ void HostWindowWidget::start_compositor_display_link() {
 }
 
 void HostWindowWidget::stop_compositor_display_link() {
-  compositor_display_link_tick_posted_.store(false);
   if (compositor_display_link_handle_ == nullptr) {
     compositor_display_link_running_ = false;
     return;
@@ -298,77 +281,6 @@ void HostWindowWidget::shutdown_compositor_display_link() {
   if (windowHandle() != nullptr) {
     qt_wgpu_renderer::destroy_unified_compositor_window(
         windowHandle(), capture_device_pixel_ratio());
-  }
-}
-
-void HostWindowWidget::post_compositor_frame_drive_from_display_link(void *drawable) {
-  if (compositor_display_link_tick_posted_.exchange(true)) {
-    if (drawable != nullptr) {
-      qt_wgpu_renderer::release_unified_compositor_metal_drawable(
-          reinterpret_cast<std::uint64_t>(drawable));
-    }
-    return;
-  }
-
-  compositor_display_link_tick_posted_.store(false);
-  handle_compositor_display_link_tick(drawable);
-}
-
-void HostWindowWidget::handle_compositor_display_link_tick(void *drawable) {
-  if (!isVisible()) {
-    if (drawable != nullptr) {
-      qt_wgpu_renderer::release_unified_compositor_metal_drawable(
-          reinterpret_cast<std::uint64_t>(drawable));
-    }
-    stop_compositor_display_link();
-    return;
-  }
-  if (driving_compositor_frame_) {
-    if (drawable != nullptr) {
-      qt_wgpu_renderer::release_unified_compositor_metal_drawable(
-          reinterpret_cast<std::uint64_t>(drawable));
-    }
-    return;
-  }
-  if (windowHandle() == nullptr) {
-    if (drawable != nullptr) {
-      qt_wgpu_renderer::release_unified_compositor_metal_drawable(
-          reinterpret_cast<std::uint64_t>(drawable));
-    }
-    stop_compositor_display_link();
-    return;
-  }
-  if (drawable == nullptr) {
-    return;
-  }
-  driving_compositor_frame_ = true;
-  const auto status =
-      qt_wgpu_renderer::drive_unified_compositor_window_frame_from_display_link(
-          windowHandle(), rust_node_id_, capture_device_pixel_ratio(),
-          reinterpret_cast<std::uint64_t>(drawable));
-  qt_solid_wgpu_trace("tick node=%u status=%d", rust_node_id_,
-                      static_cast<int>(status));
-  driving_compositor_frame_ = false;
-
-  switch (status) {
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Presented:
-    if (qt_wgpu_renderer::unified_compositor_window_display_link_should_run(
-            windowHandle(), capture_device_pixel_ratio())) {
-      request_qt_pump();
-    } else {
-      stop_compositor_display_link();
-    }
-    break;
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Busy:
-    start_compositor_display_link();
-    break;
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::Idle:
-    stop_compositor_display_link();
-    break;
-  case qt_wgpu_renderer::UnifiedCompositorDriveStatus::NeedsQtRepaint:
-    stop_compositor_display_link();
-    update();
-    break;
   }
 }
 

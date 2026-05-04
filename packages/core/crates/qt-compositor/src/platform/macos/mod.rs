@@ -12,10 +12,6 @@ pub fn destroy_compositor(target: crate::types::QtCompositorTarget) {
     crate::surface::destroy_window_compositor(target);
 }
 
-pub fn release_metal_drawable(drawable_handle: u64) {
-    presenter::drop_retained_metal_drawable(drawable_handle);
-}
-
 pub fn present_compositor_frame(
     target: crate::types::QtCompositorTarget,
     base: &crate::types::QtCompositorBaseUpload<'_>,

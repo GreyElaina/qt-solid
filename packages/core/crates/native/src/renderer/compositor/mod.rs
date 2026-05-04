@@ -64,22 +64,7 @@ struct WindowSurface {
     zero_buffer: Option<(wgpu::Buffer, usize)>,
     /// Per-subtree cached Recordings for strip caching.
     subtree_recordings: HashMap<FragmentId, Recording>,
-    /// Raw pointer to the CAMetalLayer (macOS). Used by the C++ side to
-    /// install a displayLayer delegate for synchronous resize presentation.
-    #[cfg(target_os = "macos")]
-    metal_layer_ptr: SendPtr,
-    /// Cached Metal pipeline/sampler/queue for raw drawable present (macOS).
-    #[cfg(target_os = "macos")]
-    metal_present: Option<MetalPresentState>,
 }
-
-/// Wrapper to allow raw pointers in `Send` contexts.
-/// Safety: the CAMetalLayer pointer is only accessed from the main thread.
-#[cfg(target_os = "macos")]
-#[derive(Clone, Copy)]
-struct SendPtr(*mut c_void);
-#[cfg(target_os = "macos")]
-unsafe impl Send for SendPtr {}
 
 /// Cached CPU render state to avoid per-frame allocation of RenderContext + Pixmap.
 struct CpuRenderState {
@@ -111,11 +96,6 @@ const COMPOSITE_LAYER_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_D
 
 /// Like `render_and_present` but accepts per-subtree scenes with dirty flags
 /// for Recording-based strip caching. GPU path only (CPU falls back to merged).
-///
-/// `drawable_handle`: raw CAMetalDrawable pointer from display link (macOS).
-/// When non-zero, the final present uses raw Metal blit instead of
-/// `wgpu Surface::get_current_texture()` to avoid double drawable acquisition.
-/// Pass 0 to use the default wgpu Surface present path.
 pub(crate) fn render_and_present_subtrees(
     node_id: u32,
     target: qt_compositor::QtCompositorTarget,
@@ -124,7 +104,6 @@ pub(crate) fn render_and_present_subtrees(
     backdrop_blurs: &[effects::BackdropBlurEffect],
     inner_shadows: &[effects::InnerShadowEffect],
     dirty_rects: Option<&[(u32, u32, u32, u32)]>,
-    drawable_handle: u64,
 ) -> napi::Result<bool> {
     let width_px = target.width_px.max(1);
     let height_px = target.height_px.max(1);
@@ -134,10 +113,6 @@ pub(crate) fn render_and_present_subtrees(
         .expect("surface_renderer mutex poisoned");
 
     if matches!(surfaces.get(&node_id), Some(WindowRenderMode::Destroyed)) {
-        #[cfg(target_os = "macos")]
-        if drawable_handle != 0 {
-            qt_compositor::release_metal_drawable(drawable_handle);
-        }
         return Ok(true);
     }
 
@@ -150,10 +125,6 @@ pub(crate) fn render_and_present_subtrees(
                 }
                 Err(SurfaceCreationError::NotReady(e)) => {
                     eprintln!("[qt-solid] surface not ready, will retry next frame: {e}");
-                    #[cfg(target_os = "macos")]
-                    if drawable_handle != 0 {
-                        qt_compositor::release_metal_drawable(drawable_handle);
-                    }
                     return Ok(false);
                 }
                 Err(SurfaceCreationError::NoGpu(e)) => {
@@ -170,11 +141,6 @@ pub(crate) fn render_and_present_subtrees(
     // CPU path: merge subtrees into single scene, use existing render path.
     let is_cpu = matches!(surfaces.get(&node_id), Some(WindowRenderMode::Cpu(_)));
     if is_cpu {
-        // Release display-link drawable — CPU path cannot use it.
-        #[cfg(target_os = "macos")]
-        if drawable_handle != 0 {
-            qt_compositor::release_metal_drawable(drawable_handle);
-        }
         let mut merged = Scene::new();
         for (_, sub, _) in &subtrees {
             merged.append_scene(sub.clone(), Affine::IDENTITY);
@@ -201,8 +167,7 @@ pub(crate) fn render_and_present_subtrees(
         ws.surface.configure(&ws.device, &ws.config);
         recreate_render_textures(ws, width_px, height_px);
     }
-    render_gpu_and_present_subtrees(ws, width_px, height_px, scale_factor, &subtrees, backdrop_blurs, inner_shadows, dirty_rects, drawable_handle)?;
-    Ok(true)
+    render_gpu_and_present_subtrees(ws, width_px, height_px, scale_factor, &subtrees, backdrop_blurs, inner_shadows, dirty_rects)
 }
 
 fn render_cpu_and_present(
@@ -261,8 +226,7 @@ fn render_gpu_and_present_subtrees(
     backdrop_blurs: &[effects::BackdropBlurEffect],
     inner_shadows: &[effects::InnerShadowEffect],
     dirty_rects: Option<&[(u32, u32, u32, u32)]>,
-    drawable_handle: u64,
-) -> napi::Result<()> {
+) -> napi::Result<bool> {
     let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("qt-solid-surface-renderer-encoder"),
     });
@@ -277,15 +241,6 @@ fn render_gpu_and_present_subtrees(
         // would blit the raw base_texture, dropping all post-process effects.
         let has_effects = !backdrop_blurs.is_empty() || !inner_shadows.is_empty();
 
-        #[cfg(target_os = "macos")]
-        if drawable_handle != 0 {
-            ws.queue.submit([encoder.finish()]);
-            let source = if has_effects { &ws.output_texture } else { &ws.base_texture };
-            raw_metal_present_to_drawable(
-                &mut ws.metal_present, &ws.queue, source, width_px, height_px, drawable_handle,
-            )?;
-            return Ok(());
-        }
         let surface_texture = ws
             .surface
             .get_current_texture()
@@ -317,7 +272,7 @@ fn render_gpu_and_present_subtrees(
         }
         ws.queue.submit([encoder.finish()]);
         surface_texture.present();
-        return Ok(());
+        return Ok(true);
     }
 
     if partial_rects.is_none() {
@@ -424,16 +379,6 @@ fn render_gpu_and_present_subtrees(
         false
     };
 
-    // --- Raw Metal present path (macOS, display-link drawable available) ---
-    #[cfg(target_os = "macos")]
-    if drawable_handle != 0 {
-        ws.queue.submit([encoder.finish()]);
-        ws.retained_hybrid_scene = Some(hybrid_scene);
-        let source = if has_effects { &ws.output_texture } else { &ws.base_texture };
-        raw_metal_present_to_drawable(&mut ws.metal_present, &ws.queue, source, width_px, height_px, drawable_handle)?;
-        return Ok(());
-    }
-
     // Determine blit source bind group for wgpu Surface path.
     let blit_bind_group = if has_effects {
         &ws.output_bind_group
@@ -441,7 +386,7 @@ fn render_gpu_and_present_subtrees(
         &ws.base_bind_group
     };
 
-    // --- Fallback: wgpu Surface present path ---
+    // --- wgpu Surface present path ---
     let surface_texture = ws
         .surface
         .get_current_texture()
@@ -475,7 +420,7 @@ fn render_gpu_and_present_subtrees(
     ws.queue.submit([encoder.finish()]);
     ws.retained_hybrid_scene = Some(hybrid_scene);
     surface_texture.present();
-    Ok(())
+    Ok(true)
 }
 
 /// Render a partitioned RenderPlan: inline scene to base_texture, promoted
@@ -849,72 +794,6 @@ pub(crate) fn resize_surface(node_id: u32, width_px: u32, height_px: u32) {
     }
 }
 
-/// Cheap present: acquire surface texture, blit the existing base_texture
-/// (which may contain stale content from last full render), and present.
-/// Used during live resize throttling to avoid window server stretching.
-pub(crate) fn blit_and_present(node_id: u32) -> napi::Result<()> {
-    let mut surfaces = WINDOW_SURFACES
-        .lock()
-        .expect("surface_renderer mutex poisoned");
-    let Some(WindowRenderMode::Gpu(ws)) = surfaces.get_mut(&node_id) else {
-        return Ok(());
-    };
-
-    let surface_texture = ws
-        .surface
-        .get_current_texture()
-        .map_err(|e| qt_error(format!("surface acquire failed: {e}")))?;
-    let surface_view = surface_texture
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-
-    let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("qt-solid-surface-blit-only-encoder"),
-    });
-
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("qt-solid-surface-blit-only-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &surface_view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_pipeline(&ws.blit_pipeline);
-        pass.set_bind_group(0, &ws.base_bind_group, &[]);
-        pass.draw(0..3, 0..1);
-    }
-
-    ws.queue.submit([encoder.finish()]);
-    surface_texture.present();
-    Ok(())
-}
-
-/// Return the raw CAMetalLayer pointer for the given surface (macOS only).
-/// Returns 0 if no surface exists for the node.
-#[cfg(target_os = "macos")]
-pub(crate) fn metal_layer_ptr(node_id: u32) -> u64 {
-    let surfaces = WINDOW_SURFACES
-        .lock()
-        .expect("surface_renderer mutex poisoned");
-    surfaces
-        .get(&node_id)
-        .and_then(|mode| match mode {
-            WindowRenderMode::Gpu(ws) => Some(ws.metal_layer_ptr.0 as u64),
-            _ => None,
-        })
-        .unwrap_or(0)
-}
-
 fn create_window_surface(
     target: qt_compositor::QtCompositorTarget,
 ) -> Result<WindowSurface, SurfaceCreationError> {
@@ -946,11 +825,10 @@ fn create_window_surface_with_backends(
     });
 
     #[cfg(target_os = "macos")]
-    let (surface, metal_layer_ptr) = {
+    let surface = {
         let ns_view = NonNull::new(target.primary_handle as *mut c_void)
             .ok_or_else(|| SurfaceCreationError::NoGpu("NSView handle is null".into()))?;
-        let layer = unsafe { raw_window_metal::Layer::from_ns_view(ns_view) };
-        let layer_ptr = layer.as_ptr().as_ptr() as *mut c_void;
+        let layer_ptr = qt_compositor::resolve_metal_layer_for_ns_view(ns_view).as_ptr();
         let surface = unsafe {
             instance
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
@@ -958,9 +836,7 @@ fn create_window_surface_with_backends(
                 ))
                 .map_err(|e| SurfaceCreationError::NoGpu(format!("create surface: {e}")))?
         };
-        // Leak the Layer so the CAMetalLayer stays alive for the surface lifetime.
-        std::mem::forget(layer);
-        (surface, SendPtr(layer_ptr))
+        surface
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -1233,10 +1109,6 @@ fn create_window_surface_with_backends(
         retained_hybrid_scene: None,
         zero_buffer: None,
         subtree_recordings: HashMap::new(),
-        #[cfg(target_os = "macos")]
-        metal_layer_ptr,
-        #[cfg(target_os = "macos")]
-        metal_present: None,
     })
 }
 
@@ -1492,301 +1364,3 @@ fn clear_texture_rect(
     );
 }
 
-// ---------------------------------------------------------------------------
-// macOS: Raw Metal present to CAMetalDisplayLink drawable
-// ---------------------------------------------------------------------------
-#[cfg(target_os = "macos")]
-mod metal_present {
-    use std::ffi::c_void;
-    use std::ptr::NonNull;
-
-    use foreign_types::ForeignType;
-    use objc2::rc::Retained;
-    use objc2::runtime::ProtocolObject;
-    use objc2_metal::{
-        MTLBlendFactor, MTLBlendOperation, MTLClearColor, MTLCommandBuffer, MTLCommandEncoder,
-        MTLCommandQueue, MTLCompileOptions, MTLDevice, MTLDrawable, MTLLibrary,
-        MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
-        MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState,
-        MTLResource, MTLSamplerAddressMode, MTLSamplerDescriptor, MTLSamplerMinMagFilter,
-        MTLSamplerMipFilter, MTLSamplerState, MTLScissorRect, MTLStoreAction, MTLTexture,
-    };
-    use objc2_quartz_core::CAMetalDrawable;
-    use objc2_foundation::NSString;
-    use vello::wgpu;
-
-    use crate::runtime::qt_error;
-
-    /// Map an sRGB pixel format to its non-sRGB counterpart.
-    /// vello writes sRGB-encoded values into Rgba8Unorm, so the blit target
-    /// must be non-sRGB to avoid a double linear→sRGB conversion.
-    fn non_srgb_format(format: MTLPixelFormat) -> MTLPixelFormat {
-        match format {
-            MTLPixelFormat::BGRA8Unorm_sRGB => MTLPixelFormat::BGRA8Unorm,
-            MTLPixelFormat::RGBA8Unorm_sRGB => MTLPixelFormat::RGBA8Unorm,
-            other => other,
-        }
-    }
-
-    /// Cached Metal pipeline state for raw drawable present.
-    /// Created lazily on first raw present, then reused across frames.
-    pub(super) struct MetalPresentState {
-        pipeline: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
-        sampler: Retained<ProtocolObject<dyn MTLSamplerState>>,
-    }
-
-    /// Simple fullscreen quad vertex: NDC position + UV + opacity.
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct QuadVertex {
-        px: f32,
-        py: f32,
-        u: f32,
-        v: f32,
-        opacity: f32,
-        padding: f32,
-    }
-
-    const METAL_BLIT_SHADER: &str = r#"
-#include <metal_stdlib>
-using namespace metal;
-
-struct QuadVertex {
-    float px;
-    float py;
-    float u;
-    float v;
-    float opacity;
-    float padding;
-};
-
-struct VertexOut {
-    float4 position [[position]];
-    float2 uv;
-    float opacity;
-};
-
-vertex VertexOut blit_vertex(uint vid [[vertex_id]],
-                             constant QuadVertex *vertices [[buffer(0)]]) {
-    VertexOut out;
-    out.position = float4(float2(vertices[vid].px, vertices[vid].py), 0.0, 1.0);
-    out.uv = float2(vertices[vid].u, vertices[vid].v);
-    out.opacity = vertices[vid].opacity;
-    return out;
-}
-
-fragment float4 blit_fragment(VertexOut in [[stage_in]],
-                              texture2d<float> tex [[texture(0)]],
-                              sampler smp [[sampler(0)]]) {
-    return tex.sample(smp, in.uv) * in.opacity;
-}
-"#;
-
-    fn create_metal_present_state(
-        device: &ProtocolObject<dyn MTLDevice>,
-        present_format: MTLPixelFormat,
-    ) -> napi::Result<MetalPresentState> {
-        let options = MTLCompileOptions::new();
-        let source = NSString::from_str(METAL_BLIT_SHADER);
-        let library = device
-            .newLibraryWithSource_options_error(&source, Some(&options))
-            .map_err(|e| qt_error(format!("raw metal present: shader compile failed: {e}")))?;
-
-        let vertex_fn = library
-            .newFunctionWithName(&NSString::from_str("blit_vertex"))
-            .ok_or_else(|| qt_error("raw metal present: missing vertex fn"))?;
-        let fragment_fn = library
-            .newFunctionWithName(&NSString::from_str("blit_fragment"))
-            .ok_or_else(|| qt_error("raw metal present: missing fragment fn"))?;
-
-        let descriptor = MTLRenderPipelineDescriptor::new();
-        descriptor.setLabel(Some(&NSString::from_str("qt-solid-raw-metal-blit")));
-        descriptor.setVertexFunction(Some(vertex_fn.as_ref()));
-        descriptor.setFragmentFunction(Some(fragment_fn.as_ref()));
-        let color_attachments = descriptor.colorAttachments();
-        let color_attachment = unsafe { color_attachments.objectAtIndexedSubscript(0) };
-        color_attachment.setPixelFormat(present_format);
-        color_attachment.setBlendingEnabled(true);
-        color_attachment.setRgbBlendOperation(MTLBlendOperation::Add);
-        color_attachment.setAlphaBlendOperation(MTLBlendOperation::Add);
-        color_attachment.setSourceRGBBlendFactor(MTLBlendFactor::One);
-        color_attachment.setSourceAlphaBlendFactor(MTLBlendFactor::One);
-        color_attachment.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-        color_attachment.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
-        let pipeline = device
-            .newRenderPipelineStateWithDescriptor_error(&descriptor)
-            .map_err(|e| qt_error(format!("raw metal present: pipeline creation failed: {e}")))?;
-
-        let sampler_desc = MTLSamplerDescriptor::new();
-        sampler_desc.setMinFilter(MTLSamplerMinMagFilter::Linear);
-        sampler_desc.setMagFilter(MTLSamplerMinMagFilter::Linear);
-        sampler_desc.setMipFilter(MTLSamplerMipFilter::NotMipmapped);
-        sampler_desc.setSAddressMode(MTLSamplerAddressMode::ClampToEdge);
-        sampler_desc.setTAddressMode(MTLSamplerAddressMode::ClampToEdge);
-        sampler_desc.setRAddressMode(MTLSamplerAddressMode::ClampToEdge);
-        let sampler = device
-            .newSamplerStateWithDescriptor(&sampler_desc)
-            .ok_or_else(|| qt_error("raw metal present: sampler creation failed"))?;
-
-        Ok(MetalPresentState {
-            pipeline,
-            sampler,
-        })
-    }
-
-    /// Present `source_texture` (a wgpu::Texture backed by Metal) to the
-    /// display-link drawable via a raw Metal render pass. Consumes
-    /// (takes ownership of) the drawable_handle.
-    ///
-    /// Uses the same underlying MTLCommandQueue as wgpu to ensure proper
-    /// GPU command ordering without explicit synchronization.
-    pub(super) fn raw_metal_present_to_drawable(
-        metal_present: &mut Option<MetalPresentState>,
-        wgpu_queue: &wgpu::Queue,
-        source_texture: &wgpu::Texture,
-        width_px: u32,
-        height_px: u32,
-        drawable_handle: u64,
-    ) -> napi::Result<()> {
-        // Take ownership of the drawable. Drop guard ensures release on error.
-        let drawable = unsafe {
-            Retained::from_raw(
-                drawable_handle as *mut ProtocolObject<dyn CAMetalDrawable>,
-            )
-        }
-        .ok_or_else(|| qt_error("raw metal present: drawable handle is null"))?;
-
-        let drawable_texture = drawable.texture();
-        let drawable_w = drawable_texture.width() as u32;
-        let drawable_h = drawable_texture.height() as u32;
-
-        // Size mismatch during resize — skip this frame, release drawable.
-        if drawable_w != width_px || drawable_h != height_px {
-            // drawable is dropped here, releasing it.
-            return Ok(());
-        }
-
-        // Extract raw Metal texture from the wgpu source texture.
-        let raw_source_texture = unsafe {
-            source_texture.as_hal::<wgpu_hal::metal::Api>()
-        }
-        .ok_or_else(|| qt_error("raw metal present: source texture is not Metal-backed"))?;
-
-        let raw_mtl_texture_ptr = unsafe {
-            raw_source_texture.raw_handle().as_ptr()
-                as *mut ProtocolObject<dyn MTLTexture>
-        };
-        // Borrow (do not take ownership of) the wgpu-owned Metal texture.
-        let source_mtl = unsafe { &*raw_mtl_texture_ptr };
-
-        // Use non-sRGB format for both pipeline and render target view.
-        // vello outputs sRGB-encoded values into Rgba8Unorm; writing to a
-        // non-sRGB view copies values verbatim (no double gamma).
-        let present_format = non_srgb_format(drawable_texture.pixelFormat());
-
-        // Ensure Metal present state is cached.
-        if metal_present.is_none() {
-            let device = drawable_texture.device();
-            *metal_present = Some(create_metal_present_state(
-                &device, present_format,
-            )?);
-        }
-        let mp = metal_present.as_ref().unwrap();
-
-        // Get the underlying MTLCommandQueue from wgpu — same queue ensures
-        // GPU command ordering (vello render completes before our blit reads).
-        let hal_queue = unsafe { wgpu_queue.as_hal::<wgpu_hal::metal::Api>() }
-            .ok_or_else(|| qt_error("raw metal present: wgpu queue is not Metal-backed"))?;
-        let raw_queue_guard = hal_queue.as_raw().lock();
-        let raw_queue_ptr = ForeignType::as_ptr(&*raw_queue_guard)
-            as *mut ProtocolObject<dyn MTLCommandQueue>;
-        let raw_queue: &ProtocolObject<dyn MTLCommandQueue> = unsafe { &*raw_queue_ptr };
-
-        // Create command buffer on the same queue as wgpu.
-        let command_buffer = raw_queue.commandBuffer().ok_or_else(|| {
-            qt_error("raw metal present: command buffer allocation failed")
-        })?;
-
-        // Create a non-sRGB texture view of the drawable texture to render
-        // into without automatic linear→sRGB conversion.
-        let target_view = drawable_texture.newTextureViewWithPixelFormat(present_format)
-        .ok_or_else(|| qt_error("raw metal present: failed to create non-sRGB texture view"))?;
-
-        // Set up render pass targeting the non-sRGB view.
-        let render_pass_descriptor = MTLRenderPassDescriptor::renderPassDescriptor();
-        let color_attachments = render_pass_descriptor.colorAttachments();
-        let color_attachment = unsafe { color_attachments.objectAtIndexedSubscript(0) };
-        color_attachment.setTexture(Some(target_view.as_ref()));
-        color_attachment.setLoadAction(MTLLoadAction::Clear);
-        color_attachment.setStoreAction(MTLStoreAction::Store);
-        color_attachment.setClearColor(MTLClearColor {
-            red: 0.0,
-            green: 0.0,
-            blue: 0.0,
-            alpha: 0.0,
-        });
-
-        let encoder = command_buffer
-            .renderCommandEncoderWithDescriptor(&render_pass_descriptor)
-            .ok_or_else(|| qt_error("raw metal present: render encoder allocation failed"))?;
-
-        encoder.setRenderPipelineState(mp.pipeline.as_ref());
-        unsafe {
-            encoder.setFragmentSamplerState_atIndex(Some(mp.sampler.as_ref()), 0);
-            encoder.setScissorRect(MTLScissorRect {
-                x: 0,
-                y: 0,
-                width: width_px.max(1) as usize,
-                height: height_px.max(1) as usize,
-            });
-        }
-
-        // Fullscreen quad: two triangles covering NDC [-1,1].
-        let vertices = [
-            QuadVertex { px: -1.0, py:  1.0, u: 0.0, v: 0.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px:  1.0, py:  1.0, u: 1.0, v: 0.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px: -1.0, py: -1.0, u: 0.0, v: 1.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px: -1.0, py: -1.0, u: 0.0, v: 1.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px:  1.0, py:  1.0, u: 1.0, v: 0.0, opacity: 1.0, padding: 0.0 },
-            QuadVertex { px:  1.0, py: -1.0, u: 1.0, v: 1.0, opacity: 1.0, padding: 0.0 },
-        ];
-
-        unsafe {
-            encoder.setVertexBytes_length_atIndex(
-                NonNull::new(vertices.as_ptr() as *mut c_void)
-                    .expect("quad vertices pointer should not be null"),
-                std::mem::size_of_val(&vertices),
-                0,
-            );
-            encoder.setFragmentTexture_atIndex(Some(source_mtl), 0);
-            encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 6);
-        }
-
-        encoder.endEncoding();
-
-        // Present the drawable and commit.
-        let drawable_protocol = unsafe {
-            &*(drawable.as_ref() as *const ProtocolObject<dyn CAMetalDrawable>
-                as *const ProtocolObject<dyn MTLDrawable>)
-        };
-        command_buffer.presentDrawable(drawable_protocol);
-        command_buffer.commit();
-
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "macos")]
-use metal_present::MetalPresentState;
-
-#[cfg(target_os = "macos")]
-fn raw_metal_present_to_drawable(
-    metal_present: &mut Option<MetalPresentState>,
-    wgpu_queue: &wgpu::Queue,
-    source_texture: &wgpu::Texture,
-    width_px: u32,
-    height_px: u32,
-    drawable_handle: u64,
-) -> napi::Result<()> {
-    metal_present::raw_metal_present_to_drawable(metal_present, wgpu_queue, source_texture, width_px, height_px, drawable_handle)
-}

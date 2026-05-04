@@ -31,7 +31,8 @@ pub(crate) fn node_frame_time(node: &impl NodeHandle) -> Result<VelloFrameTime> 
 pub(crate) fn qt_window_frame_tick(node_id: u32) -> Result<()> {
     let node = wrap_node_id(node_id)?;
     let window_id = node.inner().id;
-    crate::renderer::with_renderer_mut(|r| r.scheduler.tick_frame(window_id));
+    let now_ns = crate::qt::trace_now_ns();
+    crate::renderer::with_renderer_mut(|r| r.scheduler.tick_frame(window_id, now_ns));
     Ok(())
 }
 

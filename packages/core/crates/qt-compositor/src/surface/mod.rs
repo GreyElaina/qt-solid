@@ -96,7 +96,7 @@ pub unsafe fn compositor_surface_target(
     }
 }
 
-/// On macOS, find an existing `CAMetalLayer` sublayer (e.g. `RawWindowMetalLayer`)
+/// On macOS, find an existing `CAMetalLayer` sublayer (Qt's QMetalLayer)
 /// on the given NSView and return its pointer. If none exists, create one via
 /// `raw_window_metal::Layer::from_ns_view` and leak it so it lives for the
 /// surface lifetime. The returned pointer is suitable for
@@ -104,11 +104,6 @@ pub unsafe fn compositor_surface_target(
 ///
 /// Using `CoreAnimationLayer` instead of `RawHandle::AppKit` avoids wgpu-hal
 /// creating a second `WgpuObserverLayer` sublayer on the same view.
-///
-/// When an existing sublayer is reused, `setMaximumDrawableCount:` is patched
-/// to a no-op on its class so that a later `wgpu surface.configure()` does not
-/// trip the Apple restriction "should not be called when using
-/// CAMetalDisplayLink".
 #[cfg(target_os = "macos")]
 pub fn resolve_metal_layer_for_ns_view(ns_view: NonNull<c_void>) -> NonNull<c_void> {
     use objc2::msg_send;
@@ -127,7 +122,6 @@ pub fn resolve_metal_layer_for_ns_view(ns_view: NonNull<c_void>) -> NonNull<c_vo
             for i in 0..sublayers.count() {
                 let sub: &CALayer = unsafe { msg_send![&*sublayers, objectAtIndex: i] };
                 if sub.isKindOfClass(metal_cls) {
-                    patch_set_maximum_drawable_count_noop(sub);
                     let ptr = sub as *const CALayer as *mut c_void;
                     return NonNull::new(ptr).unwrap();
                 }
@@ -139,44 +133,6 @@ pub fn resolve_metal_layer_for_ns_view(ns_view: NonNull<c_void>) -> NonNull<c_vo
     let ptr = layer.as_ptr().as_ptr() as *mut c_void;
     std::mem::forget(layer);
     NonNull::new(ptr).unwrap()
-}
-
-/// Replace `setMaximumDrawableCount:` with a no-op on the concrete class of
-/// `layer`. This is safe because the layer is already managed by
-/// `CAMetalDisplayLink` which owns drawable count scheduling. Without this
-/// patch, wgpu's `surface.configure()` triggers an ObjC exception:
-/// "-setMaximumDrawableCount should not be called when using CAMetalDisplayLink."
-#[cfg(target_os = "macos")]
-fn patch_set_maximum_drawable_count_noop(layer: &objc2_quartz_core::CALayer) {
-    use std::sync::Once;
-
-    static PATCH: Once = Once::new();
-    PATCH.call_once(|| {
-        unsafe {
-            let cls = objc2::runtime::AnyObject::class(layer);
-            let cls_ptr = cls as *const objc2::runtime::AnyClass
-                as *mut objc2::runtime::AnyClass;
-            let sel = objc2::sel!(setMaximumDrawableCount:);
-
-            extern "C-unwind" fn noop_set_max_drawable_count(
-                _this: *mut std::ffi::c_void,
-                _cmd: *const std::ffi::c_void,
-                _count: u64,
-            ) {
-            }
-
-            let imp: objc2::runtime::Imp = std::mem::transmute(
-                noop_set_max_drawable_count as extern "C-unwind" fn(*mut std::ffi::c_void, *const std::ffi::c_void, u64),
-            );
-            let types = c"v@:Q";
-            objc2::ffi::class_replaceMethod(
-                cls_ptr,
-                sel,
-                imp,
-                types.as_ptr(),
-            );
-        }
-    });
 }
 
 fn texture_format(format: QtCompositorImageFormat) -> wgpu::TextureFormat {
