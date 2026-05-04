@@ -235,7 +235,7 @@ impl FragmentTree {
                 self.sync_taffy_children(parent);
                 self.any_dirty = true;
                 self.aabbs_dirty = true;
-        
+
                 self.invalidate_subtree_cache_for(child);
                 return;
             }
@@ -291,7 +291,6 @@ impl FragmentTree {
         self.sync_taffy_children(parent);
         self.any_dirty = true;
         self.aabbs_dirty = true;
-
     }
 
     pub fn remove(&mut self, id: FragmentId) {
@@ -329,7 +328,6 @@ impl FragmentTree {
         }
         self.any_dirty = true;
         self.aabbs_dirty = true;
-
     }
 
     pub fn node(&self, id: FragmentId) -> Option<&FragmentNode> {
@@ -427,7 +425,6 @@ impl FragmentTree {
             self.debug_highlight = id;
             // Debug overlay is cosmetic — just force scene rebuild, not full repaint.
             self.any_dirty = true;
-    
         }
     }
 
@@ -574,7 +571,7 @@ impl FragmentTree {
                 if node.props.explicit_x.is_none() || node.props.explicit_y.is_none() {
                     node.dirty = true;
                     self.any_dirty = true;
-            
+
                     layout_dirty_ids.push(id);
                     self.semantics_dirty.insert(id);
                 }
@@ -587,7 +584,7 @@ impl FragmentTree {
                 node.layout.height = lh;
                 node.dirty = true;
                 self.any_dirty = true;
-        
+
                 layout_dirty_ids.push(id);
                 self.semantics_dirty.insert(id);
             }

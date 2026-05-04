@@ -45,3 +45,4 @@ node_modules
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+docs/superpowers/specs/2026-05-02-keybind-system-design.md
