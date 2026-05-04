@@ -5,7 +5,7 @@ use vello_hybrid::Renderer;
 
 use crate::canvas::vello::Scene;
 
-pub(crate) type HybridImageCache = FxHashMap<u64, ImageId>;
+pub(crate) type ImageCache = FxHashMap<u64, ImageId>;
 
 /// Collect live image Blob IDs from a recorded scene, then destroy any
 /// cached atlas entries that are no longer referenced.
@@ -15,7 +15,7 @@ pub(crate) fn sweep_stale_images(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
-    image_cache: &mut HybridImageCache,
+    image_cache: &mut ImageCache,
 ) {
     use anyrender::recording::RenderCommand;
     use peniko::Brush;

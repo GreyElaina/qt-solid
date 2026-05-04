@@ -3,7 +3,6 @@ members = [
     "packages/core/crates/native",
     "packages/core/crates/window-host",
 
-    "packages/core/crates/qt-compositor",
     "packages/core/crates/motion",
     "packages/core/macros/fragment-derive", "packages/core/crates/qt-host",
 ]

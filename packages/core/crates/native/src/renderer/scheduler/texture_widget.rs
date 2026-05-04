@@ -9,7 +9,6 @@ use crate::{
 };
 
 use super::capture_qt_widget_exact_with_children;
-use super::compositor_target_to_renderer;
 use super::frame_clock::{node_frame_time, window_ancestor_id_for_node};
 
 use crate::canvas::fragment as fragment_store;
@@ -42,7 +41,7 @@ pub(crate) fn capture_vello_widget_exact(node: &impl NodeHandle) -> Result<Optio
     let time = node_frame_time(&window)?;
     let layout = qt::qt_capture_widget_layout(node.inner().id)
         .map_err(|error| qt_error(error.what().to_owned()))?;
-    let render_target = compositor_target_to_renderer(target)?;
+    let render_target = target;
 
     let node_id = node.inner().id;
     let now = crate::qt::trace_now_ns() as f64 / 1_000_000_000.0;

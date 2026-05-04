@@ -1,37 +1,7 @@
+pub(crate) mod types;
 pub(crate) mod compositor;
 pub(crate) mod offscreen;
 pub(crate) mod scheduler;
-
-// qt-compositor crate usage from native:
-//
-// Types:
-//   QtCompositorTarget          — surface handle + dimensions carrier
-//   QtCompositorError / Result  — error type used by offscreen/cpu and wgpu_hybrid
-//   QT_COMPOSITOR_SURFACE_*    — surface kind constants
-//
-// Platform / display-link:
-//   load_or_create_compositor() — creates platform compositor, used for:
-//     .begin_drive()            — marks frame drive start
-//     .request_frame()          — wakes display-link
-//     .should_run_frame_source()— queries display-link run state
-//     .layer_handle()           — CAMetalLayer pointer (macOS)
-//   release_metal_drawable()    — releases display-link drawable (macOS)
-//   destroy_compositor()        — tears down platform compositor
-//
-// Surface utilities:
-//   compositor_surface_target() — raw window handle conversion (non-macOS)
-//   with_window_compositor_device_queue() — borrows wgpu device/queue for offscreen capture
-//
-// Readiness query (NOTE: queries qt-compositor's own state, not our compositor's):
-//   compositor_frame_is_initialized() — used by C++ to check if first frame rendered
-//
-// Not used in active render path:
-//   Compositor::present_frame   — upload-based present, bypassed by our compositor
-//   QtCompositorBaseUpload      — CPU upload structs, not used
-//   QtCompositorLayerUpload     — layer upload structs, not used
-//   prepare_compositor_frame    — not called
-//   present_compositor_frame    — not called
-//   present_compositor_frame_async — not called
 
 use std::collections::HashMap;
 use std::sync::Mutex;

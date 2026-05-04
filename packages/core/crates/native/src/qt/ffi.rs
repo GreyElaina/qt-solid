@@ -264,11 +264,10 @@ pub(crate) mod bridge {
             node_id: u32,
             target: QtCompositorTarget,
         ) -> Result<QtWindowCompositorDriveStatus>;
-        fn qt_window_compositor_frame_is_initialized(target: QtCompositorTarget) -> Result<bool>;
-        fn qt_window_compositor_request_frame(target: QtCompositorTarget) -> Result<bool>;
-        fn qt_window_compositor_display_link_should_run(target: QtCompositorTarget)
-        -> Result<bool>;
-        fn qt_destroy_window_compositor(target: QtCompositorTarget) -> Result<()>;
+        fn qt_window_compositor_frame_is_initialized(node_id: u32) -> Result<bool>;
+        fn qt_window_compositor_request_frame(node_id: u32) -> Result<bool>;
+        fn qt_window_compositor_display_link_should_run(node_id: u32) -> Result<bool>;
+        fn qt_destroy_window_compositor(node_id: u32) -> Result<()>;
         fn qt_window_motion_hit_test(
             window_id: u32,
             screen_x: i32,
@@ -424,7 +423,7 @@ pub(crate) mod bridge {
 }
 
 pub(crate) use bridge::{
-    QtClipboardEntry, QtCompositorSurfaceKind, QtCompositorTarget, QtRealizedNodeState,
+    QtClipboardEntry, QtCompositorTarget, QtRealizedNodeState,
     QtWindowCompositorDriveStatus, debug_clear_highlight, debug_click_node, debug_close_node,
     debug_highlight_node, debug_input_insert_text, debug_node_at_point, debug_node_bounds,
     debug_set_inspect_mode, focus_widget, get_screen_geometry, get_widget_size_hint,
@@ -825,54 +824,43 @@ pub(crate) fn qt_drive_window_compositor_frame(
     node_id: u32,
     target: QtCompositorTarget,
 ) -> napi::Result<QtWindowCompositorDriveStatus> {
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)?;
-    #[cfg(not(target_os = "macos"))]
-    qt_compositor::compositor_actor::register_surface_node_id(render_target.surface_key(), node_id);
-    qt_compositor::load_or_create_compositor(render_target)
-        .and_then(|compositor| compositor.begin_drive(render_target))
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
+    let render_target = ffi_target_to_surface(target)?;
+    crate::renderer::with_renderer_mut(|r| {
+        let frame = r.scheduler.frame_state_mut(node_id);
+        frame.requested = false;
+        #[cfg(not(target_os = "macos"))]
+        frame.ensure_frame_signal(node_id).stop();
+    });
     crate::renderer::scheduler::frame_clock::qt_window_frame_tick(node_id)?;
-    crate::renderer::scheduler::pipeline::drive_frame(node_id, target)
+    crate::renderer::scheduler::pipeline::drive_fragment_surface_frame(node_id, render_target)
 }
 
-pub(crate) fn qt_window_compositor_frame_is_initialized(
-    target: QtCompositorTarget,
-) -> napi::Result<bool> {
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    Ok(qt_compositor::compositor_frame_is_initialized(
-        render_target,
-    ))
+pub(crate) fn qt_window_compositor_frame_is_initialized(node_id: u32) -> napi::Result<bool> {
+    Ok(crate::renderer::with_renderer(|r| r.scheduler.is_configured(node_id)))
 }
 
-pub(crate) fn qt_window_compositor_request_frame(target: QtCompositorTarget) -> napi::Result<bool> {
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    qt_compositor::load_or_create_compositor(render_target)
-        .and_then(|compositor| {
-            compositor.request_frame(
-                render_target,
-                qt_compositor::FrameReason::OverlayInvalidated,
-            )
-        })
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))
+pub(crate) fn qt_window_compositor_request_frame(node_id: u32) -> napi::Result<bool> {
+    crate::renderer::with_renderer_mut(|r| {
+        let frame = r.scheduler.frame_state_mut(node_id);
+        frame.requested = true;
+        #[cfg(not(target_os = "macos"))]
+        frame.ensure_frame_signal(node_id).start();
+    });
+    Ok(true)
 }
 
-pub(crate) fn qt_window_compositor_display_link_should_run(
-    target: QtCompositorTarget,
-) -> napi::Result<bool> {
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    Ok(qt_compositor::load_or_create_compositor(render_target)
-        .map(|compositor| compositor.should_run_frame_source())
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?)
+pub(crate) fn qt_window_compositor_display_link_should_run(node_id: u32) -> napi::Result<bool> {
+    Ok(crate::renderer::with_renderer(|r| {
+        r.scheduler.frame_state(node_id).is_some_and(|s| s.requested)
+    }))
 }
 
-pub(crate) fn qt_destroy_window_compositor(target: QtCompositorTarget) -> napi::Result<()> {
-    let render_target = crate::renderer::scheduler::compositor_target_to_renderer(target)
-        .map_err(|error| crate::runtime::qt_error(error.to_string()))?;
-    #[cfg(target_os = "macos")]
-    qt_compositor::destroy_compositor(render_target);
+pub(crate) fn qt_destroy_window_compositor(node_id: u32) -> napi::Result<()> {
+    crate::renderer::with_renderer_mut(|r| {
+        r.scheduler.remove_frame_state(node_id);
+    });
+    #[cfg(not(target_os = "macos"))]
+    crate::renderer::compositor::surface::destroy_window_compositor_by_node(node_id);
     Ok(())
 }
 
@@ -914,4 +902,48 @@ pub(crate) fn trace_cpp_stage(
     detail: &str,
 ) {
     super::runtime::trace_cpp_stage(trace_id, stage, node_id, prop_id, detail);
+}
+
+fn ffi_target_to_surface(
+    target: QtCompositorTarget,
+) -> napi::Result<crate::renderer::types::SurfaceTarget> {
+    use std::ffi::c_void;
+    use std::num::{NonZeroIsize, NonZeroU32};
+    use std::ptr::NonNull;
+    use crate::renderer::types::{SurfaceHandle, SurfaceTarget};
+    use crate::runtime::qt_error;
+
+    let handle = match target.surface_kind {
+        bridge::QtCompositorSurfaceKind::AppKitNsView => {
+            let ptr = NonNull::new(target.primary_handle as *mut c_void)
+                .ok_or_else(|| qt_error("NSView handle is null"))?;
+            SurfaceHandle::AppKit(ptr)
+        }
+        bridge::QtCompositorSurfaceKind::Win32Hwnd => {
+            let hwnd = NonZeroIsize::new(target.primary_handle as isize)
+                .ok_or_else(|| qt_error("HWND handle is null"))?;
+            SurfaceHandle::Win32(hwnd)
+        }
+        bridge::QtCompositorSurfaceKind::XcbWindow => {
+            let window = NonZeroU32::new(target.primary_handle as u32)
+                .ok_or_else(|| qt_error("XCB window handle is null"))?;
+            let connection = NonNull::new(target.secondary_handle as *mut c_void)
+                .ok_or_else(|| qt_error("XCB connection handle is null"))?;
+            SurfaceHandle::Xcb { window, connection }
+        }
+        bridge::QtCompositorSurfaceKind::WaylandSurface => {
+            let surface = NonNull::new(target.primary_handle as *mut c_void)
+                .ok_or_else(|| qt_error("Wayland surface handle is null"))?;
+            let display = NonNull::new(target.secondary_handle as *mut c_void)
+                .ok_or_else(|| qt_error("Wayland display handle is null"))?;
+            SurfaceHandle::Wayland { surface, display }
+        }
+        _ => return Err(qt_error("unsupported compositor surface kind")),
+    };
+
+    Ok(SurfaceTarget {
+        handle,
+        width_px: target.width_px,
+        height_px: target.height_px,
+    })
 }

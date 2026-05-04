@@ -10,11 +10,11 @@ pub(crate) struct QtWgpuRendererBuildSpec {
 pub(crate) fn spec() -> QtWgpuRendererBuildSpec {
     QtWgpuRendererBuildSpec {
         rerun_if_changed: &[
-            "../qt-compositor/include/qt_wgpu_platform.h",
-            "../qt-compositor/src/cpp/qt_wgpu_platform.cpp",
+            "include/qt/wgpu_platform.h",
+            "src/qt/cpp/platform_plugin/qt_wgpu_platform.cpp",
         ],
-        include_dirs: &["../qt-compositor/include"],
-        cpp_sources: &["../qt-compositor/src/cpp/qt_wgpu_platform.cpp"],
+        include_dirs: &["include"],
+        cpp_sources: &["src/qt/cpp/platform_plugin/qt_wgpu_platform.cpp"],
         objc_sources: &[],
     }
 }
