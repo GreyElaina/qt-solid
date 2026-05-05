@@ -8,18 +8,13 @@ import {
   type JSX,
 } from "solid-js"
 import type { QtNode } from "@qt-solid/core/native"
-import {
-  getNodeBounds,
-  getScreenGeometry,
-  getWidgetSizeHint,
-  setWindowTransientOwner,
-} from "@qt-solid/core/native"
 
 import {
-  createElement as createQtElement,
-  insertNode as insertQtNode,
-  setProp as setQtProp,
-  spread as spreadQtProps,
+  createNativeWidget,
+  insertNativeWidget,
+  removeNativeWidget,
+  spreadWidgetProps,
+  setWidgetProp,
   nativeRoot,
 } from "../../runtime/renderer.ts"
 
@@ -29,15 +24,15 @@ import type { TooltipProps } from "./types.ts"
 type Placement = "bottom" | "top" | "right" | "left"
 
 function computeTooltipPosition(
-  anchorId: number,
-  tooltipNodeId: number,
+  anchor: QtNode,
+  tooltip: QtNode,
   placement: Placement,
 ): { x: number; y: number } | undefined {
-  const bounds = getNodeBounds(anchorId)
+  const bounds = anchor.getBounds()
   if (!bounds.visible) return undefined
 
-  const screen = getScreenGeometry(anchorId)
-  const hint = getWidgetSizeHint(tooltipNodeId)
+  const screen = anchor.getScreenGeometry()
+  const hint = tooltip.getWidgetSizeHint()
   const pw = hint.width
   const ph = hint.height
 
@@ -85,14 +80,14 @@ export interface UseTooltipOptions {
 export interface UseTooltipResult {
   onHoverEnter: () => void
   onHoverLeave: () => void
-  setAnchor: (node: { readonly id: number }) => void
+  setAnchor: (node: QtNode) => void
   Portal: Component
 }
 
 export function useTooltip(options: UseTooltipOptions): UseTooltipResult {
   const [hovered, setHovered] = createSignal(false)
   const [visible, setVisible] = createSignal(false)
-  const [anchor, setAnchor] = createSignal<{ readonly id: number }>()
+  const [anchor, setAnchor] = createSignal<QtNode>()
 
   const hoverDelay = () => options.hoverDelay ?? 500
   const hideDelay = () => options.hideDelay ?? 200
@@ -120,12 +115,12 @@ export function useTooltip(options: UseTooltipOptions): UseTooltipResult {
   const Portal: Component = () => {
     const root = nativeRoot()
 
-    const node = createQtElement("window")
-    const tooltipNode = node as unknown as QtNode
+    const widgetNode = createNativeWidget()
+    const tooltipNode = widgetNode.qtNode
 
-    setQtProp(node, "visible", false, undefined)
-    spreadQtProps(node, tooltipPropsFrom(options.content))
-    insertQtNode(root, node)
+    setWidgetProp(widgetNode, "visible", false, undefined)
+    spreadWidgetProps(widgetNode, tooltipPropsFrom(options.content))
+    insertNativeWidget(root, widgetNode)
 
     let previousVisible = false
     createEffect(() => {
@@ -134,24 +129,23 @@ export function useTooltip(options: UseTooltipOptions): UseTooltipResult {
 
       if (nextVisible && anchorNode) {
         const pos = computeTooltipPosition(
-          anchorNode.id,
-          tooltipNode.id,
+          anchorNode,
+          tooltipNode,
           options.placement ?? "bottom",
         )
         if (pos) {
-          setQtProp(node, "screenX", pos.x, undefined)
-          setQtProp(node, "screenY", pos.y, undefined)
+          setWidgetProp(widgetNode, "screenX", pos.x, undefined)
+          setWidgetProp(widgetNode, "screenY", pos.y, undefined)
         }
-        setWindowTransientOwner(tooltipNode.id, anchorNode.id)
+        tooltipNode.setTransientOwner(anchorNode.id)
       }
 
-      setQtProp(node, "visible", nextVisible, previousVisible)
+      setWidgetProp(widgetNode, "visible", nextVisible, previousVisible)
       previousVisible = nextVisible
     })
 
     onCleanup(() => {
-      root.removeChild(node)
-      node.destroy()
+      removeNativeWidget(root, widgetNode)
     })
 
     return null!

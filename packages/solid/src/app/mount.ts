@@ -1,8 +1,7 @@
 import { createComponent, createContext, createRoot, type JSX } from "solid-js"
 import type { QtApp } from "@qt-solid/core"
 
-import { _render as renderQtTree, initRenderer, handleEvent, nativeRoot } from "../runtime/renderer.ts"
-import type { QtRendererNode } from "../runtime/renderer.ts"
+import { initRenderer, handleEvent, nativeRoot, destroyChildWidgets } from "../runtime/renderer.ts"
 
 import type { RenderQtOptions } from "./types.ts"
 
@@ -16,15 +15,6 @@ export interface AppWindowLifecycle {
 const ACTIVE_QT_MOUNTS = new WeakMap<QtApp, { dispose: () => void }>()
 
 export const QtAppWindowLifecycleContext = createContext<AppWindowLifecycle | undefined>(undefined)
-
-function destroyRootChildren(root: QtRendererNode): void {
-  let child = root.firstChild
-  while (child) {
-    const next = child.nextSibling
-    child.destroy()
-    child = next
-  }
-}
 
 function mountQtRoot(
   node: () => JSX.Element,
@@ -93,25 +83,21 @@ function mountQtRoot(
 
   try {
     disposeRoot = createRoot((dispose) => {
-      const renderDispose = renderQtTree(
-        () => {
-          if (!windowLifecycle) {
+      // Window components are portals — they insert themselves into root.
+      // We just need to execute the user's render function within a reactive root.
+      if (!windowLifecycle) {
+        node()
+      } else {
+        createComponent(QtAppWindowLifecycleContext.Provider, {
+          value: windowLifecycle,
+          get children() {
             return node()
-          }
-
-          return createComponent(QtAppWindowLifecycleContext.Provider, {
-            value: windowLifecycle,
-            get children() {
-              return node()
-            },
-          })
-        },
-        root,
-      )
+          },
+        })
+      }
 
       return () => {
-        renderDispose()
-        destroyRootChildren(root)
+        destroyChildWidgets(root)
         dispose()
       }
     })

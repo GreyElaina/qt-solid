@@ -11,15 +11,18 @@ import {
 import type { QtNode } from "@qt-solid/core/native"
 
 import {
-  createElement as createQtElement,
   insert as insertInto,
-  setProp as setQtProp,
-  spread as spreadQtProps,
+  createNativeWidget,
+  insertNativeWidget,
+  removeNativeWidget,
+  spreadWidgetProps,
+  setWidgetProp,
   createCanvasFragmentBinding,
   destroyCanvasFragmentBinding,
   registerCanvasBinding,
   unregisterCanvasBinding,
   CanvasScopeContext,
+  nativeRoot,
 } from "../../runtime/renderer.ts"
 
 import { createApp } from "../app.ts"
@@ -32,27 +35,30 @@ export function useWindow(source: WindowSource): WindowComposable {
   const read = toAccessor(source)
 
   return (children) => {
-    const node = createQtElement("window")
-    const windowNode = node as unknown as QtNode
-    spreadQtProps(node, windowPropsFrom(read))
+    const widgetNode = createNativeWidget()
+    spreadWidgetProps(widgetNode, windowPropsFrom(read))
 
-    const fragmentBinding = createCanvasFragmentBinding(windowNode.id)
-    registerCanvasBinding(windowNode.id, fragmentBinding.root)
+    const fragmentBinding = createCanvasFragmentBinding(widgetNode.qtNode)
+    registerCanvasBinding(widgetNode.id, fragmentBinding.root)
+
+    const root = nativeRoot()
+    insertNativeWidget(root, widgetNode)
 
     onCleanup(() => {
-      unregisterCanvasBinding(windowNode.id)
-      destroyCanvasFragmentBinding(windowNode.id)
+      unregisterCanvasBinding(widgetNode.id)
+      destroyCanvasFragmentBinding(widgetNode.id)
+      removeNativeWidget(root, widgetNode)
     })
 
     createComponent(CanvasScopeContext.Provider, {
-      value: { canvasNodeId: windowNode.id, root: fragmentBinding.root },
+      value: { hostNode: widgetNode.qtNode, root: fragmentBinding.root },
       get children() {
         insertInto(fragmentBinding.root, children)
         return undefined
       },
     })
 
-    return node
+    return undefined as unknown as JSX.Element
   }
 }
 
@@ -108,11 +114,10 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
       windowLifecycle?.unregisterWindow(windowKey)
     })
 
-    const node = createQtElement("window")
-    currentNode = node as unknown as QtNode
-    const windowNode = node as unknown as QtNode
-    spreadQtProps(
-      node,
+    const widgetNode = createNativeWidget()
+    currentNode = widgetNode.qtNode
+    spreadWidgetProps(
+      widgetNode,
       extendProps(windowPropsFrom(read), {
         onCloseRequested: {
           enumerable: true,
@@ -125,16 +130,20 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
       }),
     )
 
-    const fragmentBinding = createCanvasFragmentBinding(windowNode.id)
-    registerCanvasBinding(windowNode.id, fragmentBinding.root)
+    const fragmentBinding = createCanvasFragmentBinding(widgetNode.qtNode)
+    registerCanvasBinding(widgetNode.id, fragmentBinding.root)
+
+    const root = nativeRoot()
+    insertNativeWidget(root, widgetNode)
 
     onCleanup(() => {
-      unregisterCanvasBinding(windowNode.id)
-      destroyCanvasFragmentBinding(windowNode.id)
+      unregisterCanvasBinding(widgetNode.id)
+      destroyCanvasFragmentBinding(widgetNode.id)
+      removeNativeWidget(root, widgetNode)
     })
 
     createComponent(CanvasScopeContext.Provider, {
-      value: { canvasNodeId: windowNode.id, root: fragmentBinding.root },
+      value: { hostNode: widgetNode.qtNode, root: fragmentBinding.root },
       get children() {
         insertInto(fragmentBinding.root, body)
         return undefined
@@ -142,7 +151,7 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
     })
 
     onCleanup(() => {
-      if (currentNode === (node as unknown as QtNode)) {
+      if (currentNode === widgetNode.qtNode) {
         currentNode = undefined
       }
     })
@@ -150,11 +159,11 @@ export function createWindow(source: WindowSource, body: () => JSX.Element): Win
     let previousVisible = read().visible
     createEffect(() => {
       const nextVisible = read().visible ?? !disposed()
-      setQtProp(node, "visible", nextVisible, previousVisible)
+      setWidgetProp(widgetNode, "visible", nextVisible, previousVisible)
       previousVisible = nextVisible
     })
 
-    return node
+    return undefined as unknown as JSX.Element
   }
 
   const render = () => createComponent(WindowMount, {})

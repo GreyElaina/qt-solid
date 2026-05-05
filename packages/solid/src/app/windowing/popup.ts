@@ -12,20 +12,16 @@ import {
 } from "solid-js"
 import type { QtNode } from "@qt-solid/core/native"
 import {
-  focusWidget,
-  getNodeBounds,
-  getScreenGeometry,
-  getWidgetSizeHint,
-  setWindowTransientOwner,
   canvasComputeIntrinsicSize,
 } from "@qt-solid/core/native"
 
 import {
-  createElement as createQtElement,
   insert as insertInto,
-  insertNode as insertQtNode,
-  setProp as setQtProp,
-  spread as spreadQtProps,
+  createNativeWidget,
+  insertNativeWidget,
+  removeNativeWidget,
+  spreadWidgetProps,
+  setWidgetProp,
   createCanvasFragmentBinding,
   destroyCanvasFragmentBinding,
   registerCanvasBinding,
@@ -46,16 +42,16 @@ const PopupOwnerContext = createContext<PopupOwnerState | null>(null)
 
 function computePopupPosition(
   props: PopupProps,
-  popupNodeId: number,
+  popup: QtNode,
   measuredSize?: { width: number; height: number },
 ): { x: number; y: number } | undefined {
   const anchor = props.anchor
   if (anchor) {
-    const bounds = getNodeBounds(anchor.id)
+    const bounds = anchor.getBounds()
     if (!bounds.visible) return undefined
 
-    const screen = getScreenGeometry(anchor.id)
-    const fallback = measuredSize ?? getWidgetSizeHint(popupNodeId)
+    const screen = anchor.getScreenGeometry()
+    const fallback = measuredSize ?? popup.getWidgetSizeHint()
     const popupWidth = props.width ?? fallback.width
     const popupHeight = props.height ?? fallback.height
     const placement = props.placement ?? "bottom"
@@ -121,11 +117,11 @@ export function usePopup(source: PopupSource): PopupComposable {
 
     const parentPopup = useContext(PopupOwnerContext)
 
-    const node = createQtElement("window")
-    const popupNode = node as unknown as QtNode
+    const widgetNode = createNativeWidget()
+    const popupNode = widgetNode.qtNode
 
     // Force hidden before insertion — native window default is visible
-    setQtProp(node, "visible", false, undefined)
+    setWidgetProp(widgetNode, "visible", false, undefined)
 
     // Cascade dismiss: this popup's dismiss also dismisses parent chain unless stopped
     const dismissAll = () => {
@@ -142,8 +138,8 @@ export function usePopup(source: PopupSource): PopupComposable {
     // Window props — popup effect owns visible separately, so exclude it from spread
     const baseWindowProps = windowPropsFrom(read as unknown as Accessor<WindowProps>)
     const { visible: _v, ...windowPropsNoVisible } = Object.getOwnPropertyDescriptors(baseWindowProps)
-    spreadQtProps(
-      node,
+    spreadWidgetProps(
+      widgetNode,
       extendProps(
         Object.defineProperties({}, windowPropsNoVisible),
         {
@@ -155,7 +151,7 @@ export function usePopup(source: PopupSource): PopupComposable {
     )
 
     // Canvas fragment binding — popup window needs its own canvas to host fragment children
-    const fragmentBinding = createCanvasFragmentBinding(popupNode.id)
+    const fragmentBinding = createCanvasFragmentBinding(popupNode)
     registerCanvasBinding(popupNode.id, fragmentBinding.root)
 
     onCleanup(() => {
@@ -170,7 +166,7 @@ export function usePopup(source: PopupSource): PopupComposable {
     }
 
     createComponent(CanvasScopeContext.Provider, {
-      value: { canvasNodeId: popupNode.id, root: fragmentBinding.root },
+      value: { hostNode: popupNode, root: fragmentBinding.root },
       get children() {
         const resolved = resolveChildren(children)
         insertInto(fragmentBinding.root, () =>
@@ -184,7 +180,7 @@ export function usePopup(source: PopupSource): PopupComposable {
     })
 
     // Portal: insert popup window into root, not into the JSX parent
-    insertQtNode(root, node)
+    insertNativeWidget(root, widgetNode)
 
     // Single effect owns position + transient owner + visibility
     let previousVisible = false
@@ -192,10 +188,10 @@ export function usePopup(source: PopupSource): PopupComposable {
 
     const applyPosition = (measured?: { width: number; height: number }) => {
       const props = read()
-      const pos = computePopupPosition(props, popupNode.id, measured)
+      const pos = computePopupPosition(props, popupNode, measured)
       if (pos) {
-        setQtProp(node, "screenX", pos.x, undefined)
-        setQtProp(node, "screenY", pos.y, undefined)
+        setWidgetProp(widgetNode, "screenX", pos.x, undefined)
+        setWidgetProp(widgetNode, "screenY", pos.y, undefined)
       }
     }
 
@@ -219,8 +215,8 @@ export function usePopup(source: PopupSource): PopupComposable {
           : undefined
 
         if (measured) {
-          setQtProp(node, "width", measured.width, undefined)
-          setQtProp(node, "height", measured.height, undefined)
+          setWidgetProp(widgetNode, "width", measured.width, undefined)
+          setWidgetProp(widgetNode, "height", measured.height, undefined)
         }
 
         applyPosition(measured)
@@ -229,14 +225,14 @@ export function usePopup(source: PopupSource): PopupComposable {
         // Transient owner: prefer parent popup, then anchor's window
         const ownerId = parentPopup?.id ?? props.anchor?.id
         if (ownerId != null) {
-          setWindowTransientOwner(popupNode.id, ownerId)
+          popupNode.setTransientOwner(ownerId)
         }
       }
 
-      setQtProp(node, "visible", nextVisible, previousVisible)
+      setWidgetProp(widgetNode, "visible", nextVisible, previousVisible)
 
       if (!nextVisible && previousVisible && props.anchor) {
-        focusWidget(props.anchor.id)
+        props.anchor.focus()
       }
 
       previousVisible = nextVisible
@@ -246,8 +242,7 @@ export function usePopup(source: PopupSource): PopupComposable {
       if (positionRetryTimer != null) {
         clearTimeout(positionRetryTimer)
       }
-      root.removeChild(node)
-      node.destroy()
+      removeNativeWidget(root, widgetNode)
     })
 
     return null!

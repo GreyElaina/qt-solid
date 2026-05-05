@@ -1,4 +1,5 @@
 import type { Accessor, JSX } from "solid-js";
+import type { QtNode } from "@qt-solid/core/native";
 import type {
   ViewIntrinsicProps,
   WindowIntrinsicProps,
@@ -21,7 +22,7 @@ export interface PopupDismissEvent {
 
 export interface PopupProps extends ViewProps {
   visible?: boolean;
-  anchor?: { readonly id: number };
+  anchor?: QtNode;
   placement?: "bottom" | "top" | "right" | "left";
   screenX?: number;
   screenY?: number;
@@ -31,7 +32,7 @@ export interface PopupProps extends ViewProps {
 export type PopupSource = PopupProps | Accessor<PopupProps>;
 
 export interface TooltipProps {
-  anchor?: { readonly id: number };
+  anchor?: QtNode;
   placement?: "bottom" | "top" | "right" | "left";
   hoverDelay?: number;
   hideDelay?: number;

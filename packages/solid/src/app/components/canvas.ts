@@ -1,15 +1,15 @@
 import {
   createComponent,
   onCleanup,
+  useContext,
   type Component,
   type JSX,
 } from "solid-js"
-import type { QtNode } from "@qt-solid/core/native"
 
 import {
-  createElement as createQtElement,
   insert as insertInto,
-  spread as spreadQtProps,
+  createNativeWidget,
+  spreadWidgetProps,
   createCanvasFragmentBinding,
   destroyCanvasFragmentBinding,
   registerCanvasBinding,
@@ -24,11 +24,10 @@ export interface CanvasProps extends WidgetProps {
 }
 
 export const Canvas: Component<CanvasProps> = (props) => {
-  const node = createQtElement("canvas")
-  const canvasNode = node as unknown as QtNode
+  const widgetNode = createNativeWidget()
 
-  spreadQtProps(
-    node,
+  spreadWidgetProps(
+    widgetNode,
     Object.defineProperties({}, {
       width: getter(() => props.width),
       height: getter(() => props.height),
@@ -41,21 +40,32 @@ export const Canvas: Component<CanvasProps> = (props) => {
     }),
   )
 
-  const fragmentBinding = createCanvasFragmentBinding(canvasNode.id)
-  registerCanvasBinding(canvasNode.id, fragmentBinding.root)
+  // Insert canvas widget into parent window widget via outer CanvasScope
+  const outerScope = useContext(CanvasScopeContext)
+  const parentQtNode = outerScope?.hostNode ?? null
+  if (parentQtNode) {
+    parentQtNode.insertChild(widgetNode.qtNode, null)
+  }
+
+  const fragmentBinding = createCanvasFragmentBinding(widgetNode.qtNode)
+  registerCanvasBinding(widgetNode.id, fragmentBinding.root)
 
   onCleanup(() => {
-    unregisterCanvasBinding(canvasNode.id)
-    destroyCanvasFragmentBinding(canvasNode.id)
+    unregisterCanvasBinding(widgetNode.id)
+    destroyCanvasFragmentBinding(widgetNode.id)
+    if (parentQtNode) {
+      parentQtNode.removeChild(widgetNode.qtNode)
+    }
+    widgetNode.destroy()
   })
 
   createComponent(CanvasScopeContext.Provider, {
-    value: { canvasNodeId: canvasNode.id, root: fragmentBinding.root },
+    value: { hostNode: widgetNode.qtNode, root: fragmentBinding.root },
     get children() {
       insertInto(fragmentBinding.root, () => props.children)
       return undefined
     },
   })
 
-  return node
+  return undefined as unknown as JSX.Element
 }
