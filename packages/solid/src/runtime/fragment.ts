@@ -150,8 +150,13 @@ export class FragmentRendererNode {
     }
   }
 
-  setMotionConfig(_config: QtMotionConfig): void {
-    // Fragment motion does not use compositor layer config — no-op.
+  setMotionConfig(config: QtMotionConfig): void {
+    if (config.layerEnabled) {
+      writeFragmentProp(this.canvasNodeId, this.fragmentId, "layer", true)
+    }
+    if (config.hitTestEnabled) {
+      writeFragmentProp(this.canvasNodeId, this.fragmentId, "hitTest", true)
+    }
   }
 
   onMotionComplete(callback: () => void): void {

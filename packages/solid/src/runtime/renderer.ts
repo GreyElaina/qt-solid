@@ -423,11 +423,6 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
     const state = ensureInlineMotion(node)
     state.bag[key] = next
     state.trigger()
-    // "layer" and "hitTest" also need to reach native for promotion/hit-testing
-    if (key === "layer" || key === "hitTest") {
-      writeFragmentProp(node.canvasNodeId, node.fragmentId, key, next)
-      canvasFragmentRequestRepaint(node.canvasNodeId)
-    }
     return
   }
 
