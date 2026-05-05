@@ -133,13 +133,14 @@ export function mountOrReplaceQtSolidDevApp(input: unknown): void {
   }
 
   const devtoolsEnabled = process.env.QT_SOLID_DEVTOOLS === "1"
-  const devtoolsServerPromise = devtoolsEnabled ? startQtSolidDevtoolsServer() : null
   registerProcessCleanup()
 
   let handleHostEvent: (event: QtHostEvent) => void = () => {}
   const app = QtApp.start((event) => {
     handleHostEvent(event)
   })
+
+  const devtoolsServerPromise = devtoolsEnabled ? startQtSolidDevtoolsServer(app) : null
 
   try {
     const session = createQtSolidAppSession(app, input, { devtoolsServerPromise })

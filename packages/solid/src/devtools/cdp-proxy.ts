@@ -3,7 +3,9 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Worker } from "node:worker_threads"
 
-import { qtSolidDebugPrimitives } from "./debug-primitives.ts"
+import type { QtApp } from "@qt-solid/core/native"
+
+import { createDebugPrimitives, type QtSolidDebugPrimitives } from "./debug-primitives.ts"
 import {
   rendererInspectorStore,
   type DevtoolsEvent,
@@ -59,26 +61,26 @@ function postEvent(worker: Worker, event: DevtoolsEvent): void {
   worker.postMessage(message)
 }
 
-function postTreeSnapshot(worker: Worker, canvasNodeId: number): void {
-  const snapshot = qtSolidDebugPrimitives.fragmentTreeSnapshot(canvasNodeId)
+function postTreeSnapshot(worker: Worker, primitives: QtSolidDebugPrimitives, canvasNodeId: number): void {
+  const snapshot = primitives.fragmentTreeSnapshot(canvasNodeId)
   const message: TreeSnapshotMessage = { type: "tree-snapshot", canvasNodeId, snapshot }
   worker.postMessage(message)
 }
 
-function postAllTreeSnapshots(worker: Worker): void {
+function postAllTreeSnapshots(worker: Worker, primitives: QtSolidDebugPrimitives): void {
   for (const canvasNodeId of rendererInspectorStore.getCanvasNodeIds()) {
-    postTreeSnapshot(worker, canvasNodeId)
+    postTreeSnapshot(worker, primitives, canvasNodeId)
   }
 }
 
-function postFullSnapshot(worker: Worker): void {
+function postFullSnapshot(worker: Worker, primitives: QtSolidDebugPrimitives): void {
   const message: MetadataSnapshotMessage = {
     type: "metadata-snapshot",
     metadata: rendererInspectorStore.metadataSnapshot(),
     canvasNodeIds: [...rendererInspectorStore.getCanvasNodeIds()],
   }
   worker.postMessage(message)
-  postAllTreeSnapshots(worker)
+  postAllTreeSnapshots(worker, primitives)
 }
 
 function resolveWorkerEntry(): string | URL {
@@ -97,14 +99,14 @@ function resolveWorkerEntry(): string | URL {
   throw new Error(`Could not resolve cdp-worker.mjs from ${fileURLToPath(localWorkerUrl)} or ${packageWorkerPath}`)
 }
 
-async function handleNativeRequest(message: NativeRequestMessage): Promise<NativeResponseMessage> {
+async function handleNativeRequest(primitives: QtSolidDebugPrimitives, message: NativeRequestMessage): Promise<NativeResponseMessage> {
   const params = message.params ?? {}
 
   try {
     switch (message.method) {
       case "highlightNode": {
         const rendererNodeId = typeof params.rendererNodeId === "number" ? params.rendererNodeId : 0
-        qtSolidDebugPrimitives.highlightNode(rendererNodeId)
+        primitives.highlightNode(rendererNodeId)
         return { type: "native-response", requestId: message.requestId, result: {} }
       }
       case "getNodeBounds": {
@@ -112,7 +114,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.getNodeBounds(rendererNodeId),
+          result: primitives.getNodeBounds(rendererNodeId),
         }
       }
       case "getNodeAtPoint": {
@@ -121,26 +123,26 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.getNodeAtPoint(screenX, screenY),
+          result: primitives.getNodeAtPoint(screenX, screenY),
         }
       }
       case "setInspectMode": {
-        qtSolidDebugPrimitives.setInspectMode(params.enabled === true)
+        primitives.setInspectMode(params.enabled === true)
         return { type: "native-response", requestId: message.requestId, result: {} }
       }
       case "clearHighlight": {
-        qtSolidDebugPrimitives.clearHighlight()
+        primitives.clearHighlight()
         return { type: "native-response", requestId: message.requestId, result: {} }
       }
       case "highlightFragment": {
         const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
         const fragmentId = typeof params.fragmentId === "number" ? params.fragmentId : null
-        qtSolidDebugPrimitives.highlightFragment(canvasNodeId, fragmentId)
+        primitives.highlightFragment(canvasNodeId, fragmentId)
         return { type: "native-response", requestId: message.requestId, result: {} }
       }
       case "clearFragmentHighlight": {
         const canvasNodeId = typeof params.canvasNodeId === "number" ? params.canvasNodeId : 0
-        qtSolidDebugPrimitives.highlightFragment(canvasNodeId, null)
+        primitives.highlightFragment(canvasNodeId, null)
         return { type: "native-response", requestId: message.requestId, result: {} }
       }
       case "getFragmentBounds": {
@@ -149,7 +151,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.getFragmentBounds(canvasNodeId, fragmentId),
+          result: primitives.getFragmentBounds(canvasNodeId, fragmentId),
         }
       }
       case "fragmentHitTest": {
@@ -159,7 +161,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.fragmentHitTest(canvasNodeId, x, y),
+          result: primitives.fragmentHitTest(canvasNodeId, x, y),
         }
       }
       case "snapshotLayers": {
@@ -167,7 +169,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.snapshotLayers(canvasNodeId),
+          result: primitives.snapshotLayers(canvasNodeId),
         }
       }
       case "snapshotAnimations": {
@@ -175,7 +177,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.snapshotAnimations(canvasNodeId),
+          result: primitives.snapshotAnimations(canvasNodeId),
         }
       }
       case "captureLayerSnapshot": {
@@ -187,7 +189,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.captureFragmentRegion(canvasNodeId, x, y, width, height),
+          result: primitives.captureFragmentRegion(canvasNodeId, x, y, width, height),
         }
       }
       case "captureCanvasFullSnapshot": {
@@ -195,7 +197,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.captureCanvasFullSnapshot(canvasNodeId),
+          result: primitives.captureCanvasFullSnapshot(canvasNodeId),
         }
       }
       case "captureFragmentIsolated": {
@@ -204,7 +206,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.captureFragmentIsolated(canvasNodeId, fragmentId),
+          result: primitives.captureFragmentIsolated(canvasNodeId, fragmentId),
         }
       }
       case "captureAllFragmentsIsolated": {
@@ -213,7 +215,7 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
         return {
           type: "native-response",
           requestId: message.requestId,
-          result: qtSolidDebugPrimitives.captureAllFragmentsIsolated(canvasNodeId, fragmentIds),
+          result: primitives.captureAllFragmentsIsolated(canvasNodeId, fragmentIds),
         }
       }
       default:
@@ -232,10 +234,17 @@ async function handleNativeRequest(message: NativeRequestMessage): Promise<Nativ
   }
 }
 
-export async function startQtSolidDevtoolsServer(port = Number(process.env.QT_SOLID_DEVTOOLS_PORT ?? "9229")): Promise<QtSolidDevtoolsServer> {
+export async function startQtSolidDevtoolsServer(
+  appOrPrimitives: QtApp | QtSolidDebugPrimitives,
+  port = Number(process.env.QT_SOLID_DEVTOOLS_PORT ?? "9229"),
+): Promise<QtSolidDevtoolsServer> {
   if (activeServer) {
     return activeServer
   }
+
+  const primitives = "getNode" in appOrPrimitives
+    ? createDebugPrimitives(appOrPrimitives)
+    : appOrPrimitives
 
   const worker = new Worker(resolveWorkerEntry(), {
     workerData: { port },
@@ -258,7 +267,7 @@ export async function startQtSolidDevtoolsServer(port = Number(process.env.QT_SO
       queueMicrotask(() => {
         treePushScheduled = false
         for (const id of pendingTreePush) {
-          postTreeSnapshot(worker, id)
+          postTreeSnapshot(worker, primitives, id)
         }
         pendingTreePush.clear()
       })
@@ -290,7 +299,7 @@ export async function startQtSolidDevtoolsServer(port = Number(process.env.QT_SO
     const message = raw as { type?: string; url?: string; requestId?: number; method?: string; params?: Record<string, unknown> }
 
     if (message.type === "ready") {
-      postFullSnapshot(worker)
+      postFullSnapshot(worker, primitives)
       resolvedUrl = String(message.url ?? "")
       resolveReady?.(resolvedUrl)
       resolveReady = null
@@ -299,7 +308,7 @@ export async function startQtSolidDevtoolsServer(port = Number(process.env.QT_SO
     }
 
     if (message.type === "native-request" && typeof message.requestId === "number" && typeof message.method === "string") {
-      void handleNativeRequest(message as NativeRequestMessage).then((response) => {
+      void handleNativeRequest(primitives, message as NativeRequestMessage).then((response) => {
         worker.postMessage(response)
       })
     }

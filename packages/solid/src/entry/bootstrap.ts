@@ -96,12 +96,13 @@ export function createQtSolidAppSession(
 
 export function startQtSolidApp(input: unknown): StartQtSolidAppResult {
   const devtoolsEnabled = process.env.QT_SOLID_DEVTOOLS === "1"
-  const devtoolsServerPromise = devtoolsEnabled ? startQtSolidDevtoolsServer() : null
 
   let session: QtSolidAppSession | undefined
   const app = QtApp.start((event) => {
     session?.handleHostEvent(event)
   })
+
+  const devtoolsServerPromise = devtoolsEnabled ? startQtSolidDevtoolsServer(app) : null
 
   try {
     session = createQtSolidAppSession(app, input, { devtoolsServerPromise })
