@@ -449,7 +449,7 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { QtApp, QtNode, AlignItems, AlignSelf, canvasComputeIntrinsicSize, canvasFragmentClearImage, canvasFragmentComputeLayout, canvasFragmentCreate, canvasFragmentDestroy, canvasFragmentDetachChild, canvasFragmentGetContentSize, canvasFragmentGetWorldBounds, canvasFragmentHitTest, canvasFragmentInsertChild, canvasFragmentRequestRepaint, canvasFragmentScrollDrive, canvasFragmentScrollRelease, canvasFragmentSetBoolProp, canvasFragmentSetDebugHighlight, canvasFragmentSetEncodedImage, canvasFragmentSetF64Prop, canvasFragmentSetLayoutFlip, canvasFragmentSetListener, canvasFragmentSetMotionTarget, canvasFragmentSetProp, canvasFragmentSetScrollOffset, canvasFragmentSetStringProp, canvasFragmentSnapshotAnimations, canvasFragmentSnapshotLayers, canvasFragmentStoreEnsure, canvasFragmentStoreRemove, canvasFragmentTreeSnapshot, captureCanvasRegion, captureCanvasSnapshot, captureFragmentIsolated, captureWindowFrame, clearHighlight, clickNode, clipboardClear, clipboardFormats, clipboardGet, clipboardGetText, clipboardHasText, clipboardSet, clipboardSetText, closeNode, emitAppEvent, FlexDirection, FlexWrap, FocusPolicy, focusWidget, FragmentBlendMode, getNodeAtPoint, getNodeBounds, getScreenGeometry, getWidgetSizeHint, highlightNode, inputInsertText, JustifyContent, measureText, QtTransitionType, QtWidgetCaptureFormat, QtWindowCaptureGrouping, scheduleTimerEvent, screenDpiInfo, setInspectMode, setWindowTransientOwner, showOpenFileDialog, showSaveFileDialog, systemColorScheme, traceClear, traceEnterInteraction, traceExitInteraction, traceRecordJs, traceSetEnabled, traceSnapshot, windowFullscreen, windowHostInfo, windowIsFullscreen, windowIsMaximized, windowIsMinimized, windowMaximize, windowMinimize, windowRestore } = nativeBinding
+const { QtApp, QtNode, AlignItems, AlignSelf, canvasComputeIntrinsicSize, canvasFragmentClearImage, canvasFragmentComputeLayout, canvasFragmentCreate, canvasFragmentDestroy, canvasFragmentDetachChild, canvasFragmentGetContentSize, canvasFragmentGetWorldBounds, canvasFragmentHitTest, canvasFragmentInsertChild, canvasFragmentRequestRepaint, canvasFragmentScrollDrive, canvasFragmentScrollRelease, canvasFragmentSetBoolProp, canvasFragmentSetDebugHighlight, canvasFragmentSetEncodedImage, canvasFragmentSetF64Prop, canvasFragmentSetLayoutFlip, canvasFragmentSetListener, canvasFragmentSetMotionTarget, canvasFragmentSetProp, canvasFragmentSetScrollOffset, canvasFragmentSetStringProp, canvasFragmentSnapshotAnimations, canvasFragmentSnapshotLayers, canvasFragmentStoreEnsure, canvasFragmentStoreRemove, canvasFragmentTreeSnapshot, captureCanvasRegion, captureCanvasSnapshot, captureFragmentIsolated, clipboardClear, clipboardFormats, clipboardGet, clipboardGetText, clipboardHasText, clipboardSet, clipboardSetText, FlexDirection, FlexWrap, FocusPolicy, FragmentBlendMode, JustifyContent, measureText, QtTransitionType, QtWidgetCaptureFormat, QtWindowCaptureGrouping, screenDpiInfo, showOpenFileDialog, showSaveFileDialog, systemColorScheme, traceClear, traceEnterInteraction, traceExitInteraction, traceRecordJs, traceSetEnabled, traceSnapshot, windowFullscreen, windowIsFullscreen, windowIsMaximized, windowIsMinimized, windowMaximize, windowMinimize, windowRestore } = nativeBinding
 export { QtApp }
 export { QtNode }
 export { AlignItems }
@@ -485,9 +485,6 @@ export { canvasFragmentTreeSnapshot }
 export { captureCanvasRegion }
 export { captureCanvasSnapshot }
 export { captureFragmentIsolated }
-export { captureWindowFrame }
-export { clearHighlight }
-export { clickNode }
 export { clipboardClear }
 export { clipboardFormats }
 export { clipboardGet }
@@ -495,28 +492,16 @@ export { clipboardGetText }
 export { clipboardHasText }
 export { clipboardSet }
 export { clipboardSetText }
-export { closeNode }
-export { emitAppEvent }
 export { FlexDirection }
 export { FlexWrap }
 export { FocusPolicy }
-export { focusWidget }
 export { FragmentBlendMode }
-export { getNodeAtPoint }
-export { getNodeBounds }
-export { getScreenGeometry }
-export { getWidgetSizeHint }
-export { highlightNode }
-export { inputInsertText }
 export { JustifyContent }
 export { measureText }
 export { QtTransitionType }
 export { QtWidgetCaptureFormat }
 export { QtWindowCaptureGrouping }
-export { scheduleTimerEvent }
 export { screenDpiInfo }
-export { setInspectMode }
-export { setWindowTransientOwner }
 export { showOpenFileDialog }
 export { showSaveFileDialog }
 export { systemColorScheme }
@@ -527,7 +512,6 @@ export { traceRecordJs }
 export { traceSetEnabled }
 export { traceSnapshot }
 export { windowFullscreen }
-export { windowHostInfo }
 export { windowIsFullscreen }
 export { windowIsMaximized }
 export { windowIsMinimized }

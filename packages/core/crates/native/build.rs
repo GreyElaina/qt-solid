@@ -125,7 +125,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/qt/runtime.rs");
     println!("cargo:rerun-if-changed=src/qt/mod.rs");
     println!("cargo:rerun-if-changed=src/layout/ffi.rs");
-    println!("cargo:rerun-if-changed=src/layout/registry_ffi.rs");
+    // println!("cargo:rerun-if-changed=src/layout/registry_ffi.rs");
 
     qt_wgpu_renderer.emit_rerun_if_changed();
     qt_taffy_layout.emit_rerun_if_changed();
@@ -151,7 +151,7 @@ fn main() {
     let mut build = cxx_build::bridges([
         "src/qt/ffi.rs",
         "src/layout/ffi.rs",
-        "src/layout/registry_ffi.rs",
+        // "src/layout/registry_ffi.rs",
     ]);
     build.file("src/qt/cpp/ffi.cpp");
     qt_wgpu_renderer.add_cpp_sources(&mut build);

@@ -7,6 +7,12 @@ export declare class QtApp {
   debugSnapshot(): QtDebugSnapshot
   createWidget(): QtNode
   getNode(nodeId: number): QtNode
+  setInspectMode(enabled: boolean): void
+  clearHighlight(): void
+  emitAppEvent(name: string): void
+  getNodeAtPoint(screenX: number, screenY: number): number | null
+  windowHostInfo(): QtWindowHostInfo
+  scheduleTimerEvent(delayMs: number, event: string): void
 }
 
 export declare class QtNode {
@@ -24,6 +30,16 @@ export declare class QtNode {
   requestNextFrame(): void
   readWindowFrameState(): QtWindowFrameState
   captureWidget(): QtWidgetCapture
+  click(): void
+  close(): void
+  inputInsertText(value: string): void
+  highlight(): void
+  getBounds(): QtDebugNodeBounds
+  getScreenGeometry(): QtScreenGeometryInfo
+  focus(): void
+  getWidgetSizeHint(): QtScreenGeometryInfo
+  captureWindowFrame(): QtWindowCaptureFrame
+  setTransientOwner(ownerId: number): void
 }
 
 export declare const enum AlignItems {
@@ -103,12 +119,6 @@ export declare function captureCanvasSnapshot(canvasNodeId: number): QtCanvasSna
 
 export declare function captureFragmentIsolated(canvasNodeId: number, fragmentId: number): Buffer | null
 
-export declare function captureWindowFrame(windowId: number): QtWindowCaptureFrame
-
-export declare function clearHighlight(): void
-
-export declare function clickNode(nodeId: number): void
-
 export declare function clipboardClear(): void
 
 export interface ClipboardEntry {
@@ -128,10 +138,6 @@ export declare function clipboardSet(entries: Array<ClipboardEntry>): void
 
 export declare function clipboardSetText(text: string): void
 
-export declare function closeNode(nodeId: number): void
-
-export declare function emitAppEvent(name: string): void
-
 export declare const enum FlexDirection {
   Column = 'column',
   Row = 'row'
@@ -149,8 +155,6 @@ export declare const enum FocusPolicy {
   ClickFocus = 'click-focus',
   StrongFocus = 'strong-focus'
 }
-
-export declare function focusWidget(nodeId: number): void
 
 export declare const enum FragmentBlendMode {
   Normal = 'normal',
@@ -194,18 +198,6 @@ export type FragmentValue =
   | { type: 'border', width: number, color: string }
   | { type: 'blendmode', value: FragmentBlendMode }
   | { type: 'unset' }
-
-export declare function getNodeAtPoint(screenX: number, screenY: number): number | null
-
-export declare function getNodeBounds(nodeId: number): QtDebugNodeBounds
-
-export declare function getScreenGeometry(nodeId: number): QtScreenGeometryInfo
-
-export declare function getWidgetSizeHint(nodeId: number): QtScreenGeometryInfo
-
-export declare function highlightNode(nodeId: number): void
-
-export declare function inputInsertText(nodeId: number, value: string): void
 
 export declare const enum JustifyContent {
   FlexStart = 'flex-start',
@@ -473,8 +465,6 @@ export interface QtWorldBounds {
   height: number
 }
 
-export declare function scheduleTimerEvent(delayMs: number, event: string): void
-
 export declare function screenDpiInfo(id: number): ScreenDpiInfo
 
 export interface ScreenDpiInfo {
@@ -486,10 +476,6 @@ export interface ScreenDpiInfo {
   availableWidth: number
   availableHeight: number
 }
-
-export declare function setInspectMode(enabled: boolean): void
-
-export declare function setWindowTransientOwner(windowId: number, ownerId: number): void
 
 export declare function showOpenFileDialog(windowId: number, title: string, filter?: string | undefined | null, multiple?: boolean | undefined | null): number
 
@@ -518,8 +504,6 @@ export declare function traceSetEnabled(enabled: boolean): void
 export declare function traceSnapshot(): Array<QtTraceRecord>
 
 export declare function windowFullscreen(id: number, enter: boolean): void
-
-export declare function windowHostInfo(): QtWindowHostInfo
 
 export declare function windowIsFullscreen(id: number): boolean
 

@@ -493,6 +493,36 @@ impl QtApp {
     pub fn qt_solid_get_node(&self, node_id: u32) -> Result<QtNode> {
         runtime::node_by_id(self.generation, node_id)
     }
+
+    #[napi(js_name = "setInspectMode")]
+    pub fn set_inspect_mode(&self, enabled: bool) -> Result<()> {
+        runtime::debug_set_inspect_mode(enabled)
+    }
+
+    #[napi(js_name = "clearHighlight")]
+    pub fn clear_highlight(&self) -> Result<()> {
+        runtime::debug_clear_highlight()
+    }
+
+    #[napi(js_name = "emitAppEvent")]
+    pub fn emit_app_event(&self, name: String) -> Result<()> {
+        runtime::debug_emit_app_event(name)
+    }
+
+    #[napi(js_name = "getNodeAtPoint")]
+    pub fn get_node_at_point(&self, screen_x: i32, screen_y: i32) -> Result<Option<u32>> {
+        runtime::debug_node_at_point(screen_x, screen_y)
+    }
+
+    #[napi(js_name = "windowHostInfo")]
+    pub fn window_host_info(&self) -> QtWindowHostInfo {
+        runtime::window_host_info()
+    }
+
+    #[napi(js_name = "scheduleTimerEvent")]
+    pub fn schedule_timer_event(&self, delay_ms: u32, event: String) -> Result<()> {
+        runtime::schedule_debug_event(delay_ms, event)
+    }
 }
 
 #[napi_derive::napi]
@@ -589,109 +619,80 @@ impl QtNode {
             bytes: Buffer::from(capture.into_bytes()),
         })
     }
-}
 
-#[napi_derive::napi(js_name = "scheduleTimerEvent")]
-pub fn qt_solid_schedule_timer_event(delay_ms: u32, event: String) -> Result<()> {
-    runtime::schedule_debug_event(delay_ms, event)
-}
-
-#[napi_derive::napi(js_name = "clickNode")]
-pub fn qt_solid_click_node(node_id: u32) -> Result<()> {
-    runtime::debug_click_node(node_id)
-}
-
-#[napi_derive::napi(js_name = "closeNode")]
-pub fn qt_solid_close_node(node_id: u32) -> Result<()> {
-    runtime::debug_close_node(node_id)
-}
-
-#[napi_derive::napi(js_name = "inputInsertText")]
-pub fn qt_solid_input_insert_text(node_id: u32, value: String) -> Result<()> {
-    runtime::debug_input_insert_text(node_id, value)
-}
-
-#[napi_derive::napi(js_name = "highlightNode")]
-pub fn qt_solid_highlight_node(node_id: u32) -> Result<()> {
-    runtime::debug_highlight_node(node_id)
-}
-
-#[napi_derive::napi(js_name = "getNodeBounds")]
-pub fn qt_solid_get_node_bounds(node_id: u32) -> Result<QtDebugNodeBounds> {
-    runtime::debug_node_bounds(node_id)
-}
-
-#[napi_derive::napi(js_name = "getScreenGeometry")]
-pub fn qt_solid_get_screen_geometry(node_id: u32) -> Result<QtScreenGeometryInfo> {
-    if !crate::qt::qt_host_started() {
-        return Err(napi::Error::from_reason(
-            "call QtApp.start before reading screen geometry",
-        ));
+    #[napi(js_name = "click")]
+    pub fn click(&self) -> Result<()> {
+        runtime::debug_click_node(self.inner.id)
     }
-    let geo = crate::qt::get_screen_geometry(node_id);
-    Ok(QtScreenGeometryInfo {
-        x: geo.x,
-        y: geo.y,
-        width: geo.width,
-        height: geo.height,
-    })
-}
 
-#[napi_derive::napi(js_name = "focusWidget")]
-pub fn qt_solid_focus_widget(node_id: u32) -> Result<()> {
-    crate::qt::focus_widget(node_id).map_err(|e| napi::Error::from_reason(e.what().to_owned()))
-}
-
-#[napi_derive::napi(js_name = "getWidgetSizeHint")]
-pub fn qt_solid_get_widget_size_hint(node_id: u32) -> Result<QtScreenGeometryInfo> {
-    if !crate::qt::qt_host_started() {
-        return Err(napi::Error::from_reason(
-            "call QtApp.start before reading widget size hint",
-        ));
+    #[napi(js_name = "close")]
+    pub fn close(&self) -> Result<()> {
+        runtime::debug_close_node(self.inner.id)
     }
-    let hint = crate::qt::get_widget_size_hint(node_id);
-    Ok(QtScreenGeometryInfo {
-        x: hint.x,
-        y: hint.y,
-        width: hint.width,
-        height: hint.height,
-    })
-}
 
-#[napi_derive::napi(js_name = "setWindowTransientOwner")]
-pub fn qt_solid_set_window_transient_owner(window_id: u32, owner_id: u32) -> Result<()> {
-    crate::qt::qt_set_window_transient_owner(window_id, owner_id)
-        .map_err(|e| napi::Error::from_reason(e.what().to_owned()))
-}
+    #[napi(js_name = "inputInsertText")]
+    pub fn input_insert_text(&self, value: String) -> Result<()> {
+        runtime::debug_input_insert_text(self.inner.id, value)
+    }
 
-#[napi_derive::napi(js_name = "getNodeAtPoint")]
-pub fn qt_solid_get_node_at_point(screen_x: i32, screen_y: i32) -> Result<Option<u32>> {
-    runtime::debug_node_at_point(screen_x, screen_y)
-}
+    #[napi(js_name = "highlight")]
+    pub fn highlight(&self) -> Result<()> {
+        runtime::debug_highlight_node(self.inner.id)
+    }
 
-#[napi_derive::napi(js_name = "captureWindowFrame")]
-pub fn qt_solid_capture_window_frame(window_id: u32) -> Result<QtWindowCaptureFrame> {
-    runtime::debug_capture_window_frame(window_id)
-}
+    #[napi(js_name = "getBounds")]
+    pub fn get_bounds(&self) -> Result<QtDebugNodeBounds> {
+        runtime::debug_node_bounds(self.inner.id)
+    }
 
-#[napi_derive::napi(js_name = "setInspectMode")]
-pub fn qt_solid_set_inspect_mode(enabled: bool) -> Result<()> {
-    runtime::debug_set_inspect_mode(enabled)
-}
+    #[napi(js_name = "getScreenGeometry")]
+    pub fn get_screen_geometry(&self) -> Result<QtScreenGeometryInfo> {
+        if !crate::qt::qt_host_started() {
+            return Err(napi::Error::from_reason(
+                "call QtApp.start before reading screen geometry",
+            ));
+        }
+        let geo = crate::qt::get_screen_geometry(self.inner.id);
+        Ok(QtScreenGeometryInfo {
+            x: geo.x,
+            y: geo.y,
+            width: geo.width,
+            height: geo.height,
+        })
+    }
 
-#[napi_derive::napi(js_name = "clearHighlight")]
-pub fn qt_solid_clear_highlight() -> Result<()> {
-    runtime::debug_clear_highlight()
-}
+    #[napi(js_name = "focus")]
+    pub fn focus(&self) -> Result<()> {
+        crate::qt::focus_widget(self.inner.id)
+            .map_err(|e| napi::Error::from_reason(e.what().to_owned()))
+    }
 
-#[napi_derive::napi(js_name = "emitAppEvent")]
-pub fn qt_solid_emit_app_event(name: String) -> Result<()> {
-    runtime::debug_emit_app_event(name)
-}
+    #[napi(js_name = "getWidgetSizeHint")]
+    pub fn get_widget_size_hint(&self) -> Result<QtScreenGeometryInfo> {
+        if !crate::qt::qt_host_started() {
+            return Err(napi::Error::from_reason(
+                "call QtApp.start before reading widget size hint",
+            ));
+        }
+        let hint = crate::qt::get_widget_size_hint(self.inner.id);
+        Ok(QtScreenGeometryInfo {
+            x: hint.x,
+            y: hint.y,
+            width: hint.width,
+            height: hint.height,
+        })
+    }
 
-#[napi_derive::napi(js_name = "windowHostInfo")]
-pub fn qt_solid_window_host_info() -> QtWindowHostInfo {
-    runtime::window_host_info()
+    #[napi(js_name = "captureWindowFrame")]
+    pub fn capture_window_frame(&self) -> Result<QtWindowCaptureFrame> {
+        runtime::debug_capture_window_frame(self.inner.id)
+    }
+
+    #[napi(js_name = "setTransientOwner")]
+    pub fn set_transient_owner(&self, owner_id: u32) -> Result<()> {
+        crate::qt::qt_set_window_transient_owner(self.inner.id, owner_id)
+            .map_err(|e| napi::Error::from_reason(e.what().to_owned()))
+    }
 }
 
 #[napi_derive::napi(js_name = "traceSetEnabled")]

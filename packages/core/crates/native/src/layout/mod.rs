@@ -1,5 +1,4 @@
 pub mod ffi;
-pub mod registry_ffi;
 pub mod state;
 
 use ffi::bridge::TaffyRect;

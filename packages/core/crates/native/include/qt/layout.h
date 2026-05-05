@@ -6,7 +6,7 @@
 #include <QtWidgets/QLayout>
 #include <QtWidgets/QWidget>
 
-#include "native/src/layout/registry_ffi.rs.h"
+#include "native/src/layout/ffi.rs.h"
 
 class QTaffyLayout : public QLayout {
 public:
