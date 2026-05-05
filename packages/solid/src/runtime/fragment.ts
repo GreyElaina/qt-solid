@@ -15,10 +15,10 @@ import {
   canvasFragmentStoreEnsure,
 } from "@qt-solid/core/native"
 
+import type { QtNode } from "@qt-solid/core/native"
 import type { QtMotionConfig } from "../qt-intrinsics.ts"
 import type { TransitionSpec } from "../app/motion/types.ts"
 import { setLayoutId as registrySetLayoutId, unsetLayoutId as registryUnsetLayoutId } from "../app/motion/layout-id.ts"
-import type { QtRendererNode } from "./renderer.ts"
 
 // ---------------------------------------------------------------------------
 // Fragment renderer node — JS-side linked list for canvas fragments
@@ -26,9 +26,8 @@ import type { QtRendererNode } from "./renderer.ts"
 
 export const FRAGMENT_ROOT_ID = -1
 
-export class FragmentRendererNode implements QtRendererNode {
-  readonly nodeKind = "fragment" as const
-  readonly canvasNodeId: number
+export class FragmentRendererNode {
+  readonly hostNode: QtNode
   readonly fragmentId: number
   readonly kind: string
   readonly eventHandlers: Map<string, (...args: unknown[]) => void> = new Map()
@@ -40,8 +39,12 @@ export class FragmentRendererNode implements QtRendererNode {
   previousSibling: FragmentRendererNode | null = null
   lastChild: FragmentRendererNode | null = null
 
-  constructor(canvasNodeId: number, fragmentId: number, kind: string) {
-    this.canvasNodeId = canvasNodeId
+  get canvasNodeId(): number {
+    return this.hostNode.id
+  }
+
+  constructor(hostNode: QtNode, fragmentId: number, kind: string) {
+    this.hostNode = hostNode
     this.fragmentId = fragmentId
     this.kind = kind
   }
@@ -54,9 +57,9 @@ export class FragmentRendererNode implements QtRendererNode {
     return false
   }
 
-  insertChild(child: QtRendererNode, anchor?: QtRendererNode | null): void {
-    const fragmentChild = child as FragmentRendererNode
-    const fragmentAnchor = anchor as FragmentRendererNode | null | undefined
+  insertChild(child: FragmentRendererNode, anchor?: FragmentRendererNode | null): void {
+    const fragmentChild = child
+    const fragmentAnchor = anchor
 
     if (fragmentChild.parent) {
       fragmentChild.parent.removeChild(fragmentChild)
@@ -92,8 +95,8 @@ export class FragmentRendererNode implements QtRendererNode {
     )
   }
 
-  removeChild(child: QtRendererNode): void {
-    const fragmentChild = child as FragmentRendererNode
+  removeChild(child: FragmentRendererNode): void {
+    const fragmentChild = child
 
     if (fragmentChild.previousSibling) {
       fragmentChild.previousSibling.nextSibling = fragmentChild.nextSibling
@@ -303,10 +306,10 @@ export function writeFragmentProp(
 // Canvas fragment binding factory
 // ---------------------------------------------------------------------------
 
-export function createCanvasFragmentBinding(canvasNodeId: number): {
+export function createCanvasFragmentBinding(hostNode: QtNode): {
   root: FragmentRendererNode
 } {
-  canvasFragmentStoreEnsure(canvasNodeId)
-  const root = new FragmentRendererNode(canvasNodeId, FRAGMENT_ROOT_ID, "root")
+  canvasFragmentStoreEnsure(hostNode.id)
+  const root = new FragmentRendererNode(hostNode, FRAGMENT_ROOT_ID, "root")
   return { root }
 }

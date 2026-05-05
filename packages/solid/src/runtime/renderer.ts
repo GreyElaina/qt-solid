@@ -14,7 +14,6 @@ import {
 
 import { rendererInspectorStore } from "../devtools/inspector-store.ts"
 import { currentQtSolidOwnerMetadata, withQtOwnerFrame } from "../devtools/owner-metadata.ts"
-import type { QtSolidOwnerMetadata } from "../devtools/owner-metadata.ts"
 import { isQtSolidSourceMetadata, QT_SOLID_SOURCE_META_PROP } from "../devtools/source-metadata.ts"
 import { FRAGMENT_ROOT_ID, FragmentRendererNode, writeFragmentProp } from "./fragment.ts"
 import { HANDLED_EVENT_NAMES } from "./canvas/dispatch.ts"
@@ -24,7 +23,6 @@ import {
   wiredEventExports,
   setNativeEventHandler,
   forgetNativeEvents,
-  traceJs,
 } from "./host-events.ts"
 
 const FRAGMENT_LISTENER_LAYOUT = 1
@@ -37,28 +35,12 @@ export type QtFlexDirection = "column" | "row"
 export type QtAlignItems = "flex-start" | "center" | "flex-end" | "stretch"
 export type QtJustifyContent = "flex-start" | "center" | "flex-end"
 
-export interface QtRendererNode {
-  readonly id: number
-  readonly nodeKind: "native" | "fragment"
-  readonly parent: QtRendererNode | null
-  readonly firstChild: QtRendererNode | null
-  readonly nextSibling: QtRendererNode | null
-  isTextNode(): boolean
-  insertChild(child: QtRendererNode, anchor?: QtRendererNode | null): void
-  removeChild(child: QtRendererNode): void
-  destroy(): void
-}
-
-export interface QtRendererDebugMetadata {
-  owner?: QtSolidOwnerMetadata | null
-}
-
 // ---------------------------------------------------------------------------
 // Canvas scope context — provided by Window/Canvas to children
 // ---------------------------------------------------------------------------
 
 export interface CanvasScope {
-  readonly canvasNodeId: number
+  readonly hostNode: QtNode
   readonly root: FragmentRendererNode
 }
 
@@ -68,8 +50,7 @@ export const CanvasScopeContext = createContext<CanvasScope | null>(null)
 // Native widget node — wraps napi QtNode for windows
 // ---------------------------------------------------------------------------
 
-class NativeWidgetNode implements QtRendererNode {
-  readonly nodeKind = "native" as const
+export class NativeWidgetNode {
   readonly qtNode: QtNode
 
   constructor(qtNode: QtNode) {
@@ -78,42 +59,6 @@ class NativeWidgetNode implements QtRendererNode {
 
   get id(): number {
     return this.qtNode.id
-  }
-
-  get parent(): QtRendererNode | null {
-    const p = this.qtNode.parent
-    return p ? canonNode(p) ?? null : null
-  }
-
-  get firstChild(): QtRendererNode | null {
-    const c = this.qtNode.firstChild
-    return c ? canonNode(c) ?? null : null
-  }
-
-  get nextSibling(): QtRendererNode | null {
-    const s = this.qtNode.nextSibling
-    return s ? canonNode(s) ?? null : null
-  }
-
-  isTextNode(): boolean {
-    return this.qtNode.isTextNode()
-  }
-
-  insertChild(child: QtRendererNode, anchor?: QtRendererNode | null): void {
-    if (child.nodeKind === "fragment") {
-      throw new Error("Cannot insert fragment node into native widget — use CanvasScope root")
-    }
-    const nativeChild = child as NativeWidgetNode
-    const nativeAnchor = anchor ? (anchor as NativeWidgetNode) : null
-    this.qtNode.insertChild(nativeChild.qtNode, nativeAnchor?.qtNode ?? null)
-  }
-
-  removeChild(child: QtRendererNode): void {
-    if (child.nodeKind === "fragment") {
-      throw new Error("Cannot remove fragment node from native widget")
-    }
-    const nativeChild = child as NativeWidgetNode
-    this.qtNode.removeChild(nativeChild.qtNode)
   }
 
   destroy(): void {
@@ -134,7 +79,7 @@ const canonicalNodes = new Map<number, NativeWidgetNode>()
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function canonNode(qtNode: QtNode): NativeWidgetNode | undefined {
+function canonNode(qtNode: QtNode): NativeWidgetNode {
   const existing = canonicalNodes.get(qtNode.id)
   if (existing) return existing
   const node = new NativeWidgetNode(qtNode)
@@ -171,8 +116,50 @@ export function nativeRoot(): NativeWidgetNode {
   return rootNode
 }
 
+export function nativeApp(): QtApp {
+  if (!currentApp) {
+    throw new Error("Renderer not initialized — call initRenderer(app) first")
+  }
+  return currentApp
+}
+
 // ---------------------------------------------------------------------------
-// Solid.js universal renderer
+// Native widget operations
+// ---------------------------------------------------------------------------
+
+export function createNativeWidget(): NativeWidgetNode {
+  if (!currentApp) {
+    throw new Error("Renderer not initialized — call initRenderer(app) first")
+  }
+  const qtNode = currentApp.createWidget()
+  const node = new NativeWidgetNode(qtNode)
+  canonicalNodes.set(qtNode.id, node)
+  return node
+}
+
+export function insertNativeWidget(parent: NativeWidgetNode, child: NativeWidgetNode, anchor?: NativeWidgetNode | null): void {
+  parent.qtNode.insertChild(child.qtNode, anchor?.qtNode ?? null)
+}
+
+export function removeNativeWidget(parent: NativeWidgetNode, child: NativeWidgetNode): void {
+  forgetNativeSubtree(child)
+  parent.qtNode.removeChild(child.qtNode)
+  child.destroy()
+}
+
+export function destroyChildWidgets(parent: NativeWidgetNode): void {
+  let child = parent.qtNode.firstChild
+  while (child) {
+    const next = child.nextSibling
+    const wrapped = canonicalNodes.get(child.id)
+    if (wrapped) forgetNativeSubtree(wrapped)
+    child.destroy()
+    child = next
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Solid.js universal renderer — fragment only
 // ---------------------------------------------------------------------------
 
 function useCanvasScope(): CanvasScope {
@@ -183,31 +170,19 @@ function useCanvasScope(): CanvasScope {
   return scope
 }
 
-const renderer = createRenderer<QtRendererNode>({
+const fragmentRenderer = createRenderer<FragmentRendererNode>({
   createElement(type) {
-    if (type === "window" || type === "canvas") {
-      // Native widget creation
-      if (!currentApp) {
-        throw new Error("Renderer not initialized — call initRenderer(app) first")
-      }
-      const qtNode = currentApp.createWidget()
-      const node = new NativeWidgetNode(qtNode)
-      canonicalNodes.set(qtNode.id, node)
-
-      return node
-    }
-
-    // Fragment creation — requires canvas scope
     const scope = useCanvasScope()
-    const fragmentId = canvasFragmentCreate(scope.canvasNodeId, type)
-    const node = new FragmentRendererNode(scope.canvasNodeId, fragmentId, type)
+    const canvasNodeId = scope.hostNode.id
+    const fragmentId = canvasFragmentCreate(canvasNodeId, type)
+    const node = new FragmentRendererNode(scope.hostNode, fragmentId, type)
 
-    rendererInspectorStore.addCanvas(scope.canvasNodeId)
-    rendererInspectorStore.emit({ type: "node-created", canvasNodeId: scope.canvasNodeId, fragmentId, kind: type })
+    rendererInspectorStore.addCanvas(canvasNodeId)
+    rendererInspectorStore.emit({ type: "node-created", canvasNodeId, fragmentId, kind: type })
 
     const owner = currentQtSolidOwnerMetadata()
     if (owner) {
-      rendererInspectorStore.setOwner(scope.canvasNodeId, fragmentId, owner)
+      rendererInspectorStore.setOwner(canvasNodeId, fragmentId, owner)
     }
 
     return node
@@ -215,125 +190,93 @@ const renderer = createRenderer<QtRendererNode>({
 
   createTextNode(value) {
     const scope = useCanvasScope()
-    const fragmentId = canvasFragmentCreate(scope.canvasNodeId, "Text")
-    const node = new FragmentRendererNode(scope.canvasNodeId, fragmentId, "Text")
+    const canvasNodeId = scope.hostNode.id
+    const fragmentId = canvasFragmentCreate(canvasNodeId, "Text")
+    const node = new FragmentRendererNode(scope.hostNode, fragmentId, "Text")
 
-    rendererInspectorStore.addCanvas(scope.canvasNodeId)
-    rendererInspectorStore.emit({ type: "node-created", canvasNodeId: scope.canvasNodeId, fragmentId, kind: "#text" })
-    writeFragmentProp(scope.canvasNodeId, fragmentId, "text", String(value))
+    rendererInspectorStore.addCanvas(canvasNodeId)
+    rendererInspectorStore.emit({ type: "node-created", canvasNodeId, fragmentId, kind: "#text" })
+    writeFragmentProp(canvasNodeId, fragmentId, "text", String(value))
 
     const owner = currentQtSolidOwnerMetadata()
     if (owner) {
-      rendererInspectorStore.setOwner(scope.canvasNodeId, fragmentId, owner)
+      rendererInspectorStore.setOwner(canvasNodeId, fragmentId, owner)
     }
 
     return node
   },
 
   replaceText(node, value) {
-    if (node.nodeKind === "native") {
-      const nw = node as NativeWidgetNode
-      nw.qtNode.applyProp({ prop: "text", value } as any)
-    } else {
-      const fn = node as FragmentRendererNode
-      writeFragmentProp(fn.canvasNodeId, fn.fragmentId, "text", value)
-      rendererInspectorStore.emit({ type: "text-changed", canvasNodeId: fn.canvasNodeId, fragmentId: fn.fragmentId, value })
-      canvasFragmentRequestRepaint(fn.canvasNodeId)
-    }
+    writeFragmentProp(node.canvasNodeId, node.fragmentId, "text", value)
+    rendererInspectorStore.emit({ type: "text-changed", canvasNodeId: node.canvasNodeId, fragmentId: node.fragmentId, value })
+    canvasFragmentRequestRepaint(node.canvasNodeId)
   },
 
   setProperty(node, name, value, prev) {
-    if (node.nodeKind === "native") {
-      patchNativeProp(node as NativeWidgetNode, name, prev, value)
-    } else {
-      patchFragmentProp(node as FragmentRendererNode, name, prev, value)
-    }
+    patchFragmentProp(node, name, prev, value)
   },
 
   insertNode(parent, node, anchor) {
-    if (parent.nodeKind === "native" && node.nodeKind === "native") {
-      const nParent = parent as NativeWidgetNode
-      const nChild = node as NativeWidgetNode
-      const nAnchor = anchor ? (anchor as NativeWidgetNode) : undefined
-      nParent.qtNode.insertChild(nChild.qtNode, nAnchor?.qtNode ?? null)
-    } else if (parent.nodeKind === "fragment") {
-      parent.insertChild(node, anchor)
-      const fParent = parent as FragmentRendererNode
-      const fChild = node as FragmentRendererNode
-      const parentFid = fParent.fragmentId === FRAGMENT_ROOT_ID ? null : fParent.fragmentId
-      rendererInspectorStore.emit({
-        type: "node-inserted",
-        canvasNodeId: fParent.canvasNodeId,
-        parentFragmentId: parentFid,
-        childFragmentId: fChild.fragmentId,
-        anchorFragmentId: anchor ? (anchor as FragmentRendererNode).fragmentId : null,
-      })
-      canvasFragmentRequestRepaint(fParent.canvasNodeId)
-    } else {
-      throw new Error("Cannot insert fragment node into native widget — use CanvasScope root")
-    }
+    parent.insertChild(node, anchor)
+    const parentFid = parent.fragmentId === FRAGMENT_ROOT_ID ? null : parent.fragmentId
+    rendererInspectorStore.emit({
+      type: "node-inserted",
+      canvasNodeId: parent.canvasNodeId,
+      parentFragmentId: parentFid,
+      childFragmentId: node.fragmentId,
+      anchorFragmentId: anchor?.fragmentId ?? null,
+    })
+    canvasFragmentRequestRepaint(parent.canvasNodeId)
   },
 
   removeNode(parent, node) {
-    if (parent.nodeKind === "native" && node.nodeKind === "native") {
-      const nParent = parent as NativeWidgetNode
-      const nChild = node as NativeWidgetNode
-      forgetNativeSubtree(nChild)
-      if (nParent.id !== rootNode?.id) {
-        nParent.qtNode.removeChild(nChild.qtNode)
-      }
-      nChild.destroy()
-    } else if (parent.nodeKind === "fragment") {
-      const fParent = parent as FragmentRendererNode
-      const fChild = node as FragmentRendererNode
-      cleanupHoverOnRemove(fParent.canvasNodeId, fChild)
-      fParent.removeChild(fChild)
-      const parentFid = fParent.fragmentId === FRAGMENT_ROOT_ID ? null : fParent.fragmentId
-      rendererInspectorStore.emit({
-        type: "node-removed",
-        canvasNodeId: fParent.canvasNodeId,
-        parentFragmentId: parentFid,
-        childFragmentId: fChild.fragmentId,
-      })
-      rendererInspectorStore.emit({ type: "node-destroyed", canvasNodeId: fChild.canvasNodeId, fragmentId: fChild.fragmentId })
-      rendererInspectorStore.removeNode(fChild.canvasNodeId, fChild.fragmentId)
-      fChild.destroy()
-      canvasFragmentRequestRepaint(fParent.canvasNodeId)
-    } else {
-      throw new Error("Cannot remove fragment node from native widget")
-    }
+    cleanupHoverOnRemove(parent.canvasNodeId, node)
+    parent.removeChild(node)
+    const parentFid = parent.fragmentId === FRAGMENT_ROOT_ID ? null : parent.fragmentId
+    rendererInspectorStore.emit({
+      type: "node-removed",
+      canvasNodeId: parent.canvasNodeId,
+      parentFragmentId: parentFid,
+      childFragmentId: node.fragmentId,
+    })
+    rendererInspectorStore.emit({ type: "node-destroyed", canvasNodeId: node.canvasNodeId, fragmentId: node.fragmentId })
+    rendererInspectorStore.removeNode(node.canvasNodeId, node.fragmentId)
+    node.destroy()
+    canvasFragmentRequestRepaint(parent.canvasNodeId)
   },
 
   getParentNode(node) {
-    if (node.nodeKind === "native") {
-      const p = (node as NativeWidgetNode).qtNode.parent
-      return p ? canonNode(p) : undefined
-    }
-    return (node as FragmentRendererNode).parent ?? undefined
+    return node.parent ?? undefined
   },
 
   getFirstChild(node) {
-    if (node.nodeKind === "native") {
-      const c = (node as NativeWidgetNode).qtNode.firstChild
-      return c ? canonNode(c) : undefined
-    }
-    return (node as FragmentRendererNode).firstChild ?? undefined
+    return node.firstChild ?? undefined
   },
 
   getNextSibling(node) {
-    if (node.nodeKind === "native") {
-      const s = (node as NativeWidgetNode).qtNode.nextSibling
-      return s ? canonNode(s) : undefined
-    }
-    return (node as FragmentRendererNode).nextSibling ?? undefined
+    return node.nextSibling ?? undefined
   },
 
-  isTextNode(node) {
-    if (node.nodeKind === "native") {
-      return (node as NativeWidgetNode).qtNode.isTextNode()
-    }
+  isTextNode(_node) {
     return false
   },
+})
+
+// ---------------------------------------------------------------------------
+// Widget renderer — minimal, only for spread/setProp on NativeWidgetNode
+// ---------------------------------------------------------------------------
+
+const widgetRenderer = createRenderer<NativeWidgetNode>({
+  createElement() { throw new Error("Use createNativeWidget() instead") },
+  createTextNode() { throw new Error("Widget renderer does not support text nodes") },
+  replaceText() {},
+  setProperty(node, name, value, prev) { patchNativeProp(node, name, prev, value) },
+  insertNode() {},
+  removeNode() {},
+  getParentNode() { return undefined },
+  getFirstChild() { return undefined },
+  getNextSibling() { return undefined },
+  isTextNode() { return false },
 })
 
 // ---------------------------------------------------------------------------
@@ -416,7 +359,7 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
 }
 
 // ---------------------------------------------------------------------------
-// Renderer exports (solid-js/universal API)
+// Fragment renderer exports (solid-js/universal API)
 // ---------------------------------------------------------------------------
 
 export const {
@@ -431,14 +374,21 @@ export const {
   setProp,
   mergeProps,
   use,
-} = renderer
+} = fragmentRenderer
 
-const createComponentBase = renderer.createComponent
+const createComponentBase = fragmentRenderer.createComponent
 
 export const createComponent = ((...args: Parameters<typeof createComponentBase>) => {
   const [component, props] = args
   return withQtOwnerFrame(component, props, () => createComponentBase(...args))
-}) as typeof renderer.createComponent
+}) as typeof fragmentRenderer.createComponent
+
+// ---------------------------------------------------------------------------
+// Widget renderer exports
+// ---------------------------------------------------------------------------
+
+export const spreadWidgetProps = widgetRenderer.spread
+export const setWidgetProp = widgetRenderer.setProp
 
 // ---------------------------------------------------------------------------
 // Re-exports from submodules for public API
