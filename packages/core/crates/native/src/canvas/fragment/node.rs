@@ -165,6 +165,8 @@ pub struct FragmentNode {
     pub(crate) subtree_aabb: Option<Rect>,
     pub listeners: FragmentListeners,
     pub semantics: Option<SemanticsData>,
+    /// 3D pose: (rotate_x_deg, rotate_y_deg, perspective). Only meaningful for promoted layers.
+    pub perspective_pose: (f64, f64, f64),
 }
 
 impl FragmentNode {
@@ -297,6 +299,9 @@ pub(crate) fn apply_sampled_pose_to_fragment(
 
     node.props.transform = motion_translate * layout_scale * user_scale_rotate;
 
+    // Store 3D pose for compositor
+    node.perspective_pose = (pose.rotate_x_deg, pose.rotate_y_deg, pose.perspective);
+
     // Paint channels — only apply when the timeline actually targets them
     if let FragmentData::Rect(ref mut rect) = node.kind {
         use motion::PropertyKey;
@@ -353,6 +358,11 @@ pub(crate) fn apply_sampled_pose_to_fragment(
                 None
             };
         }
+    }
+
+    // Auto-promote when 3D transform is active
+    if pose.rotate_x_deg != 0.0 || pose.rotate_y_deg != 0.0 {
+        node.promoted = true;
     }
 
     if node.promoted {

@@ -365,9 +365,10 @@ git stash push -u -m "wip: before cleanup"
   * 在展示与 GitHub 的交互示例时，优先使用 `gh` CLI。
 
 * 关于使用 Python, 只使用 `python3` 而不是 `python`。
-* 只使用 fd (fd-find) 与 rg (ripgrep); 
-  * 使用 rg 时不要使用 `-r` = `--replace` 参数，尤其是 `-rn` = `--replace="n"`。
-  * 不要在 rg 时使用 "|"，宁愿多次调用 rg 也不要浪费时间在转义上。
+* 使用 fd (fd-find) 与 rg (ripgrep) 需要注意： 
+  * 使用 rg 时 **不要/MUST NOT** 使用 `-r` = `--replace` 参数，尤其是 `-rn` = `--replace="n"`。
+  * rg 和 grep 对 "|" 的转义规则不同，他不需要额外使用 `a\|b` 而是用 `a|b`、
+    * **尽量不要/SHALL NOT** 在 rg 时使用 "|"，宁愿多次调用 rg 也不要浪费时间在转义上。
   * ripgrep 使用 Rust regex 语法
 
 上述需要确认的规则仅适用于具有破坏性或难以回滚的操作；对纯代码编辑、语法错误修复、格式化和小范围结构重排，不需要额外确认。

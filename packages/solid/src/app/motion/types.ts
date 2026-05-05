@@ -10,6 +10,9 @@ export interface MotionTarget {
   opacity?: MotionValue;
   originX?: MotionValue;
   originY?: MotionValue;
+  rotateX?: MotionValue;
+  rotateY?: MotionValue;
+  perspective?: number;
   backgroundColor?: string;
   borderRadius?: number;
   blur?: number;

@@ -185,6 +185,7 @@ export interface CanvasCommonProps extends CanvasEventProps, MotionProps {
   rotate?: number
   originX?: number
   originY?: number
+  perspective?: number
   clip?: boolean
   clipPath?: string
   visible?: boolean

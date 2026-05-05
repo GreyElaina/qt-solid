@@ -604,7 +604,7 @@ pub(crate) fn render_composited_and_present(
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             let uniform_buffer = ws.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("qt-solid-layer-uniform"),
-                size: 64,
+                size: 128,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -765,6 +765,8 @@ pub(crate) fn render_composited_and_present(
                 layer.bounds.width(), layer.bounds.height(),
                 width_px as f64 / scale_factor, height_px as f64 / scale_factor,
                 layer.opacity,
+                layer.perspective_pose,
+                (0.5, 0.5),
             );
             ws.queue.write_buffer(&lt.uniform_buffer, 0, &uniform_data);
 
@@ -1109,7 +1111,7 @@ fn create_window_surface_with_backends(
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(64),
+                        min_binding_size: std::num::NonZeroU64::new(128),
                     },
                     count: None,
                 },
@@ -1347,33 +1349,166 @@ fn build_gpu_scene_from_subtrees(
     Ok(gpu_scene)
 }
 
-/// Build 64-byte uniform for composite_layer.wgsl LayerUniforms.
+/// Build 128-byte uniform for composite_layer.wgsl LayerUniforms.
+///
+/// The transform is a column-major 4x4 matrix that maps layer-local pixel
+/// coordinates directly to wgpu clip space (NDC with Y-down → Y-up flip).
 fn make_layer_uniform(
     affine_coeffs: &[f64; 6],
     bounds_x: f64, bounds_y: f64,
     bounds_w: f64, bounds_h: f64,
     viewport_w: f64, viewport_h: f64,
     opacity: f32,
-) -> [u8; 64] {
-    let mut data = [0u8; 64];
-    // transform_ab: vec4<f32>(a, b, c, d)
-    data[0..4].copy_from_slice(&(affine_coeffs[0] as f32).to_le_bytes());
-    data[4..8].copy_from_slice(&(affine_coeffs[1] as f32).to_le_bytes());
-    data[8..12].copy_from_slice(&(affine_coeffs[2] as f32).to_le_bytes());
-    data[12..16].copy_from_slice(&(affine_coeffs[3] as f32).to_le_bytes());
-    // transform_ef: vec4<f32>(e, f, viewport_w, viewport_h)
-    data[16..20].copy_from_slice(&(affine_coeffs[4] as f32).to_le_bytes());
-    data[20..24].copy_from_slice(&(affine_coeffs[5] as f32).to_le_bytes());
-    data[24..28].copy_from_slice(&(viewport_w as f32).to_le_bytes());
-    data[28..32].copy_from_slice(&(viewport_h as f32).to_le_bytes());
-    // bounds: vec4<f32>(x, y, w, h)
-    data[32..36].copy_from_slice(&(bounds_x as f32).to_le_bytes());
-    data[36..40].copy_from_slice(&(bounds_y as f32).to_le_bytes());
-    data[40..44].copy_from_slice(&(bounds_w as f32).to_le_bytes());
-    data[44..48].copy_from_slice(&(bounds_h as f32).to_le_bytes());
-    // opacity_pad: vec4<f32>(opacity, 0, 0, 0)
-    data[48..52].copy_from_slice(&opacity.to_le_bytes());
+    perspective_pose: (f64, f64, f64),
+    origin: (f64, f64),
+) -> [u8; 128] {
+    let mat = build_composite_matrix(
+        affine_coeffs, bounds_x, bounds_y, bounds_w, bounds_h,
+        viewport_w, viewport_h,
+        perspective_pose,
+        origin,
+    );
+
+    let mut data = [0u8; 128];
+    // mat4x4 — column major, 64 bytes
+    for (i, &v) in mat.iter().enumerate() {
+        let offset = i * 4;
+        data[offset..offset + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    // bounds: vec4<f32> at offset 64
+    data[64..68].copy_from_slice(&(bounds_x as f32).to_le_bytes());
+    data[68..72].copy_from_slice(&(bounds_y as f32).to_le_bytes());
+    data[72..76].copy_from_slice(&(bounds_w as f32).to_le_bytes());
+    data[76..80].copy_from_slice(&(bounds_h as f32).to_le_bytes());
+    // viewport: vec4<f32> at offset 80
+    data[80..84].copy_from_slice(&(viewport_w as f32).to_le_bytes());
+    data[84..88].copy_from_slice(&(viewport_h as f32).to_le_bytes());
+    // opacity_flags: vec4<f32> at offset 96
+    data[96..100].copy_from_slice(&opacity.to_le_bytes());
+    // backface_visible = 1.0 (always show for now)
+    data[100..104].copy_from_slice(&1.0f32.to_le_bytes());
     data
+}
+
+/// Build the 4x4 column-major matrix that maps layer-local pixel coords
+/// to wgpu clip space [-1,1] with perspective.
+fn build_composite_matrix(
+    affine_coeffs: &[f64; 6],
+    bounds_x: f64, bounds_y: f64,
+    bounds_w: f64, bounds_h: f64,
+    viewport_w: f64, viewport_h: f64,
+    perspective_pose: (f64, f64, f64),
+    origin: (f64, f64),
+) -> [f32; 16] {
+    let (rx_deg, ry_deg, persp) = perspective_pose;
+    let rx = (rx_deg as f64).to_radians();
+    let ry = (ry_deg as f64).to_radians();
+
+    // Step 1: Viewport pixel coords → NDC
+    let ndc = [
+        2.0 / viewport_w as f32, 0.0, 0.0, 0.0,
+        0.0, -2.0 / viewport_h as f32, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        -1.0, 1.0, 0.0, 1.0,
+    ];
+
+    // Step 2: 2D affine transform (a,b,c,d,e,f)
+    let a = affine_coeffs[0] as f32;
+    let b = affine_coeffs[1] as f32;
+    let c = affine_coeffs[2] as f32;
+    let d = affine_coeffs[3] as f32;
+    let e = affine_coeffs[4] as f32;
+    let f = affine_coeffs[5] as f32;
+    let affine = [
+        a,   b,   0.0, 0.0,
+        c,   d,   0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        e,   f,   0.0, 1.0,
+    ];
+
+    let m = mat4_mul(&ndc, &affine);
+
+    // If no 3D rotation, done
+    if rx.abs() < 1e-6 && ry.abs() < 1e-6 {
+        return m;
+    }
+
+    // Step 3: 3D rotation around layer center with perspective
+    let ox = (bounds_x + origin.0 * bounds_w) as f32;
+    let oy = (bounds_y + origin.1 * bounds_h) as f32;
+
+    let to_origin = mat4_translate(-ox, -oy, 0.0);
+    let from_origin = mat4_translate(ox, oy, 0.0);
+
+    let persp_mat = if persp > 0.0 {
+        let p = persp as f32;
+        [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, -1.0 / p,
+            0.0, 0.0, 0.0, 1.0,
+        ]
+    } else {
+        mat4_identity()
+    };
+
+    let cos_rx = rx.cos() as f32;
+    let sin_rx = rx.sin() as f32;
+    let rot_x = [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, cos_rx, sin_rx, 0.0,
+        0.0, -sin_rx, cos_rx, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ];
+
+    let cos_ry = ry.cos() as f32;
+    let sin_ry = ry.sin() as f32;
+    let rot_y = [
+        cos_ry, 0.0, -sin_ry, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        sin_ry, 0.0, cos_ry, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ];
+
+    // Compose: ndc * from_origin * persp * rotX * rotY * to_origin * affine
+    let inner = mat4_mul(&rot_x, &rot_y);
+    let inner = mat4_mul(&persp_mat, &inner);
+    let inner = mat4_mul(&from_origin, &inner);
+    let inner = mat4_mul(&inner, &to_origin);
+    let world = mat4_mul(&inner, &affine);
+    mat4_mul(&ndc, &world)
+}
+
+fn mat4_identity() -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
+fn mat4_translate(x: f32, y: f32, z: f32) -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        x,   y,   z,   1.0,
+    ]
+}
+
+fn mat4_mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+    let mut out = [0.0f32; 16];
+    for col in 0..4 {
+        for row in 0..4 {
+            let mut sum = 0.0f32;
+            for k in 0..4 {
+                sum += a[k * 4 + row] * b[col * 4 + k];
+            }
+            out[col * 4 + row] = sum;
+        }
+    }
+    out
 }
 
 /// Clear a sub-region of a texture to transparent black using a retained

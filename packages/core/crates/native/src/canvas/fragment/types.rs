@@ -68,6 +68,8 @@ pub struct PromotedLayer {
     pub content_dirty: bool,
     /// True when only pose (transform/opacity) changed (compositor-only update).
     pub pose_only_dirty: bool,
+    /// 3D perspective pose: (rotate_x_deg, rotate_y_deg, perspective_distance).
+    pub perspective_pose: (f64, f64, f64),
 }
 
 #[derive(Debug)]
@@ -142,6 +144,7 @@ pub struct CompositedLayer {
     pub blend_mode: BlendMode,
     pub content_dirty: bool,
     pub pose_only_dirty: bool,
+    pub perspective_pose: (f64, f64, f64),
 }
 
 /// Partitioned render plan produced by `PaintPlan::partition()`.
@@ -250,6 +253,7 @@ impl PaintPlan {
                         blend_mode: layer.blend_mode,
                         content_dirty: layer.content_dirty,
                         pose_only_dirty: layer.pose_only_dirty,
+                        perspective_pose: layer.perspective_pose,
                     });
                 }
                 (PaintChunk::Promoted(layer), false) => {

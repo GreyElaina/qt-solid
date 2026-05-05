@@ -533,6 +533,7 @@ impl FragmentTree {
                 blend_mode: node.props.blend_mode,
                 content_dirty: true, // set correctly in build_paint_plan
                 pose_only_dirty: false,
+                perspective_pose: node.perspective_pose,
             }));
 
             collector.resume_inline_after_split();

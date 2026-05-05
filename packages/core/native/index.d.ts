@@ -337,6 +337,9 @@ export interface QtMotionTarget {
   opacity?: number
   originX?: number
   originY?: number
+  rotateX?: number
+  rotateY?: number
+  perspective?: number
   xKeyframes?: Array<number>
   yKeyframes?: Array<number>
   scaleXKeyframes?: Array<number>
@@ -345,6 +348,8 @@ export interface QtMotionTarget {
   opacityKeyframes?: Array<number>
   originXKeyframes?: Array<number>
   originYKeyframes?: Array<number>
+  rotateXKeyframes?: Array<number>
+  rotateYKeyframes?: Array<number>
   backgroundR?: number
   backgroundG?: number
   backgroundB?: number

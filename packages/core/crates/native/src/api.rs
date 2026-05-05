@@ -239,6 +239,13 @@ pub struct QtMotionTarget {
     pub shadow_g: Option<f64>,
     pub shadow_b: Option<f64>,
     pub shadow_a: Option<f64>,
+    // 3D transform
+    pub rotate_x: Option<f64>,
+    pub rotate_y: Option<f64>,
+    pub perspective: Option<f64>,
+    // Keyframes for 3D
+    pub rotate_x_keyframes: Option<Vec<f64>>,
+    pub rotate_y_keyframes: Option<Vec<f64>>,
 }
 
 #[napi_derive::napi(string_enum)]
@@ -806,6 +813,16 @@ fn lower_motion_target(target: &QtMotionTarget) -> Vec<(motion::PropertyKey, f64
     if let Some(v) = target.shadow_a {
         out.push((motion::PropertyKey::ShadowA, v));
     }
+    // 3D transform
+    if let Some(v) = target.rotate_x {
+        out.push((motion::PropertyKey::RotateX, v));
+    }
+    if let Some(v) = target.rotate_y {
+        out.push((motion::PropertyKey::RotateY, v));
+    }
+    if let Some(v) = target.perspective {
+        out.push((motion::PropertyKey::Perspective, v));
+    }
     out
 }
 
@@ -854,6 +871,21 @@ fn lower_motion_target_keyframes(target: &QtMotionTarget) -> Vec<(motion::Proper
         target.origin_y_keyframes,
         motion::PropertyKey::OriginY
     );
+    // 3D transform
+    prop!(
+        target.rotate_x,
+        target.rotate_x_keyframes,
+        motion::PropertyKey::RotateX
+    );
+    prop!(
+        target.rotate_y,
+        target.rotate_y_keyframes,
+        motion::PropertyKey::RotateY
+    );
+    // Perspective remains scalar-only (no keyframes field)
+    if let Some(v) = target.perspective {
+        out.push((motion::PropertyKey::Perspective, vec![v]));
+    }
     // Paint properties remain scalar-only
     if let Some(v) = target.background_r {
         out.push((motion::PropertyKey::BackgroundR, vec![v]));
@@ -1571,7 +1603,9 @@ pub fn canvas_fragment_set_motion_target(
         || target.rotate_keyframes.is_some()
         || target.opacity_keyframes.is_some()
         || target.origin_x_keyframes.is_some()
-        || target.origin_y_keyframes.is_some();
+        || target.origin_y_keyframes.is_some()
+        || target.rotate_x_keyframes.is_some()
+        || target.rotate_y_keyframes.is_some();
     let default_transition = transition
         .default
         .as_ref()

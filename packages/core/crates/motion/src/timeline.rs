@@ -37,13 +37,18 @@ pub enum PropertyKey {
     // Scroll channels
     ScrollX,
     ScrollY,
+    // 3D transform channels
+    RotateX,
+    RotateY,
+    Perspective,
 }
 
 impl PropertyKey {
     /// Default resting value for each property.
     pub fn default_value(self) -> f64 {
         match self {
-            Self::X | Self::Y | Self::Rotate | Self::LayoutX | Self::LayoutY => 0.0,
+            Self::X | Self::Y | Self::Rotate | Self::LayoutX | Self::LayoutY
+            | Self::RotateX | Self::RotateY | Self::Perspective => 0.0,
             Self::ScaleX
             | Self::ScaleY
             | Self::Opacity
@@ -76,6 +81,8 @@ impl PropertyKey {
             Self::ShadowR => "shadowR", Self::ShadowG => "shadowG",
             Self::ShadowB => "shadowB", Self::ShadowA => "shadowA",
             Self::ScrollX => "scrollX", Self::ScrollY => "scrollY",
+            Self::RotateX => "rotateX", Self::RotateY => "rotateY",
+            Self::Perspective => "perspective",
         }
     }
 
@@ -133,6 +140,10 @@ pub struct SampledPose {
     // Scroll
     pub scroll_x: f64,
     pub scroll_y: f64,
+    // 3D transform
+    pub rotate_x_deg: f64,
+    pub rotate_y_deg: f64,
+    pub perspective: f64,
 }
 
 impl Default for SampledPose {
@@ -165,6 +176,9 @@ impl Default for SampledPose {
             shadow_a: 0.0,
             scroll_x: 0.0,
             scroll_y: 0.0,
+            rotate_x_deg: 0.0,
+            rotate_y_deg: 0.0,
+            perspective: 0.0,
         }
     }
 }
@@ -417,6 +431,9 @@ fn apply_to_pose(pose: &mut SampledPose, key: PropertyKey, value: f64) {
         PropertyKey::ShadowA => pose.shadow_a = value,
         PropertyKey::ScrollX => pose.scroll_x = value,
         PropertyKey::ScrollY => pose.scroll_y = value,
+        PropertyKey::RotateX => pose.rotate_x_deg = value,
+        PropertyKey::RotateY => pose.rotate_y_deg = value,
+        PropertyKey::Perspective => pose.perspective = value,
     }
 }
 
@@ -435,7 +452,7 @@ fn visual_velocity_weight(key: PropertyKey) -> f64 {
         | PropertyKey::ScaleY
         | PropertyKey::LayoutScaleX
         | PropertyKey::LayoutScaleY => 100.0,
-        PropertyKey::Rotate => 2.0,
+        PropertyKey::Rotate | PropertyKey::RotateX | PropertyKey::RotateY => 2.0,
         PropertyKey::Opacity => 60.0,
         PropertyKey::OriginX | PropertyKey::OriginY => 50.0,
         PropertyKey::BackgroundR
@@ -449,6 +466,7 @@ fn visual_velocity_weight(key: PropertyKey) -> f64 {
         PropertyKey::ShadowOffsetX
         | PropertyKey::ShadowOffsetY
         | PropertyKey::ShadowBlurRadius => 1.0,
+        PropertyKey::Perspective => 1.0,
     }
 }
 
