@@ -40,6 +40,47 @@ impl FragmentData {
 }
 
 // ---------------------------------------------------------------------------
+// Content filter parameters for promoted layers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContentFilterParams {
+    pub grayscale: f32,
+    pub saturate: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub hue_rotate: f32,
+    pub invert: f32,
+    pub sepia: f32,
+}
+
+impl Default for ContentFilterParams {
+    fn default() -> Self {
+        Self {
+            grayscale: 0.0,
+            saturate: 1.0,
+            brightness: 1.0,
+            contrast: 1.0,
+            hue_rotate: 0.0,
+            invert: 0.0,
+            sepia: 0.0,
+        }
+    }
+}
+
+impl ContentFilterParams {
+    pub fn is_identity(&self) -> bool {
+        self.grayscale < 0.001
+            && (self.saturate - 1.0).abs() < 0.001
+            && (self.brightness - 1.0).abs() < 0.001
+            && (self.contrast - 1.0).abs() < 0.001
+            && self.hue_rotate.abs() < 0.1
+            && self.invert < 0.001
+            && self.sepia < 0.001
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Fragment visual props — user-specified via JSX / prop writes
 // ---------------------------------------------------------------------------
 
@@ -59,6 +100,7 @@ pub struct FragmentProps {
     pub focusable: bool,
     pub transform: Affine,
     pub backdrop_blur: Option<f64>,
+    pub content_filter: Option<ContentFilterParams>,
     pub z_index: i32,
 }
 
@@ -79,6 +121,7 @@ impl Default for FragmentProps {
             focusable: false,
             transform: Affine::IDENTITY,
             backdrop_blur: None,
+            content_filter: None,
             z_index: 0,
         }
     }

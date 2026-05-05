@@ -522,6 +522,27 @@ impl FragmentTree {
             let bounds = Self::compute_promoted_local_bounds(nodes, id).unwrap_or(Rect::ZERO);
             let clip_rect = collector.accumulated_clip_rect();
 
+            let outer_shadow = match &node.kind {
+                FragmentData::Rect(rect) => {
+                    rect.shadow.as_ref().and_then(|s| {
+                        if s.inset { return None; }
+                        let rgba = s.color.to_rgba8();
+                        let a = rgba.a as f32 / 255.0;
+                        Some((
+                            s.offset_x, s.offset_y, s.blur,
+                            rect.corner_radii.as_single_radius().unwrap_or(0.0),
+                            [
+                                (rgba.r as f32 / 255.0) * a,
+                                (rgba.g as f32 / 255.0) * a,
+                                (rgba.b as f32 / 255.0) * a,
+                                a,
+                            ],
+                        ))
+                    })
+                }
+                _ => None,
+            };
+
             collector.chunks.push(PaintChunk::Promoted(PromotedLayer {
                 fragment_id: id,
                 layer_key: FragmentLayerKey(0),
@@ -534,6 +555,8 @@ impl FragmentTree {
                 content_dirty: true, // set correctly in build_paint_plan
                 pose_only_dirty: false,
                 perspective_pose: node.perspective_pose,
+                content_filter: node.props.content_filter,
+                outer_shadow,
             }));
 
             collector.resume_inline_after_split();

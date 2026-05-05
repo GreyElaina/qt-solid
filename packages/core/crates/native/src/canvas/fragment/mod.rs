@@ -1425,6 +1425,33 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
             }
             return;
         }
+        "filterGrayscale" | "filterSaturate" | "filterBrightness" | "filterContrast"
+        | "filterHueRotate" | "filterInvert" | "filterSepia" => {
+            match value {
+                FragmentValue::F64 { value } => {
+                    let filter = node.props.content_filter.get_or_insert_with(ContentFilterParams::default);
+                    let v = value as f32;
+                    match key {
+                        "filterGrayscale" => filter.grayscale = v,
+                        "filterSaturate" => filter.saturate = v,
+                        "filterBrightness" => filter.brightness = v,
+                        "filterContrast" => filter.contrast = v,
+                        "filterHueRotate" => filter.hue_rotate = v,
+                        "filterInvert" => filter.invert = v,
+                        "filterSepia" => filter.sepia = v,
+                        _ => {}
+                    }
+                    if filter.is_identity() {
+                        node.props.content_filter = None;
+                    }
+                }
+                FragmentValue::Unset => {
+                    node.props.content_filter = None;
+                }
+                _ => {}
+            }
+            return;
+        }
         "zIndex" => {
             match value {
                 FragmentValue::F64 { value } => {

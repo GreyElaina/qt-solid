@@ -70,6 +70,10 @@ pub struct PromotedLayer {
     pub pose_only_dirty: bool,
     /// 3D perspective pose: (rotate_x_deg, rotate_y_deg, perspective_distance).
     pub perspective_pose: (f64, f64, f64),
+    /// Content filter applied after Vello renders into the layer texture.
+    pub content_filter: Option<super::node::ContentFilterParams>,
+    /// Outer shadow params: (offset_x, offset_y, blur, corner_radius, color_rgba_premul).
+    pub outer_shadow: Option<(f64, f64, f64, f64, [f32; 4])>,
 }
 
 #[derive(Debug)]
@@ -145,6 +149,9 @@ pub struct CompositedLayer {
     pub content_dirty: bool,
     pub pose_only_dirty: bool,
     pub perspective_pose: (f64, f64, f64),
+    pub content_filter: Option<super::node::ContentFilterParams>,
+    /// Outer shadow params: (offset_x, offset_y, blur, corner_radius, color_rgba_premul).
+    pub outer_shadow: Option<(f64, f64, f64, f64, [f32; 4])>,
 }
 
 /// Partitioned render plan produced by `PaintPlan::partition()`.
@@ -254,6 +261,8 @@ impl PaintPlan {
                         content_dirty: layer.content_dirty,
                         pose_only_dirty: layer.pose_only_dirty,
                         perspective_pose: layer.perspective_pose,
+                        content_filter: layer.content_filter,
+                        outer_shadow: layer.outer_shadow,
                     });
                 }
                 (PaintChunk::Promoted(layer), false) => {

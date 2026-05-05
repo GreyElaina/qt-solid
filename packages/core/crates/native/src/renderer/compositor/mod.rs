@@ -22,6 +22,7 @@ use crate::runtime::qt_error;
 
 /// Per-promoted-layer GPU texture state.
 struct LayerTextureState {
+    texture: wgpu::Texture,
     view: wgpu::TextureView,
     width: u32,
     height: u32,
@@ -600,7 +601,9 @@ pub(crate) fn render_composited_and_present(
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -629,7 +632,7 @@ pub(crate) fn render_composited_and_present(
                 ],
             });
             ws.layer_textures.insert(layer.layer_key, LayerTextureState {
-                view, width: lw, height: lh,
+                texture, view, width: lw, height: lh,
                 uniform_buffer, composite_bind_group,
             });
         }
@@ -672,6 +675,25 @@ pub(crate) fn render_composited_and_present(
             &RenderSize { width: lw, height: lh },
             &lt.view,
         ).map_err(|e| qt_error(format!("vello layer render: {e}")))?;
+
+        // Apply content filter after Vello render, before compositing.
+        if let Some(ref filter) = layer.content_filter {
+            let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
+            let effect = effects::ContentFilterEffect {
+                grayscale: filter.grayscale,
+                saturate: filter.saturate,
+                brightness: filter.brightness,
+                contrast: filter.contrast,
+                hue_rotate: filter.hue_rotate,
+                invert: filter.invert,
+                sepia: filter.sepia,
+            };
+            effects::apply_content_filter(
+                &ws.device, &ws.queue, &mut encoder,
+                &lt.texture, &lt.view, (lw, lh),
+                &effect,
+            );
+        }
     }
 
     // --- Step 3: Effects pass on base_texture → output_texture ---
@@ -735,7 +757,7 @@ pub(crate) fn render_composited_and_present(
         pass.draw(0..3, 0..1);
     }
 
-    // Overdraw each composited layer.
+    // Overdraw each composited layer (shadow behind, then texture).
     if !render_plan.composited_layers.is_empty() {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("qt-solid-composited-layers-pass"),
@@ -753,25 +775,58 @@ pub(crate) fn render_composited_and_present(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&ws.composite_pipeline);
+
+        let viewport_w = width_px as f64 / scale_factor;
+        let viewport_h = height_px as f64 / scale_factor;
 
         for layer in &render_plan.composited_layers {
             let Some(lt) = ws.layer_textures.get(&layer.layer_key) else {
                 continue;
             };
 
-            // Update retained uniform buffer (zero alloc).
             let coeffs = layer.transform.as_coeffs();
+
+            // Draw outer shadow behind layer (if any).
+            if let Some((offset_x, offset_y, blur, corner_radius, color)) = &layer.outer_shadow {
+                let blur_extent = *blur * 3.0;
+                let shadow_x = layer.bounds.x0 + offset_x - blur_extent;
+                let shadow_y = layer.bounds.y0 + offset_y - blur_extent;
+                let shadow_w = layer.bounds.width() + blur_extent * 2.0;
+                let shadow_h = layer.bounds.height() + blur_extent * 2.0;
+
+                let shadow_transform = build_composite_matrix(
+                    &coeffs,
+                    shadow_x, shadow_y, shadow_w, shadow_h,
+                    viewport_w, viewport_h,
+                    layer.perspective_pose,
+                    (0.5, 0.5),
+                );
+
+                effects::draw_outer_shadows(
+                    &ws.device, &mut pass, &ws.outer_shadow_pipeline,
+                    &[effects::OuterShadowEffect {
+                        transform: shadow_transform,
+                        bounds: [shadow_x as f32, shadow_y as f32, shadow_w as f32, shadow_h as f32],
+                        corner_radius: *corner_radius as f32,
+                        blur_radius: *blur as f32,
+                        offset: [*offset_x as f32, *offset_y as f32],
+                        color: *color,
+                    }],
+                );
+            }
+
+            // Update retained uniform buffer (zero alloc).
             let uniform_data = make_layer_uniform(
                 &coeffs, layer.bounds.x0, layer.bounds.y0,
                 layer.bounds.width(), layer.bounds.height(),
-                width_px as f64 / scale_factor, height_px as f64 / scale_factor,
+                viewport_w, viewport_h,
                 layer.opacity,
                 layer.perspective_pose,
                 (0.5, 0.5),
             );
             ws.queue.write_buffer(&lt.uniform_buffer, 0, &uniform_data);
 
+            pass.set_pipeline(&ws.composite_pipeline);
             pass.set_bind_group(0, &lt.composite_bind_group, &[]);
             pass.draw(0..6, 0..1);
         }

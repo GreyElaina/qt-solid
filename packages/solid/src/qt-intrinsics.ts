@@ -179,6 +179,13 @@ export interface CanvasCommonProps extends CanvasEventProps, MotionProps {
   y?: number
   opacity?: number
   backdropBlur?: number
+  filterGrayscale?: number
+  filterSaturate?: number
+  filterBrightness?: number
+  filterContrast?: number
+  filterHueRotate?: number
+  filterInvert?: number
+  filterSepia?: number
   scale?: number
   scaleX?: number
   scaleY?: number
