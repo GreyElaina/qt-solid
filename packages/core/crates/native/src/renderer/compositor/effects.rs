@@ -1032,10 +1032,6 @@ pub fn apply_content_filter(
 // Layer mask
 // ---------------------------------------------------------------------------
 
-pub struct LayerMaskEffect {
-    pub texture_size: (u32, u32),
-}
-
 struct MaskPipelineState {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,

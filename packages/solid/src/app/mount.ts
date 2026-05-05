@@ -97,8 +97,8 @@ function mountQtRoot(
       }
 
       return () => {
-        destroyChildWidgets(root)
         dispose()
+        destroyChildWidgets(root)
       }
     })
   } catch (error) {

@@ -97,7 +97,16 @@ function canonNode(qtNode: QtNode): NativeWidgetNode {
 }
 
 function forgetNativeSubtree(node: NativeWidgetNode): void {
-  let child = node.qtNode.firstChild
+  if (!canonicalNodes.has(node.id)) return
+  let child: QtNode | null
+  try {
+    child = node.qtNode.firstChild
+  } catch {
+    // Node already destroyed on the native side — just clean up maps.
+    canonicalNodes.delete(node.id)
+    forgetNativeEvents(node.id)
+    return
+  }
   while (child) {
     const next = child.nextSibling
     const wrapped = canonicalNodes.get(child.id)
@@ -151,6 +160,7 @@ export function insertNativeWidget(parent: NativeWidgetNode, child: NativeWidget
 }
 
 export function removeNativeWidget(parent: NativeWidgetNode, child: NativeWidgetNode): void {
+  if (!canonicalNodes.has(child.id)) return
   forgetNativeSubtree(child)
   parent.qtNode.removeChild(child.qtNode)
   child.destroy()
@@ -413,6 +423,11 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
     const state = ensureInlineMotion(node)
     state.bag[key] = next
     state.trigger()
+    // "layer" and "hitTest" also need to reach native for promotion/hit-testing
+    if (key === "layer" || key === "hitTest") {
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, key, next)
+      canvasFragmentRequestRepaint(node.canvasNodeId)
+    }
     return
   }
 

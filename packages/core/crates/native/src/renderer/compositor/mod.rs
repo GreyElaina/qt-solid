@@ -1509,12 +1509,13 @@ fn build_composite_matrix(
     let rx = (rx_deg as f64).to_radians();
     let ry = (ry_deg as f64).to_radians();
 
-    // Step 1: Viewport pixel coords → NDC
+    // Step 1: Viewport pixel coords → NDC (wgpu clip space)
+    // Force clip z = 0.5*w so rotated geometry never gets z-clipped.
     let ndc = [
         2.0 / viewport_w as f32, 0.0, 0.0, 0.0,
         0.0, -2.0 / viewport_h as f32, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        -1.0, 1.0, 0.0, 1.0,
+        0.0, 0.0, 0.0, 0.0,
+        -1.0, 1.0, 0.5, 1.0,
     ];
 
     // Step 2: 2D affine transform (a,b,c,d,e,f)
@@ -1531,16 +1532,15 @@ fn build_composite_matrix(
         e,   f,   0.0, 1.0,
     ];
 
-    let m = mat4_mul(&ndc, &affine);
-
-    // If no 3D rotation, done
+    // If no 3D rotation, just ndc * affine
     if rx.abs() < 1e-6 && ry.abs() < 1e-6 {
-        return m;
+        return mat4_mul(&ndc, &affine);
     }
 
-    // Step 3: 3D rotation around layer center with perspective
-    let ox = (bounds_x + origin.0 * bounds_w) as f32;
-    let oy = (bounds_y + origin.1 * bounds_h) as f32;
+    // Step 3: 3D rotation in layer-LOCAL space, then affine places into world.
+    // Origin is in local layer coordinates (relative to bounds top-left).
+    let ox = (origin.0 * bounds_w) as f32;
+    let oy = (origin.1 * bounds_h) as f32;
 
     let to_origin = mat4_translate(-ox, -oy, 0.0);
     let from_origin = mat4_translate(ox, oy, 0.0);
@@ -1575,12 +1575,16 @@ fn build_composite_matrix(
         0.0, 0.0, 0.0, 1.0,
     ];
 
-    // Compose: ndc * from_origin * persp * rotX * rotY * to_origin * affine
-    let inner = mat4_mul(&rot_x, &rot_y);
-    let inner = mat4_mul(&persp_mat, &inner);
-    let inner = mat4_mul(&from_origin, &inner);
-    let inner = mat4_mul(&inner, &to_origin);
-    let world = mat4_mul(&inner, &affine);
+    // Compose local 3D: T(origin) * Perspective * RotX * RotY * T(-origin)
+    let rotation = mat4_mul(&rot_x, &rot_y);
+    let local_3d = mat4_mul(&persp_mat, &rotation);
+    let local_3d = mat4_mul(&from_origin, &local_3d);
+    let local_3d = mat4_mul(&local_3d, &to_origin);
+
+    // Full: NDC * Affine * Local3D
+    // WGSL: clip_pos = M * local_pos
+    // local_pos goes through local_3d first (rotated), then affine (positioned), then ndc
+    let world = mat4_mul(&affine, &local_3d);
     mat4_mul(&ndc, &world)
 }
 
