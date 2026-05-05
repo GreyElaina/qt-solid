@@ -770,7 +770,39 @@ pub(crate) fn render_composited_and_present(
         pass.draw(0..3, 0..1);
     }
 
-    // Overdraw each composited layer (shadow behind, then texture).
+    // --- Step 4a: Apply vibrancy to affected layer textures (before composite pass) ---
+    if !render_plan.composited_layers.is_empty() {
+        let viewport_w = width_px as f32 / scale_factor as f32;
+        let viewport_h = height_px as f32 / scale_factor as f32;
+        let backdrop_view = if has_effects { &ws.output_view } else { &ws.base_view };
+
+        for layer in &render_plan.composited_layers {
+            if let Some(vib) = &layer.vibrancy {
+                let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
+                let uv_offset = [
+                    layer.bounds.x0 as f32 / viewport_w,
+                    layer.bounds.y0 as f32 / viewport_h,
+                ];
+                let uv_scale = [
+                    layer.bounds.width() as f32 / viewport_w,
+                    layer.bounds.height() as f32 / viewport_h,
+                ];
+                effects::apply_vibrancy_in_place(
+                    &ws.device, &mut encoder,
+                    &lt.texture, &lt.view, backdrop_view,
+                    (lt.width, lt.height),
+                    &effects::VibrancyEffect {
+                        desaturation: vib.desaturation,
+                        blend_mode: vib.blend_mode,
+                        tint: vib.tint,
+                    },
+                    uv_offset, uv_scale,
+                );
+            }
+        }
+    }
+
+    // --- Step 4b: Composite all layers to surface ---
     if !render_plan.composited_layers.is_empty() {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("qt-solid-composited-layers-pass"),
@@ -827,32 +859,6 @@ pub(crate) fn render_composited_and_present(
                     }],
                 );
             }
-
-            // TODO: vibrancy hookup for layers with `layer.vibrancy.is_some()`.
-            //
-            // Correct approach: apply vibrancy BEFORE compositing (between step 3
-            // and step 4), because apply_vibrancy is a fullscreen shader that
-            // needs backdrop + foreground at the same resolution.
-            //
-            // For each vibrancy layer:
-            //   1. End the composite render pass (or apply before it starts).
-            //   2. Extract output_texture region → layer-sized scratch texture.
-            //      Region is `layer.bounds * scale_factor` mapped to output_texture
-            //      UVs. Requires copy_texture_to_texture with origin offset OR a
-            //      blit pass with UV offset (since copy_texture_to_texture doesn't
-            //      do sub-rect on source with different sizes).
-            //   3. Copy layer_texture → second scratch (content backup).
-            //   4. effects::apply_vibrancy(device, encoder,
-            //        target = layer_texture view,
-            //        backdrop = region scratch view,
-            //        foreground = content scratch view,
-            //        texture_size = (lw, lh),
-            //        effect);
-            //   5. Composite normally below.
-            //
-            // Alternative: add UV offset/scale uniforms to vibrancy.wgsl so it
-            // can sample directly from the full-res output_texture without the
-            // region extraction step.
 
             // Update retained uniform buffer (zero alloc).
             let uniform_data = make_layer_uniform(

@@ -1242,14 +1242,14 @@ fn create_vibrancy_pipeline(device: &wgpu::Device) -> VibrancyPipelineState {
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("vibrancy-bind-group-layout"),
         entries: &[
-            // binding 0: VibrancyParams uniform (48 bytes)
+            // binding 0: VibrancyParams uniform (64 bytes)
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: std::num::NonZeroU64::new(48),
+                    min_binding_size: std::num::NonZeroU64::new(64),
                 },
                 count: None,
             },
@@ -1338,7 +1338,7 @@ fn create_vibrancy_pipeline(device: &wgpu::Device) -> VibrancyPipelineState {
     }
 }
 
-/// Uniform buffer layout matching the WGSL `VibrancyParams` struct (48 bytes).
+/// Uniform buffer layout matching the WGSL `VibrancyParams` struct (64 bytes).
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct VibrancyUniforms {
@@ -1347,36 +1347,75 @@ struct VibrancyUniforms {
     _align_pad: [f32; 2],
     tint: [f32; 4],
     texture_size: [f32; 2],
+    backdrop_uv_offset: [f32; 2],
+    backdrop_uv_scale: [f32; 2],
     _padding: [f32; 2],
 }
 
-fn make_vibrancy_uniform(effect: &VibrancyEffect, texture_size: (u32, u32)) -> [u8; 48] {
+fn make_vibrancy_uniform(
+    effect: &VibrancyEffect,
+    texture_size: (u32, u32),
+    backdrop_uv_offset: [f32; 2],
+    backdrop_uv_scale: [f32; 2],
+) -> [u8; 64] {
     bytemuck::cast(VibrancyUniforms {
         desaturation: effect.desaturation,
         blend_mode: effect.blend_mode as f32,
         _align_pad: [0.0; 2],
         tint: effect.tint,
         texture_size: [texture_size.0 as f32, texture_size.1 as f32],
+        backdrop_uv_offset,
+        backdrop_uv_scale,
         _padding: [0.0; 2],
     })
 }
 
-/// Composite a foreground layer over a desaturated+tinted blurred backdrop.
+/// Apply vibrancy effect in-place on a layer texture.
 ///
-/// Both `backdrop_view` (already blurred) and `foreground_view` are sampled;
-/// the blended result is written to `target_view`.
-pub fn apply_vibrancy(
+/// Copies `target_texture` to scratch (for reading foreground), then renders
+/// the vibrancy blend (desaturated backdrop + foreground) back to `target_view`.
+/// `backdrop_view` is the full-viewport texture (already blurred); UV remapping
+/// is controlled by `backdrop_uv_offset`/`backdrop_uv_scale`.
+pub fn apply_vibrancy_in_place(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
+    target_texture: &wgpu::Texture,
     target_view: &wgpu::TextureView,
     backdrop_view: &wgpu::TextureView,
-    foreground_view: &wgpu::TextureView,
     texture_size: (u32, u32),
     effect: &VibrancyEffect,
+    backdrop_uv_offset: [f32; 2],
+    backdrop_uv_scale: [f32; 2],
 ) {
     let state = vibrancy_pipeline(device);
 
-    let data = make_vibrancy_uniform(effect, texture_size);
+    // Reuse shared scratch texture for the foreground copy.
+    let scratch_mutex = ensure_scratch_texture(device, texture_size.0, texture_size.1);
+    let scratch_guard = scratch_mutex.lock().unwrap();
+    let scratch = scratch_guard.as_ref().unwrap();
+
+    // Copy target → scratch (foreground backup)
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: target_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyTextureInfo {
+            texture: &scratch.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            width: texture_size.0,
+            height: texture_size.1,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let data = make_vibrancy_uniform(effect, texture_size, backdrop_uv_offset, backdrop_uv_scale);
     let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("vibrancy-uniform"),
         contents: &data,
@@ -1397,7 +1436,7 @@ pub fn apply_vibrancy(
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::TextureView(foreground_view),
+                resource: wgpu::BindingResource::TextureView(&scratch.view),
             },
             wgpu::BindGroupEntry {
                 binding: 3,
@@ -1407,7 +1446,7 @@ pub fn apply_vibrancy(
     });
 
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("vibrancy-pass"),
+        label: Some("vibrancy-in-place-pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target_view,
             resolve_target: None,

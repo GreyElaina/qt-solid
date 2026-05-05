@@ -11,6 +11,9 @@ struct VibrancyParams {
     // Foreground tint color multiplier (premultiplied RGBA)
     tint: vec4<f32>,
     texture_size: vec2<f32>,
+    // UV offset and scale to map foreground [0,1] UV to backdrop texture UV
+    backdrop_uv_offset: vec2<f32>,
+    backdrop_uv_scale: vec2<f32>,
     _padding: vec2<f32>,
 };
 
@@ -51,7 +54,8 @@ fn blend_overlay(base: vec3<f32>, blend: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let backdrop = textureSampleLevel(backdrop_texture, tex_sampler, in.uv, 0.0);
+    let backdrop_uv = in.uv * params.backdrop_uv_scale + params.backdrop_uv_offset;
+    let backdrop = textureSampleLevel(backdrop_texture, tex_sampler, backdrop_uv, 0.0);
     let foreground = textureSampleLevel(foreground_texture, tex_sampler, in.uv, 0.0);
 
     // Un-premultiply backdrop
