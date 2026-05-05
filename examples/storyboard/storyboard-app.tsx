@@ -585,6 +585,218 @@ const MotionCompoundDemo: Component = () => {
 }
 
 // ---------------------------------------------------------------------------
+// Effect · 3D Transform — perspective rotateX/rotateY
+// ---------------------------------------------------------------------------
+
+const Effect3DTransformDemo: Component = () => {
+  const [flipped, setFlipped] = createSignal(false)
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <Button onClick={() => setFlipped(v => !v)}>Flip</Button>
+      <group flexDirection="row" gap={24} alignItems="center">
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={100} height={100} cornerRadius={12}
+            fill="#0078d4"
+            perspective={800}
+            layer
+            initial={{ rotateY: 0 }}
+            animate={{ rotateY: flipped() ? 180 : 0 }}
+            transition={{ type: "spring", stiffness: 200, damping: 20 }}
+          >
+            <text text="Y-axis" fontSize={14} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="rotateY" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={100} height={100} cornerRadius={12}
+            fill="#e74856"
+            perspective={800}
+            layer
+            initial={{ rotateX: 0 }}
+            animate={{ rotateX: flipped() ? 180 : 0 }}
+            transition={{ type: "spring", stiffness: 200, damping: 20 }}
+          >
+            <text text="X-axis" fontSize={14} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="rotateX" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={100} height={100} cornerRadius={12}
+            fill="#00cc6a"
+            perspective={600}
+            layer
+            initial={{ rotateX: 0, rotateY: 0 }}
+            animate={{
+              rotateX: flipped() ? 25 : 0,
+              rotateY: flipped() ? -35 : 0,
+            }}
+            transition={{ type: "spring", stiffness: 180, damping: 18 }}
+          >
+            <text text="Both" fontSize={14} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="rotateX + Y" />
+        </group>
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Effect · Content Filters — CSS-style filter props
+// ---------------------------------------------------------------------------
+
+const EffectContentFiltersDemo: Component = () => {
+  const [active, setActive] = createSignal(false)
+
+  return (
+    <group flexDirection="column" gap={12}>
+      <Button onClick={() => setActive(v => !v)}>
+        {active() ? "Remove filters" : "Apply filters"}
+      </Button>
+      <group flexDirection="row" gap={16} alignItems="center">
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={80} height={80} cornerRadius={8}
+            fill="#0078d4"
+            layer
+            filterGrayscale={active() ? 1.0 : 0.0}
+          >
+            <text text="Aa" fontSize={24} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="Grayscale" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={80} height={80} cornerRadius={8}
+            fill="#e74856"
+            layer
+            filterSepia={active() ? 1.0 : 0.0}
+          >
+            <text text="Aa" fontSize={24} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="Sepia" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={80} height={80} cornerRadius={8}
+            fill="#00cc6a"
+            layer
+            filterInvert={active() ? 1.0 : 0.0}
+          >
+            <text text="Aa" fontSize={24} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="Invert" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={80} height={80} cornerRadius={8}
+            fill="#744da9"
+            layer
+            filterHueRotate={active() ? 180 : 0}
+          >
+            <text text="Aa" fontSize={24} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="Hue +180°" />
+        </group>
+        <group flexDirection="column" gap={4} alignItems="center">
+          <rect
+            width={80} height={80} cornerRadius={8}
+            fill="#0078d4"
+            layer
+            filterBrightness={active() ? 1.5 : 1.0}
+            filterContrast={active() ? 1.5 : 1.0}
+          >
+            <text text="Aa" fontSize={24} color="#ffffff" />
+          </rect>
+          <CaptionLabel text="Bright+Contrast" />
+        </group>
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Effect · Layer Mask — alpha mask with mask={<element>}
+// ---------------------------------------------------------------------------
+
+const EffectLayerMaskDemo: Component = () => {
+  return (
+    <group flexDirection="row" gap={24} alignItems="center">
+      <group flexDirection="column" gap={4} alignItems="center">
+        <rect
+          width={120} height={120}
+          fill="#0078d4"
+          layer
+          mask={
+            <rect
+              width={120} height={120}
+              cornerRadius={60}
+              fill="#ffffff"
+            />
+          }
+        >
+          <text text="Masked!" fontSize={16} color="#ffffff" />
+        </rect>
+        <CaptionLabel text="Circle mask" />
+      </group>
+      <group flexDirection="column" gap={4} alignItems="center">
+        <rect
+          width={120} height={120}
+          fill="#e74856"
+          layer
+          mask={
+            <rect
+              width={120} height={120}
+              cornerRadius={24}
+              fill="#ffffff"
+            />
+          }
+        >
+          <text text="Rounded" fontSize={16} color="#ffffff" />
+        </rect>
+        <CaptionLabel text="Rounded mask" />
+      </group>
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Effect · Vibrancy — blur + desaturate + blend
+// ---------------------------------------------------------------------------
+
+const EffectVibrancyDemo: Component = () => {
+  const theme = useTheme()
+
+  return (
+    <group flexDirection="column" gap={4} alignItems="center">
+      <rect
+        width={280} height={160} cornerRadius={12}
+        fill={theme().accentDefault}
+      >
+        <text text="Background content here" fontSize={16} color="#ffffff" />
+        <rect
+          width={200} height={80}
+          cornerRadius={8}
+          fill="transparent"
+          backdropBlur={12}
+          layer
+          vibrancyDesaturation={0.6}
+          vibrancyBlendMode={3}
+          y={60} x={40}
+        >
+          <text text="Vibrant overlay" fontSize={14} color="#ffffff" />
+        </rect>
+      </rect>
+      <CaptionLabel text="Vibrancy over accent background" />
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Context Menu demo
 // ---------------------------------------------------------------------------
 
@@ -1065,6 +1277,30 @@ const STORIES: StoryDef[] = [
   {
     name: "Motion · Compound",
     render: () => <MotionCompoundDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Effect · 3D Transform",
+    render: () => <Effect3DTransformDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Effect · Content Filters",
+    render: () => <EffectContentFiltersDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Effect · Layer Mask",
+    render: () => <EffectLayerMaskDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Effect · Vibrancy",
+    render: () => <EffectVibrancyDemo />,
     axes: {},
     defaults: {},
   },
