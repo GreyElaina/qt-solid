@@ -1112,12 +1112,37 @@ fn create_mask_pipeline(device: &wgpu::Device) -> MaskPipelineState {
 pub fn apply_layer_mask(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
+    target_texture: &wgpu::Texture,
     target_view: &wgpu::TextureView,
-    content_view: &wgpu::TextureView,
     mask_view: &wgpu::TextureView,
     texture_size: (u32, u32),
 ) {
     let state = mask_pipeline(device);
+
+    // Copy target → scratch so we can sample content while writing back.
+    let scratch_mutex = ensure_scratch_texture(device, texture_size.0, texture_size.1);
+    let scratch_guard = scratch_mutex.lock().unwrap();
+    let scratch = scratch_guard.as_ref().unwrap();
+
+    encoder.copy_texture_to_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: target_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyTextureInfo {
+            texture: &scratch.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            width: texture_size.0,
+            height: texture_size.1,
+            depth_or_array_layers: 1,
+        },
+    );
 
     let uniform_data = [
         (texture_size.0 as f32).to_le_bytes(),
@@ -1143,7 +1168,7 @@ pub fn apply_layer_mask(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(content_view),
+                resource: wgpu::BindingResource::TextureView(&scratch.view),
             },
             wgpu::BindGroupEntry {
                 binding: 2,

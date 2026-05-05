@@ -694,6 +694,19 @@ pub(crate) fn render_composited_and_present(
                 &effect,
             );
         }
+
+        // Apply layer mask (multiply layer alpha by mask alpha).
+        if let Some(ref mask_key) = layer.mask_layer_key {
+            if let Some(mask_lt) = ws.layer_textures.get(mask_key) {
+                let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
+                effects::apply_layer_mask(
+                    &ws.device, &mut encoder,
+                    &lt.texture, &lt.view,
+                    &mask_lt.view,
+                    (lt.width, lt.height),
+                );
+            }
+        }
     }
 
     // --- Step 3: Effects pass on base_texture → output_texture ---
@@ -814,6 +827,32 @@ pub(crate) fn render_composited_and_present(
                     }],
                 );
             }
+
+            // TODO: vibrancy hookup for layers with `layer.vibrancy.is_some()`.
+            //
+            // Correct approach: apply vibrancy BEFORE compositing (between step 3
+            // and step 4), because apply_vibrancy is a fullscreen shader that
+            // needs backdrop + foreground at the same resolution.
+            //
+            // For each vibrancy layer:
+            //   1. End the composite render pass (or apply before it starts).
+            //   2. Extract output_texture region → layer-sized scratch texture.
+            //      Region is `layer.bounds * scale_factor` mapped to output_texture
+            //      UVs. Requires copy_texture_to_texture with origin offset OR a
+            //      blit pass with UV offset (since copy_texture_to_texture doesn't
+            //      do sub-rect on source with different sizes).
+            //   3. Copy layer_texture → second scratch (content backup).
+            //   4. effects::apply_vibrancy(device, encoder,
+            //        target = layer_texture view,
+            //        backdrop = region scratch view,
+            //        foreground = content scratch view,
+            //        texture_size = (lw, lh),
+            //        effect);
+            //   5. Composite normally below.
+            //
+            // Alternative: add UV offset/scale uniforms to vibrancy.wgsl so it
+            // can sample directly from the full-res output_texture without the
+            // region extraction step.
 
             // Update retained uniform buffer (zero alloc).
             let uniform_data = make_layer_uniform(
