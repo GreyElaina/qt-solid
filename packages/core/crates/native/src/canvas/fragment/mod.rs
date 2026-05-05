@@ -1455,6 +1455,18 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
             }
             return;
         }
+        "perspective" => {
+            match value {
+                FragmentValue::F64 { value } => {
+                    node.perspective_pose.2 = value;
+                }
+                FragmentValue::Unset => {
+                    node.perspective_pose.2 = 0.0;
+                }
+                _ => {}
+            }
+            return;
+        }
         "filterGrayscale" | "filterSaturate" | "filterBrightness" | "filterContrast"
         | "filterHueRotate" | "filterInvert" | "filterSepia" => {
             match value {

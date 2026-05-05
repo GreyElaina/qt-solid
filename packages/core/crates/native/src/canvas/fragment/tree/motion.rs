@@ -31,7 +31,11 @@ impl FragmentTree {
             .unwrap_or_else(motion::NodeTimeline::new);
         timeline.set_targets(targets, default_transition, per_property, now, delay_secs);
         let (sampled, animating) = timeline.sample_pose(now);
+        let was_promoted = node.promoted;
         apply_sampled_pose_to_fragment(node, &sampled, &timeline);
+        if node.promoted && !was_promoted {
+            self.promoted_node_count += 1;
+        }
         if !animating {
             timeline.gc_completed();
         }
@@ -68,7 +72,11 @@ impl FragmentTree {
             delay_secs,
         );
         let (sampled, animating) = timeline.sample_pose(now);
+        let was_promoted = node.promoted;
         apply_sampled_pose_to_fragment(node, &sampled, &timeline);
+        if node.promoted && !was_promoted {
+            self.promoted_node_count += 1;
+        }
         if !animating {
             timeline.gc_completed();
         }
@@ -104,9 +112,13 @@ impl FragmentTree {
                 node.timeline = Some(timeline);
                 continue;
             }
-            let is_promoted = node.promoted;
+            let was_promoted = node.promoted;
             let (sampled, animating) = timeline.sample_pose(now);
             apply_sampled_pose_to_fragment(node, &sampled, &timeline);
+            if node.promoted && !was_promoted {
+                self.promoted_node_count += 1;
+            }
+            let is_promoted = node.promoted;
             let vel = timeline.max_visual_velocity();
             if vel > max_velocity {
                 max_velocity = vel;

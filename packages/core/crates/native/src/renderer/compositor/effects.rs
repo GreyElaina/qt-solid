@@ -326,6 +326,8 @@ struct ScratchTexture {
 
 static SCRATCH: OnceLock<Mutex<Option<ScratchTexture>>> = OnceLock::new();
 
+static VIBRANCY_SCRATCH: OnceLock<Mutex<Option<ScratchTexture>>> = OnceLock::new();
+
 fn ensure_scratch_texture(
     device: &wgpu::Device,
     width: u32,
@@ -340,6 +342,45 @@ fn ensure_scratch_texture(
     if needs_recreate {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("backdrop-blur-scratch"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        *guard = Some(ScratchTexture {
+            texture,
+            view,
+            width,
+            height,
+        });
+    }
+    mutex
+}
+
+fn ensure_vibrancy_scratch(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> &'static Mutex<Option<ScratchTexture>> {
+    let mutex = VIBRANCY_SCRATCH.get_or_init(|| Mutex::new(None));
+    let mut guard = mutex.lock().unwrap();
+    let needs_recreate = match guard.as_ref() {
+        Some(s) => s.width < width || s.height < height,
+        None => true,
+    };
+    if needs_recreate {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("vibrancy-scratch"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -1389,8 +1430,8 @@ pub fn apply_vibrancy_in_place(
 ) {
     let state = vibrancy_pipeline(device);
 
-    // Reuse shared scratch texture for the foreground copy.
-    let scratch_mutex = ensure_scratch_texture(device, texture_size.0, texture_size.1);
+    // Use dedicated vibrancy scratch texture (not shared with backdrop blur).
+    let scratch_mutex = ensure_vibrancy_scratch(device, texture_size.0, texture_size.1);
     let scratch_guard = scratch_mutex.lock().unwrap();
     let scratch = scratch_guard.as_ref().unwrap();
 
