@@ -1,6 +1,6 @@
 import { createSignal, type Component, type JSX } from "solid-js"
 
-import { createVariants, motion, defineIntrinsicComponent, type CanvasRectProps } from "@qt-solid/solid"
+import { createVariants, Rect } from "@qt-solid/solid"
 import { useTheme } from "../theme.ts"
 
 export interface PillButtonProps {
@@ -12,7 +12,7 @@ export interface PillButtonProps {
   height?: number
 }
 
-const PressableRect = createVariants(motion(defineIntrinsicComponent<CanvasRectProps>("rect")), {
+const PressableRect = createVariants(Rect, {
   base: { scale: 1, opacity: 1 },
   variants: {
     interaction: {

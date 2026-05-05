@@ -2,9 +2,7 @@ import { createSignal, type Component, type JSX } from "solid-js"
 
 import {
   createVariants,
-  motion,
-  defineIntrinsicComponent,
-  type CanvasRectProps,
+  Rect,
 } from "@qt-solid/solid"
 import { useTheme } from "../theme.ts"
 
@@ -20,7 +18,7 @@ export interface CardProps {
 }
 
 const PressableRect = createVariants(
-  motion(defineIntrinsicComponent<CanvasRectProps>("rect")),
+  Rect,
   {
     base: { scale: 1 },
     variants: {

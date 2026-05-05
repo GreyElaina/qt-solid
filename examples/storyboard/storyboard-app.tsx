@@ -2,9 +2,7 @@ import {
   createApp,
   createWindow,
   ScrollView,
-  motion,
   AnimatePresence,
-  defineIntrinsicComponent,
   Router,
   Outlet,
   useNavigate,
@@ -14,8 +12,6 @@ import {
   useCanGoBack,
   type AppHandle,
   type WindowHandle,
-  type CanvasRectProps,
-  type CanvasGroupProps,
   type RouteDefinition,
 } from "@qt-solid/solid"
 import {
@@ -125,13 +121,6 @@ function axisLabel(combo: Record<string, unknown>, axes: Record<string, unknown[
 }
 
 // ---------------------------------------------------------------------------
-// Motion primitives for demos
-// ---------------------------------------------------------------------------
-
-const MotionRect = motion(defineIntrinsicComponent<CanvasRectProps>("rect"))
-const MotionGroup = motion(defineIntrinsicComponent<CanvasGroupProps>("group"))
-
-// ---------------------------------------------------------------------------
 // Motion · Basics — spring/tween, scale/rotate/opacity
 // ---------------------------------------------------------------------------
 
@@ -143,7 +132,7 @@ const MotionBasicsDemo: Component = () => {
       <Button onClick={() => setToggled(v => !v)}>Toggle</Button>
       <group flexDirection="row" gap={16} alignItems="center">
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={60} height={60} cornerRadius={8}
             fill="#0078d4"
             initial={{ scale: 1, rotate: 0 }}
@@ -153,7 +142,7 @@ const MotionBasicsDemo: Component = () => {
           <CaptionLabel text="Spring" />
         </group>
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={60} height={60} cornerRadius={30}
             fill="#e74856"
             initial={{ opacity: 1, y: 0 }}
@@ -163,7 +152,7 @@ const MotionBasicsDemo: Component = () => {
           <CaptionLabel text="Tween" />
         </group>
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={60} height={60} cornerRadius={8}
             fill="#00cc6a"
             initial={{ scaleX: 1, scaleY: 1 }}
@@ -185,7 +174,7 @@ const MotionGesturesDemo: Component = () => {
   return (
     <group flexDirection="row" gap={16} alignItems="center">
       <group flexDirection="column" gap={4} alignItems="center">
-        <MotionRect
+        <rect
           width={80} height={80} cornerRadius={12}
           fill="#744da9"
           animate={{ scale: 1 }}
@@ -197,7 +186,7 @@ const MotionGesturesDemo: Component = () => {
         <CaptionLabel text="Hover + Tap" />
       </group>
       <group flexDirection="column" gap={4} alignItems="center">
-        <MotionRect
+        <rect
           width={80} height={80} cornerRadius={40}
           fill="#f7630c"
           animate={{ scale: 1, opacity: 1 }}
@@ -209,7 +198,7 @@ const MotionGesturesDemo: Component = () => {
         <CaptionLabel text="Circle" />
       </group>
       <group flexDirection="column" gap={4} alignItems="center">
-        <MotionRect
+        <rect
           width={100} height={50} cornerRadius={25}
           fill="#0099bc"
           animate={{ scaleX: 1 }}
@@ -238,7 +227,7 @@ const MotionPresenceDemo: Component = () => {
       </Button>
       <AnimatePresence when={show()}>
         {() => (
-          <MotionRect
+          <rect
             width={120} height={80} cornerRadius={12}
             fill="#0078d4"
             initial={{ opacity: 0, scale: 0.8, y: 20 }}
@@ -270,7 +259,7 @@ const MotionStaggerDemo: Component = () => {
       <Button onClick={replay}>Replay</Button>
       <AnimatePresence when={visible()}>
         {() => (
-          <MotionGroup
+          <group
             flexDirection="row" gap={8}
             initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
@@ -278,7 +267,7 @@ const MotionStaggerDemo: Component = () => {
           >
             <Index each={items}>
               {(_, i) => (
-                <MotionRect
+                <rect
                   width={40} height={40} cornerRadius={6}
                   fill={["#0078d4", "#e74856", "#00cc6a", "#f7630c", "#744da9"][i % 5]!}
                   initial={{ opacity: 0, y: 30, scale: 0.5 }}
@@ -287,7 +276,7 @@ const MotionStaggerDemo: Component = () => {
                 />
               )}
             </Index>
-          </MotionGroup>
+          </group>
         )}
       </AnimatePresence>
     </group>
@@ -308,7 +297,7 @@ const MotionKeyframesDemo: Component = () => {
       </Button>
       <group flexDirection="row" gap={16} alignItems="center">
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={50} height={50} cornerRadius={8}
             fill="#0078d4"
             animate={{
@@ -325,7 +314,7 @@ const MotionKeyframesDemo: Component = () => {
           <CaptionLabel text="Spin + pulse" />
         </group>
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={50} height={50} cornerRadius={25}
             fill="#e74856"
             animate={{
@@ -356,7 +345,7 @@ const MotionDragDemo: Component = () => {
       <group flexDirection="row" gap={24} alignItems="center">
         <group flexDirection="column" gap={4} alignItems="center">
           <rect width={200} height={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
-            <MotionRect
+            <rect
               width={50} height={50} cornerRadius={8}
               fill="#0078d4"
               animate={{ x: 0, y: 0 }}
@@ -371,7 +360,7 @@ const MotionDragDemo: Component = () => {
         </group>
         <group flexDirection="column" gap={4} alignItems="center">
           <rect width={200} height={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
-            <MotionRect
+            <rect
               width={50} height={50} cornerRadius={25}
               fill="#f7630c"
               animate={{ x: 0, y: 0 }}
@@ -398,7 +387,7 @@ const MotionLoopDemo: Component = () => {
   return (
     <group flexDirection="row" gap={24} alignItems="center">
       <group flexDirection="column" gap={4} alignItems="center">
-        <MotionRect
+        <rect
           width={50} height={50} cornerRadius={25}
           fill="#0078d4"
           initial={{ scale: 1 }}
@@ -415,7 +404,7 @@ const MotionLoopDemo: Component = () => {
         <CaptionLabel text="Pulse (loop)" />
       </group>
       <group flexDirection="column" gap={4} alignItems="center">
-        <MotionRect
+        <rect
           width={50} height={50} cornerRadius={8}
           fill="#e74856"
           initial={{ rotate: 0 }}
@@ -431,7 +420,7 @@ const MotionLoopDemo: Component = () => {
         <CaptionLabel text="Spin (∞)" />
       </group>
       <group flexDirection="column" gap={4} alignItems="center">
-        <MotionRect
+        <rect
           width={50} height={50} cornerRadius={8}
           fill="#00cc6a"
           initial={{ y: 0 }}
@@ -463,7 +452,7 @@ const MotionColorsDemo: Component = () => {
       <Button onClick={() => setIndex(i => (i + 1) % colors.length)}>Next Color</Button>
       <group flexDirection="row" gap={16} alignItems="center">
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={80} height={80} cornerRadius={12}
             fill="#333"
             initial={{ opacity: 1 }}
@@ -473,7 +462,7 @@ const MotionColorsDemo: Component = () => {
           <CaptionLabel text="Color shift" />
         </group>
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={80} height={80} cornerRadius={12}
             fill="#0078d4"
             initial={{ blur: 0, borderRadius: 12 }}
@@ -486,7 +475,7 @@ const MotionColorsDemo: Component = () => {
           <CaptionLabel text="Blur + radius" />
         </group>
         <group flexDirection="column" gap={4} alignItems="center">
-          <MotionRect
+          <rect
             width={80} height={80} cornerRadius={12}
             fill="#744da9"
             initial={{ shadowBlur: 0, shadowOffsetY: 0 }}
@@ -527,7 +516,7 @@ const MotionLayoutDemo: Component = () => {
             >
               <text text={tab()} fontSize={13} color={selected() === i ? "#0078d4" : "#888"} />
               <Show when={selected() === i}>
-                <MotionRect
+                <rect
                   width={40} height={3} cornerRadius={2}
                   fill="#0078d4"
                   layoutId="tab-indicator"
@@ -557,7 +546,7 @@ const MotionCompoundDemo: Component = () => {
         {expanded() ? "Collapse" : "Expand"}
       </Button>
       <group flexDirection="row" gap={12} alignItems="flex-start">
-        <MotionRect
+        <rect
           width={expanded() ? 200 : 80}
           height={expanded() ? 120 : 80}
           cornerRadius={expanded() ? 16 : 40}
@@ -578,8 +567,8 @@ const MotionCompoundDemo: Component = () => {
             fontSize={expanded() ? 16 : 12}
             color="#ffffff"
           />
-        </MotionRect>
-        <MotionRect
+        </rect>
+        <rect
           width={80} height={80} cornerRadius={8}
           fill="#e74856"
           animate={{
@@ -1012,7 +1001,7 @@ const STORIES: StoryDef[] = [
     render: () => (
       <group flexDirection="row" gap={16} alignItems="center" height={40}>
         <BodyLabel text="Left" />
-        <VerticalSeparator height={30} />
+        <VerticalSeparator length={30} />
         <BodyLabel text="Right" />
       </group>
     ),

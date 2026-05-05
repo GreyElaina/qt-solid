@@ -164,6 +164,8 @@ export function dispatchCanvasPointerMoveForHover(
   // (had a leave handler and were in the prev owner set for enter)
   for (const owner of prevLeaveOwners) {
     if (!nextLeaveOwners.has(owner)) {
+      const motionHandler = owner.motionGestureHandlers.get("onPointerLeave")
+      if (motionHandler) motionHandler(payload)
       const handler = owner.eventHandlers.get("onPointerLeave")
       if (handler) handler(payload)
     }
@@ -172,6 +174,8 @@ export function dispatchCanvasPointerMoveForHover(
   // Fire enter on owners that are newly hovered
   for (const owner of nextEnterOwners) {
     if (!prevEnterOwners.has(owner)) {
+      const motionHandler = owner.motionGestureHandlers.get("onPointerEnter")
+      if (motionHandler) motionHandler(payload)
       const handler = owner.eventHandlers.get("onPointerEnter")
       if (handler) handler(payload)
     }
@@ -203,12 +207,18 @@ export function dispatchCanvasFocusChange(
 
   if (oldFragmentId >= 0) {
     const oldNode = findFragmentNode(binding.root, oldFragmentId)
-    oldNode?.eventHandlers.get("onFocusOut")?.({})
+    if (oldNode) {
+      oldNode.motionGestureHandlers.get("onFocusOut")?.({})
+      oldNode.eventHandlers.get("onFocusOut")?.({})
+    }
   }
 
   if (newFragmentId >= 0) {
     const newNode = findFragmentNode(binding.root, newFragmentId)
-    newNode?.eventHandlers.get("onFocusIn")?.({})
+    if (newNode) {
+      newNode.motionGestureHandlers.get("onFocusIn")?.({})
+      newNode.eventHandlers.get("onFocusIn")?.({})
+    }
   }
 }
 

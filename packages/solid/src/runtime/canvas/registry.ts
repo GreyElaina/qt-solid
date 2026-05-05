@@ -46,11 +46,17 @@ export function bubbleEvent(
 ): void {
   let cur: FragmentRendererNode | null = start
   while (cur) {
+    // Fire motion gesture handler first (does not stop propagation)
+    const motionHandler = cur.motionGestureHandlers.get(name)
+    if (motionHandler) motionHandler(payload)
+
     const handler = cur.eventHandlers.get(name)
     if (handler) {
       handler(payload)
       return
     }
+    // If motion handler fired but no user handler, still stop bubbling at this node
+    if (motionHandler) return
     cur = cur.parent
   }
 }
@@ -65,7 +71,7 @@ export function findHandlerOwner(
 ): FragmentRendererNode | null {
   let cur: FragmentRendererNode | null = start
   while (cur) {
-    if (cur.eventHandlers.has(name)) return cur
+    if (cur.eventHandlers.has(name) || cur.motionGestureHandlers.has(name)) return cur
     cur = cur.parent
   }
   return null
@@ -82,7 +88,7 @@ export function collectHandlerOwners(
   const owners = new Set<FragmentRendererNode>()
   let cur = leaf
   while (cur) {
-    if (cur.eventHandlers.has(name)) owners.add(cur)
+    if (cur.eventHandlers.has(name) || cur.motionGestureHandlers.has(name)) owners.add(cur)
     cur = cur.parent
   }
   return owners

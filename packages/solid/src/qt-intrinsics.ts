@@ -1,6 +1,8 @@
 // Inline intrinsic prop types — replaces deleted @qt-solid/core-widgets/qt-intrinsics.
 // Only Window is a real widget now; other types retained for component-layer Props aliases.
 
+import type { MotionProps } from "./app/motion/types.ts"
+
 export interface WindowIntrinsicProps {
   title?: string
   visible?: boolean
@@ -171,12 +173,18 @@ export interface CanvasEventProps {
   onLayout?: (e: { x: number; y: number; width: number; height: number }) => void
 }
 
-export interface CanvasCommonProps extends CanvasEventProps {
+export interface CanvasCommonProps extends CanvasEventProps, MotionProps {
   ref?: (node: import("./runtime/fragment.ts").FragmentRendererNode) => void
   x?: number
   y?: number
   opacity?: number
   backdropBlur?: number
+  scale?: number
+  scaleX?: number
+  scaleY?: number
+  rotate?: number
+  originX?: number
+  originY?: number
   clip?: boolean
   clipPath?: string
   visible?: boolean

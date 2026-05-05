@@ -31,6 +31,8 @@ export class FragmentRendererNode {
   readonly fragmentId: number
   readonly kind: string
   readonly eventHandlers: Map<string, (...args: unknown[]) => void> = new Map()
+  /** Gesture handlers installed by inline motion binding — dispatched alongside eventHandlers. */
+  readonly motionGestureHandlers: Map<string, (...args: unknown[]) => void> = new Map()
   _motionCompleteCallback: (() => void) | null = null
 
   parent: FragmentRendererNode | null = null

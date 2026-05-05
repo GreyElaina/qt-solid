@@ -1,25 +1,15 @@
 export { createRuntimeElement as createIntrinsicElement } from "./props.ts";
-export { defineIntrinsicComponent } from "./intrinsic.ts";
+export { defineIntrinsicComponent, Group, Rect, Circle, Text, TextInput, Path, Img, Span } from "./intrinsic.ts";
 export { createApp, renderQt } from "./app.ts";
 export { withQtSourceMeta } from "./source-meta.ts";
 
 // motion
 export {
-  motion,
-  __testMotionInternals,
   useMotionValue,
   createVariants,
   AnimatePresence,
-  setLayoutId,
-  unsetLayoutId,
 } from "./motion/index.ts";
 export type {
-  MotionValueConfig,
-  PresenceContextState,
-  OrchestrationConfig,
-  OrchestrationContextState,
-  OrchestrationParentControl,
-  MotionComponentProps,
   MotionTarget,
   MotionTransition,
   MotionValue,
@@ -28,6 +18,7 @@ export type {
   BezierEasing,
   TransitionSpec,
   DragConstraints,
+  MotionValueConfig,
 } from "./motion/index.ts";
 
 // windowing

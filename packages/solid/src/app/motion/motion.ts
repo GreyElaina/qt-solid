@@ -1,6 +1,5 @@
 import {
   createEffect,
-  createMemo,
   createSignal,
   on,
   onCleanup,
@@ -8,8 +7,6 @@ import {
   splitProps as solidSplitProps,
   untrack,
   type Accessor,
-  type Component,
-  type JSX,
 } from "solid-js";
 import {
   canvasFragmentSetLayoutFlip,
@@ -22,7 +19,6 @@ import {
 } from "@qt-solid/core/native";
 import type { QtMotionConfig } from "../../qt-intrinsics.ts";
 
-import { createComponent as createQtComponent } from "../../runtime/renderer.ts";
 import type {
   MotionComponentProps,
   MotionTarget,
@@ -32,13 +28,10 @@ import type {
 } from "./types.ts";
 import { usePresence } from "./presence.ts";
 import {
-  OrchestrationContext,
-  createOrchestration,
   useOrchestration,
-  type OrchestrationParentControl,
 } from "./orchestration.ts";
 
-type MotionNodeHandle = QtNode & {
+export type MotionNodeHandle = QtNode & {
   setMotionTarget(
     target: QtMotionTarget,
     transition: QtPerPropertyTransition,
@@ -50,7 +43,7 @@ type MotionNodeHandle = QtNode & {
   unsetLayoutId(layoutId: string): void;
 };
 
-function isMotionNodeHandle(value: unknown): value is MotionNodeHandle {
+export function isMotionNodeHandle(value: unknown): value is MotionNodeHandle {
   return (
     value != null &&
     typeof value === "object" &&
@@ -63,7 +56,7 @@ function isMotionNodeHandle(value: unknown): value is MotionNodeHandle {
 // Gesture state — tracked by motion() HOC, consumed by bindMotionNode
 // ---------------------------------------------------------------------------
 
-interface GestureState {
+export interface GestureState {
   isHovered: Accessor<boolean>;
   isTapped: Accessor<boolean>;
   isFocused: Accessor<boolean>;
@@ -71,13 +64,13 @@ interface GestureState {
 }
 
 /** Mutable drag controller — HOC allocates, bindMotionNode populates methods. */
-interface DragController {
+export interface DragController {
   onDown(x: number, y: number): void;
   onMove(x: number, y: number): void;
   onUp(x: number, y: number): void;
 }
 
-const MOTION_PROP_KEYS = [
+export const MOTION_PROP_KEYS = [
   "initial", "animate", "exit", "transition",
   "whileHover", "whileTap", "whileFocus",
   "drag", "dragConstraints", "dragElastic",
@@ -86,7 +79,7 @@ const MOTION_PROP_KEYS = [
   "layer", "hitTest", "onAnimationComplete",
 ] as const
 
-function splitMotionProps<Props extends object>(
+export function splitMotionProps<Props extends object>(
   props: MotionComponentProps<Props>,
 ): { baseProps: Props; motionProps: MotionComponentProps<object> } {
   const [motionSlice, baseProps] = solidSplitProps(props, MOTION_PROP_KEYS);
@@ -298,84 +291,6 @@ function sendTarget(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Gesture event wrapping — HOC prop composition
-// ---------------------------------------------------------------------------
-
-type EventHandler = ((...args: unknown[]) => void) | undefined;
-type GestureHandler = ((...args: unknown[]) => void) | undefined;
-
-/**
- * Chain two event handlers: call `before` first (forwarding args), then `original`.
- */
-function chainHandler(
-  before: GestureHandler,
-  original: EventHandler,
-): EventHandler {
-  if (!before) return original;
-  if (!original) return before as EventHandler;
-  return (...args: unknown[]) => {
-    (before as (...a: unknown[]) => void)(...args);
-    (original as (...a: unknown[]) => void)(...args);
-  };
-}
-
-/**
- * Wrap base props with gesture event handlers for motion tracking.
- * Chains motion's gesture handlers before the component's own handlers.
- */
-function injectGestureHandlers<Props extends object>(
-  baseProps: Props,
-  gestureHandlers: {
-    onPointerEnter?: GestureHandler;
-    onPointerLeave?: GestureHandler;
-    onPointerDown?: GestureHandler;
-    onPointerMove?: GestureHandler;
-    onPointerUp?: GestureHandler;
-    onFocusIn?: GestureHandler;
-    onFocusOut?: GestureHandler;
-  },
-): Props {
-  const src = baseProps as Record<string, unknown>;
-  const descriptors = Object.getOwnPropertyDescriptors(baseProps) as Record<string, PropertyDescriptor>;
-
-  const eventPairs: [string, GestureHandler][] = [
-    ["onPointerEnter", gestureHandlers.onPointerEnter],
-    ["onPointerLeave", gestureHandlers.onPointerLeave],
-    ["onPointerDown", gestureHandlers.onPointerDown],
-    ["onPointerMove", gestureHandlers.onPointerMove],
-    ["onPointerUp", gestureHandlers.onPointerUp],
-    ["onFocusIn", gestureHandlers.onFocusIn],
-    ["onFocusOut", gestureHandlers.onFocusOut],
-  ];
-
-  for (const [name, gestureHandler] of eventPairs) {
-    if (!gestureHandler) continue;
-    const existingDescriptor = descriptors[name];
-
-    if (existingDescriptor && "get" in existingDescriptor && existingDescriptor.get) {
-      const originalGet = existingDescriptor.get;
-      descriptors[name] = {
-        configurable: true,
-        enumerable: true,
-        get() {
-          return chainHandler(gestureHandler, originalGet() as EventHandler);
-        },
-      };
-    } else {
-      descriptors[name] = {
-        configurable: true,
-        enumerable: true,
-        get() {
-          return chainHandler(gestureHandler, src[name] as EventHandler);
-        },
-      };
-    }
-  }
-
-  return Object.defineProperties({}, descriptors) as Props;
-}
-
 // -- Drag helpers --
 
 function resolveMotionValue(v: MotionValue | undefined): number | undefined {
@@ -406,7 +321,7 @@ function applyElastic(
 
 // -- Binding --
 
-function bindMotionNode(
+export function bindMotionNode(
   node: MotionNodeHandle,
   readMotion: () => MotionComponentProps<object>,
   gesture: GestureState,
@@ -742,116 +657,3 @@ export const __testMotionInternals = {
   lowerTransitionSpec,
   mergeMotionTargets,
 };
-
-export function motion<Props extends object>(
-  component: Component<Props>,
-): Component<MotionComponentProps<Props>> {
-  const MotionComponent: Component<MotionComponentProps<Props>> = (props) => {
-    const split = createMemo(() => splitMotionProps(props));
-
-    // Gesture state signals — driven by chained event handlers
-    const [isHovered, setIsHovered] = createSignal(false);
-    const [isTapped, setIsTapped] = createSignal(false);
-    const [isFocused, setIsFocused] = createSignal(false);
-    // isDragging is populated by bindMotionNode's drag binding
-    const [isDragging] = createSignal(false);
-
-    const gestureState: GestureState = { isHovered, isTapped, isFocused, isDragging };
-
-    // Drag controller — methods populated by bindMotionNode
-    const dragCtrl: DragController = {
-      onDown: () => {},
-      onMove: () => {},
-      onUp: () => {},
-    };
-
-    // Determine if any gesture/drag props are present
-    const hasGestureProps = createMemo(() => {
-      const m = split().motionProps;
-      return m.whileHover != null || m.whileTap != null || m.whileFocus != null || m.drag != null;
-    });
-
-    // Wrap base props with gesture event handlers when gesture props exist
-    const enhancedBaseProps = createMemo(() => {
-      const base = split().baseProps;
-      if (!hasGestureProps()) return base;
-
-      return injectGestureHandlers(base, {
-        onPointerEnter: () => setIsHovered(true),
-        onPointerLeave: () => { setIsHovered(false); setIsTapped(false); },
-        onPointerDown: (ev: unknown) => {
-          setIsTapped(true);
-          const { x, y } = ev as { x: number; y: number };
-          dragCtrl.onDown(x, y);
-        },
-        onPointerMove: (ev: unknown) => {
-          const { x, y } = ev as { x: number; y: number };
-          dragCtrl.onMove(x, y);
-        },
-        onPointerUp: (ev: unknown) => {
-          setIsTapped(false);
-          const { x, y } = ev as { x: number; y: number };
-          dragCtrl.onUp(x, y);
-        },
-        onFocusIn: () => setIsFocused(true),
-        onFocusOut: () => setIsFocused(false),
-      });
-    });
-
-    const element = createQtComponent(component, enhancedBaseProps());
-
-    if (!isMotionNodeHandle(element)) {
-      throw new Error(
-        "motion(Component) requires a component with a single native node root",
-      );
-    }
-
-    bindMotionNode(
-      element,
-      () => split().motionProps,
-      gestureState,
-      dragCtrl,
-    );
-
-    // Provide orchestration context to children if transition has stagger/when
-    const transition = createMemo(() => split().motionProps.transition);
-    const needsOrchestration = createMemo(() => {
-      const t = transition();
-      return (t?.staggerChildren ?? 0) > 0
-        || (t?.delayChildren ?? 0) > 0
-        || (t?.when != null && t.when !== false);
-    });
-
-    if (untrack(needsOrchestration)) {
-      const t = untrack(transition)!;
-      const orch = createOrchestration({
-        delayChildren: t.delayChildren ?? 0,
-        staggerChildren: t.staggerChildren ?? 0,
-        when: t.when ?? false,
-      }) as OrchestrationParentControl;
-
-      if (t.when === "beforeChildren") {
-        element.onMotionComplete(() => orch.unlockChildren());
-      }
-
-      if (t.when === "afterChildren") {
-        createEffect(
-          on(orch.allChildrenComplete, (done) => {
-            if (!done) return;
-            const motionProps = split().motionProps;
-            sendTarget(element, motionProps.animate, motionProps.transition, undefined, 'afterChildren');
-          }),
-        );
-      }
-
-      return OrchestrationContext.Provider({
-        value: orch,
-        get children() { return element; },
-      }) as unknown as JSX.Element;
-    }
-
-    return element;
-  };
-
-  return MotionComponent;
-}

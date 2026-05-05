@@ -1,4 +1,4 @@
-import { createContext, useContext } from "solid-js"
+import { createContext, createSignal, useContext, type Accessor } from "solid-js"
 import { createRenderer } from "solid-js/universal"
 
 import {
@@ -24,6 +24,14 @@ import {
   setNativeEventHandler,
   forgetNativeEvents,
 } from "./host-events.ts"
+import {
+  bindMotionNode,
+  isMotionNodeHandle,
+  MOTION_PROP_KEYS,
+  type GestureState,
+  type DragController,
+} from "../app/motion/motion.ts"
+import type { MotionComponentProps } from "../app/motion/types.ts"
 
 const FRAGMENT_LISTENER_LAYOUT = 1
 
@@ -317,6 +325,73 @@ function patchNativeProp(node: NativeWidgetNode, key: string, prev: unknown, nex
   node.qtNode.applyProp({ prop: key, value: next } as any)
 }
 
+// ---------------------------------------------------------------------------
+// Inline motion binding — lazy per-node state
+// ---------------------------------------------------------------------------
+
+const MOTION_PROP_KEYS_SET = new Set<string>(MOTION_PROP_KEYS as unknown as string[])
+
+interface InlineMotionState {
+  bag: Record<string, unknown>
+  trigger: () => void
+}
+
+const inlineMotionStates = new WeakMap<FragmentRendererNode, InlineMotionState>()
+
+function ensureInlineMotion(node: FragmentRendererNode): InlineMotionState {
+  let state = inlineMotionStates.get(node)
+  if (state) return state
+
+  const bag: Record<string, unknown> = {}
+  const [track, trigger] = createSignal(undefined, { equals: false })
+
+  state = { bag, trigger }
+  inlineMotionStates.set(node, state)
+
+  // Gesture signals
+  const [isHovered, setIsHovered] = createSignal(false)
+  const [isTapped, setIsTapped] = createSignal(false)
+  const [isFocused, setIsFocused] = createSignal(false)
+  const [isDragging] = createSignal(false)
+
+  const gesture: GestureState = { isHovered, isTapped, isFocused, isDragging }
+  const dragCtrl: DragController = { onDown() {}, onMove() {}, onUp() {} }
+
+  // Register gesture event handlers on the node's separate motion map
+  node.motionGestureHandlers.set("onPointerEnter", () => setIsHovered(true))
+  node.motionGestureHandlers.set("onPointerLeave", (() => { setIsHovered(false); setIsTapped(false) }) as () => void)
+  node.motionGestureHandlers.set("onPointerDown", ((ev: unknown) => {
+    setIsTapped(true)
+    const { x, y } = ev as { x: number; y: number }
+    dragCtrl.onDown(x, y)
+  }) as (...args: unknown[]) => void)
+  node.motionGestureHandlers.set("onPointerMove", ((ev: unknown) => {
+    const { x, y } = ev as { x: number; y: number }
+    dragCtrl.onMove(x, y)
+  }) as (...args: unknown[]) => void)
+  node.motionGestureHandlers.set("onPointerUp", ((ev: unknown) => {
+    setIsTapped(false)
+    const { x, y } = ev as { x: number; y: number }
+    dragCtrl.onUp(x, y)
+  }) as (...args: unknown[]) => void)
+  node.motionGestureHandlers.set("onFocusIn", () => setIsFocused(true))
+  node.motionGestureHandlers.set("onFocusOut", () => setIsFocused(false))
+
+  // Bind motion — readMotion accessor reads from bag, reactivity via track()
+  bindMotionNode(
+    node as unknown as import("../app/motion/motion.ts").MotionNodeHandle,
+    () => { track(); return bag as unknown as MotionComponentProps<object> },
+    gesture,
+    dragCtrl,
+  )
+
+  return state
+}
+
+// ---------------------------------------------------------------------------
+// Prop patching — fragment nodes
+// ---------------------------------------------------------------------------
+
 function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unknown, next: unknown): void {
   if (key === "ref") {
     if (typeof next === "function") next(node)
@@ -329,6 +404,14 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
     } else {
       rendererInspectorStore.clearSource(node.canvasNodeId, node.fragmentId)
     }
+    return
+  }
+
+  // Motion prop interception
+  if (MOTION_PROP_KEYS_SET.has(key)) {
+    const state = ensureInlineMotion(node)
+    state.bag[key] = next
+    state.trigger()
     return
   }
 
@@ -378,9 +461,78 @@ export const {
 
 const createComponentBase = fragmentRenderer.createComponent
 
+function hasAnyMotionProp(props: Record<string, unknown>): boolean {
+  for (const key of MOTION_PROP_KEYS) {
+    if (key in props) return true
+  }
+  return false
+}
+
 export const createComponent = ((...args: Parameters<typeof createComponentBase>) => {
   const [component, props] = args
-  return withQtOwnerFrame(component, props, () => createComponentBase(...args))
+
+  if (!hasAnyMotionProp(props as Record<string, unknown>)) {
+    return withQtOwnerFrame(component, props, () => createComponentBase(...args))
+  }
+
+  // Split motion props from component props
+  const motionBag: Record<string, unknown> = {}
+  const baseProps: Record<string, unknown> = {}
+  const descriptors = Object.getOwnPropertyDescriptors(props)
+  for (const key of Object.keys(descriptors)) {
+    if (MOTION_PROP_KEYS_SET.has(key)) {
+      // Copy descriptor so reactive getters keep working
+      Object.defineProperty(motionBag, key, descriptors[key]!)
+    } else {
+      Object.defineProperty(baseProps, key, descriptors[key]!)
+    }
+  }
+
+  const element = withQtOwnerFrame(component, baseProps, () =>
+    createComponentBase(component, baseProps),
+  )
+
+  if (isMotionNodeHandle(element)) {
+    const [track, trigger] = createSignal(undefined, { equals: false })
+    const [isHovered, setIsHovered] = createSignal(false)
+    const [isTapped, setIsTapped] = createSignal(false)
+    const [isFocused, setIsFocused] = createSignal(false)
+    const [isDragging] = createSignal(false)
+    const gesture: GestureState = { isHovered, isTapped, isFocused, isDragging }
+    const dragCtrl: DragController = { onDown() {}, onMove() {}, onUp() {} }
+
+    const fragNode = element as unknown as FragmentRendererNode
+    fragNode.motionGestureHandlers.set("onPointerEnter", () => setIsHovered(true))
+    fragNode.motionGestureHandlers.set("onPointerLeave", (() => { setIsHovered(false); setIsTapped(false) }) as () => void)
+    fragNode.motionGestureHandlers.set("onPointerDown", ((ev: unknown) => {
+      setIsTapped(true)
+      const { x, y } = ev as { x: number; y: number }
+      dragCtrl.onDown(x, y)
+    }) as (...args: unknown[]) => void)
+    fragNode.motionGestureHandlers.set("onPointerMove", ((ev: unknown) => {
+      const { x, y } = ev as { x: number; y: number }
+      dragCtrl.onMove(x, y)
+    }) as (...args: unknown[]) => void)
+    fragNode.motionGestureHandlers.set("onPointerUp", ((ev: unknown) => {
+      setIsTapped(false)
+      const { x, y } = ev as { x: number; y: number }
+      dragCtrl.onUp(x, y)
+    }) as (...args: unknown[]) => void)
+    fragNode.motionGestureHandlers.set("onFocusIn", () => setIsFocused(true))
+    fragNode.motionGestureHandlers.set("onFocusOut", () => setIsFocused(false))
+
+    bindMotionNode(
+      element,
+      () => { track(); return motionBag as unknown as MotionComponentProps<object> },
+      gesture,
+      dragCtrl,
+    )
+
+    // Trigger once so initial reactive tracking is established
+    trigger()
+  }
+
+  return element
 }) as typeof fragmentRenderer.createComponent
 
 // ---------------------------------------------------------------------------

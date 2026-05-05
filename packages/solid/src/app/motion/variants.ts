@@ -9,7 +9,6 @@ import { createComponent as createQtComponent } from "../../runtime/renderer.ts"
 import type {
   MotionTarget,
   MotionTransition,
-  MotionComponentProps,
   MotionProps,
 } from "./types.ts";
 
@@ -51,12 +50,12 @@ type VariantPassthroughProps = Pick<MotionProps, "layer" | "hitTest" | "layout" 
 /**
  * CVA-style motion variant factory.
  *
- * Wraps a `motion(Component)` and returns a new component that accepts
+ * Wraps a component and returns a new component that accepts
  * variant axis names as props. The resolved variant target is fed into
  * the motion system as `animate`; `initial` comes from `defaultVariants`.
  *
  * ```ts
- * const Card = createVariants(motion(View), {
+ * const Card = createVariants(View, {
  *   base: { opacity: 1 },
  *   variants: {
  *     state: { idle: { y: 0 }, lifted: { y: -8, scale: 1.02 } },
@@ -72,7 +71,7 @@ export function createVariants<
   Props extends object,
   V extends VariantsDefinition,
 >(
-  component: Component<MotionComponentProps<Props>>,
+  component: Component<Props>,
   config: CreateVariantsConfig<V>,
 ): Component<Props & VariantProps<V> & VariantPassthroughProps> {
   const axisKeys = Object.keys(config.variants) as (keyof V & string)[];
@@ -91,7 +90,7 @@ export function createVariants<
       get initial() { return initialTarget; },
       get animate() { return animateTarget(); },
       get transition() { return config.transition; },
-    }) as MotionComponentProps<Props>;
+    }) as unknown as Props;
 
     return createQtComponent(component, componentProps);
   };
