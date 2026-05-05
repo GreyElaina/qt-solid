@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs"
 import { describe, expect } from "vitest"
 
 import { buildNodeBundle } from "./build-node-bundle.ts"
-import { expectCleanExit, nodeBin, projectRoot, stripAnsi, testIfNativeSupported } from "./mocking/native-run"
+import { expectCleanExit, nodeBin, projectRoot, runBundledNodeScript, stripAnsi, testIfNativeSupported } from "./mocking/native-run"
 
 describe("rolldown app entry", () => {
   testIfNativeSupported("builds export default createApp(...) into self-booting node bundle", async () => {
@@ -53,32 +53,22 @@ describe("rolldown app entry", () => {
   })
 
   testIfNativeSupported("reopens bundled app window on debug activate event", async () => {
-    const tag = `.tmp-rolldown-app-activate-${process.pid}-${Date.now()}`
-    const { bundlePath, cleanup } = await buildNodeBundle({
-      bootstrap: true,
+    const result = await runBundledNodeScript({
+      tagPrefix: ".tmp-rolldown-app-activate",
       entryExtension: ".tsx",
       entrySource: [
-        "import { emitAppEvent } from '@qt-solid/core/native'",
+        "import type { QtApp } from '@qt-solid/core'",
         "import { Text, createApp, createWindow } from '@qt-solid/solid'",
         "",
-        "let scheduled = false",
-        "let reopened = false",
+        "export async function run(app: QtApp) {",
+        "  let reopened = false",
         "",
-        "export default createApp(() => {",
         "  const mainWindow = createWindow(",
         "    { title: 'activate-app', width: 300, height: 180 },",
         "    () => <Text>activate</Text>,",
         "  )",
         "",
-        "  if (!scheduled) {",
-        "    scheduled = true",
-        "    setTimeout(() => {",
-        "      mainWindow.dispose()",
-        "      setTimeout(() => emitAppEvent('activate'), 20)",
-        "    }, 20)",
-        "  }",
-        "",
-        "  return {",
+        "  const mounted = createApp(() => ({",
         "    render: () => mainWindow.render(),",
         "    onWindowAllClosed() {},",
         "    onActivate() {",
@@ -86,31 +76,23 @@ describe("rolldown app entry", () => {
         "      if (!reopened) {",
         "        reopened = true",
         "        console.log('APP_REOPENED')",
-        "        process.kill(process.pid, 'SIGTERM')",
         "      }",
         "    },",
-        "  }",
-        "})",
+        "  })).mount(app)",
+        "",
+        "  await new Promise((resolve) => setTimeout(resolve, 20))",
+        "  mainWindow.dispose()",
+        "  await new Promise((resolve) => setTimeout(resolve, 20))",
+        "  app.emitAppEvent('activate')",
+        "  await new Promise((resolve) => setTimeout(resolve, 50))",
+        "",
+        "  mounted.dispose()",
+        "}",
       ].join("\n"),
-      projectRoot,
-      tag,
     })
 
-    try {
-      expect(existsSync(`${bundlePath}.map`)).toBe(true)
-      expect(readFileSync(bundlePath, "utf8")).toContain("sourceMappingURL=")
-
-      const result = spawnSync(nodeBin, ["--enable-source-maps", "--conditions=browser", bundlePath], {
-        cwd: projectRoot,
-        encoding: "utf8",
-        timeout: 20_000,
-      })
-
-      expectCleanExit(result)
-      expect(stripAnsi(result.stdout)).toContain("APP_REOPENED")
-    } finally {
-      cleanup()
-    }
+    expectCleanExit(result)
+    expect(stripAnsi(result.stdout)).toContain("APP_REOPENED")
   })
 
   testIfNativeSupported("resolves devtools worker entry from package root for bundled apps", async () => {

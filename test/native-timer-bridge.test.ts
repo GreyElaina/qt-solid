@@ -11,7 +11,7 @@ import {
 describe("native Qt timer bridge", () => {
   testIfNativeSupported("debug timer events reach Node host", () => {
     const result = runNodeScript([
-      `import { QtApp } from ${JSON.stringify(nativeModuleSpecifier)}; import { scheduleTimerEvent } from '@qt-solid/core/native'`,
+      `import { QtApp } from ${JSON.stringify(nativeModuleSpecifier)}`,
       "",
       "const app = QtApp.start((event) => {",
       "  console.log('EVENT', JSON.stringify(event))",
@@ -20,7 +20,7 @@ describe("native Qt timer bridge", () => {
       "    process.exit(0)",
       "  }",
       "})",
-      "scheduleTimerEvent(25, 'qt-timer-bridge')",
+      "app.scheduleTimerEvent(25, 'qt-timer-bridge')",
       "setTimeout(() => {",
       "  console.error('TIMEOUT')",
       "  app.shutdown()",

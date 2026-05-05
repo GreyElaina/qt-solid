@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import WebSocket from "ws"
 
 import { startQtSolidDevtoolsServer, type QtSolidDevtoolsServer } from "../packages/solid/src/devtools/cdp-proxy"
-import { qtSolidDebugPrimitives } from "../packages/solid/src/devtools/debug-primitives"
+import { type QtSolidDebugPrimitives } from "../packages/solid/src/devtools/debug-primitives"
 import { rendererInspectorStore } from "../packages/solid/src/devtools/inspector-store"
 
 interface CdpNotification {
@@ -205,13 +205,9 @@ describe("qt solid devtools cdp proxy", () => {
     })
 
     // --- Set up native debug primitives mocks ---
-    const originalFragmentTreeSnapshot = qtSolidDebugPrimitives.fragmentTreeSnapshot
-    const originalHighlightFragment = qtSolidDebugPrimitives.highlightFragment
-    const originalGetFragmentBounds = qtSolidDebugPrimitives.getFragmentBounds
-    const originalFragmentHitTest = qtSolidDebugPrimitives.fragmentHitTest
-    const originalSetInspectMode = qtSolidDebugPrimitives.setInspectMode
-    const originalClearHighlight = qtSolidDebugPrimitives.clearHighlight
-    const originalHighlightNode = qtSolidDebugPrimitives.highlightNode
+    const highlightFragmentCalls: Array<{ canvasNodeId: number; fragmentId: number | null }> = []
+    const inspectModeCalls: boolean[] = []
+    let clearHighlightCalls = 0
 
     const nativeTree = [
       {
@@ -258,43 +254,56 @@ describe("qt solid devtools cdp proxy", () => {
       },
     ]
 
-    qtSolidDebugPrimitives.fragmentTreeSnapshot = (_canvasNodeId: number) => {
-      return nativeTree as any
-    }
-
-    const highlightFragmentCalls: Array<{ canvasNodeId: number; fragmentId: number | null }> = []
-    qtSolidDebugPrimitives.highlightFragment = (canvasNodeId: number, fragmentId: number | null) => {
-      highlightFragmentCalls.push({ canvasNodeId, fragmentId })
-    }
-
-    qtSolidDebugPrimitives.getFragmentBounds = (_canvasNodeId: number, _fragmentId: number) => {
-      return {
-        visible: true,
-        screenX: 40,
-        screenY: 60,
-        width: 120,
-        height: 32,
-      }
-    }
-
-    qtSolidDebugPrimitives.fragmentHitTest = (_canvasNodeId: number, x: number, y: number) => {
-      expect(x).toBe(88)
-      expect(y).toBe(72)
-      return 3 // input fragment
-    }
-
-    const inspectModeCalls: boolean[] = []
-    qtSolidDebugPrimitives.setInspectMode = (enabled: boolean) => {
-      inspectModeCalls.push(enabled)
-    }
-
-    let clearHighlightCalls = 0
-    qtSolidDebugPrimitives.clearHighlight = () => {
-      clearHighlightCalls += 1
+    const primitives: QtSolidDebugPrimitives = {
+      highlightNode(_nodeId: number) {},
+      getNodeBounds(_nodeId: number) {
+        return { visible: false, screenX: 0, screenY: 0, width: 0, height: 0 }
+      },
+      getNodeAtPoint(_screenX: number, _screenY: number) {
+        return null
+      },
+      setInspectMode(enabled: boolean) {
+        inspectModeCalls.push(enabled)
+      },
+      clearHighlight() {
+        clearHighlightCalls += 1
+      },
+      highlightFragment(canvasNodeId: number, fragmentId: number | null) {
+        highlightFragmentCalls.push({ canvasNodeId, fragmentId })
+      },
+      getFragmentBounds(_canvasNodeId: number, _fragmentId: number) {
+        return { visible: true, screenX: 40, screenY: 60, width: 120, height: 32 }
+      },
+      fragmentHitTest(_canvasNodeId: number, x: number, y: number) {
+        expect(x).toBe(88)
+        expect(y).toBe(72)
+        return 3
+      },
+      fragmentTreeSnapshot(_canvasNodeId: number) {
+        return nativeTree as any
+      },
+      snapshotLayers(_canvasNodeId: number) {
+        return []
+      },
+      snapshotAnimations(_canvasNodeId: number) {
+        return []
+      },
+      captureFragmentRegion() {
+        return null
+      },
+      captureFragmentIsolated() {
+        return null
+      },
+      captureAllFragmentsIsolated() {
+        return {}
+      },
+      captureCanvasFullSnapshot() {
+        return null
+      },
     }
 
     const port = 9329 + Math.floor(Math.random() * 100)
-    server = await startQtSolidDevtoolsServer(port)
+    server = await startQtSolidDevtoolsServer(primitives, port)
 
     const targets = (await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json())) as Array<{
       id: string
@@ -656,16 +665,7 @@ describe("qt solid devtools cdp proxy", () => {
     const viewNode2 = documentResult2.root.children?.[0]?.children?.[0]
     expect(viewNode2?.childNodeCount).toBe(2) // group + text
 
-    // --- Cleanup debug primitive mocks ---
-    qtSolidDebugPrimitives.fragmentTreeSnapshot = originalFragmentTreeSnapshot
-    qtSolidDebugPrimitives.highlightFragment = originalHighlightFragment
-    qtSolidDebugPrimitives.getFragmentBounds = originalGetFragmentBounds
-    qtSolidDebugPrimitives.fragmentHitTest = originalFragmentHitTest
-    qtSolidDebugPrimitives.setInspectMode = originalSetInspectMode
-    qtSolidDebugPrimitives.clearHighlight = originalClearHighlight
-    qtSolidDebugPrimitives.highlightNode = originalHighlightNode
-
-    // Clean up canvas
+    // --- Cleanup ---
     rendererInspectorStore.removeCanvas(CANVAS_NODE_ID)
 
     socket.close()
