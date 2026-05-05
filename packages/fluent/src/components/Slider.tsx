@@ -1,6 +1,6 @@
 import { createSignal, type Component } from "solid-js"
 import { canvasFragmentGetWorldBounds } from "@qt-solid/core/native"
-import type { CanvasNodeHandle } from "@qt-solid/solid"
+import type { FragmentRendererNode } from "@qt-solid/solid"
 
 import { useTheme } from "../theme.ts"
 
@@ -25,7 +25,7 @@ export const Slider: Component<SliderProps> = (props) => {
   const [hovered, setHovered] = createSignal(false)
   const [pressed, setPressed] = createSignal(false)
   const [dragging, setDragging] = createSignal(false)
-  let sliderRef: CanvasNodeHandle | undefined
+  let sliderRef: FragmentRendererNode | undefined
 
   const min = () => props.min ?? 0
   const max = () => props.max ?? 100
@@ -102,7 +102,7 @@ export const Slider: Component<SliderProps> = (props) => {
 
   return (
     <group
-      ref={(node: CanvasNodeHandle) => { sliderRef = node }}
+      ref={(node: FragmentRendererNode) => { sliderRef = node }}
       width={trackWidth()}
       height={HANDLE_SIZE}
       focusable={!props.disabled}

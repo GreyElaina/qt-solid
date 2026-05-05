@@ -1,6 +1,6 @@
 import type { Component, JSX } from "solid-js"
 import { useTooltip } from "@qt-solid/solid"
-import type { CanvasNodeHandle } from "@qt-solid/solid"
+import type { FragmentRendererNode } from "@qt-solid/solid"
 
 import { useTheme } from "../theme.ts"
 
@@ -36,7 +36,7 @@ export const ToolTip: Component<ToolTipProps> = (props) => {
 
   return (
     <group
-      ref={(node: CanvasNodeHandle) => tt.setAnchor({ id: node.canvasNodeId })}
+      ref={(node: FragmentRendererNode) => tt.setAnchor(node.hostNode)}
       onPointerEnter={tt.onHoverEnter}
       onPointerLeave={tt.onHoverLeave}
     >

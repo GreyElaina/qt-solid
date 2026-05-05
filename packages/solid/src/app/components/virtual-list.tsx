@@ -14,7 +14,8 @@ import {
   canvasFragmentRequestRepaint,
 } from "@qt-solid/core/native"
 
-import type { WheelEventPayload, CanvasNodeHandle } from "../../qt-intrinsics.ts"
+import type { WheelEventPayload } from "../../qt-intrinsics.ts"
+import type { FragmentRendererNode } from "../../runtime/fragment.ts"
 
 export interface VirtualListProps {
   /** Total number of items in the list. */
@@ -34,7 +35,7 @@ export interface VirtualListProps {
 }
 
 export const VirtualList: Component<VirtualListProps> = (props) => {
-  let containerRef: CanvasNodeHandle | undefined
+  let containerRef: FragmentRendererNode | undefined
 
   const [scrollY, setScrollY] = createSignal(0)
   const [viewportHeight, setViewportHeight] = createSignal(0)
@@ -94,7 +95,7 @@ export const VirtualList: Component<VirtualListProps> = (props) => {
 
   return (
     <rect
-      ref={(node: CanvasNodeHandle) => { containerRef = node }}
+      ref={(node: FragmentRendererNode) => { containerRef = node }}
       width={props.width}
       height={props.height}
       flexGrow={props.flexGrow}

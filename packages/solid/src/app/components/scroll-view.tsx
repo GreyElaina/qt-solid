@@ -7,7 +7,8 @@ import {
   canvasFragmentGetWorldBounds,
 } from "@qt-solid/core/native"
 
-import type { WheelEventPayload, CanvasNodeHandle } from "../../qt-intrinsics.ts"
+import type { WheelEventPayload } from "../../qt-intrinsics.ts"
+import type { FragmentRendererNode } from "../../runtime/fragment.ts"
 
 export interface ScrollViewProps {
   children?: JSX.Element
@@ -23,7 +24,7 @@ export interface ScrollViewProps {
 }
 
 export const ScrollView: Component<ScrollViewProps> = (props) => {
-  let containerRef: CanvasNodeHandle | undefined
+  let containerRef: FragmentRendererNode | undefined
 
   // Current accumulated scroll offset (driven value, may exceed bounds)
   const [scrollX, setScrollX] = createSignal(0)
@@ -166,7 +167,7 @@ export const ScrollView: Component<ScrollViewProps> = (props) => {
 
   return (
     <rect
-      ref={(node: CanvasNodeHandle) => { containerRef = node }}
+      ref={(node: FragmentRendererNode) => { containerRef = node }}
       width={props.width}
       height={props.height}
       flexGrow={props.flexGrow}

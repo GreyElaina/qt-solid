@@ -7,7 +7,8 @@ import {
   canvasFragmentRequestRepaint,
 } from "@qt-solid/core/native"
 
-import type { CanvasNodeHandle, CanvasImageProps } from "../../qt-intrinsics.ts"
+import type { CanvasImageProps } from "../../qt-intrinsics.ts"
+import type { FragmentRendererNode } from "../../runtime/fragment.ts"
 
 export interface ImageProps extends CanvasImageProps {
   /** Path to an image file (PNG/JPEG/GIF/WebP). */
@@ -17,7 +18,7 @@ export interface ImageProps extends CanvasImageProps {
 }
 
 export const Image: Component<ImageProps> = (props) => {
-  let nodeRef: CanvasNodeHandle | undefined
+  let nodeRef: FragmentRendererNode | undefined
   const [local, intrinsic] = splitProps(props, ["src", "data"])
 
   createEffect(() => {
@@ -41,7 +42,7 @@ export const Image: Component<ImageProps> = (props) => {
 
   return (
     <image
-      ref={(node: CanvasNodeHandle) => { nodeRef = node }}
+      ref={(node: FragmentRendererNode) => { nodeRef = node }}
       {...intrinsic}
     />
   )

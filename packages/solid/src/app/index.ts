@@ -122,6 +122,7 @@ export type {
   CanvasTextProps,
   CanvasTextInputProps,
   CanvasPathProps,
-  CanvasNodeHandle,
   WheelEventPayload,
 } from "../qt-intrinsics.ts";
+
+export type { FragmentRendererNode } from "../runtime/fragment.ts";

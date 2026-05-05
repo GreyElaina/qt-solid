@@ -1,11 +1,12 @@
 import type { Component, JSX } from "solid-js"
 import { createPopup } from "@qt-solid/solid"
 import type { PopupDismissEvent } from "@qt-solid/solid"
+import type { QtNode } from "@qt-solid/core/native"
 
 import { useTheme } from "../theme.ts"
 
 export interface FlyoutProps {
-  anchor?: { readonly id: number }
+  anchor?: QtNode
   visible?: boolean
   placement?: "bottom" | "top" | "right" | "left"
   onDismiss?: () => void

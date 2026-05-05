@@ -171,13 +171,8 @@ export interface CanvasEventProps {
   onLayout?: (e: { x: number; y: number; width: number; height: number }) => void
 }
 
-export interface CanvasNodeHandle {
-  readonly canvasNodeId: number
-  readonly fragmentId: number
-}
-
 export interface CanvasCommonProps extends CanvasEventProps {
-  ref?: (node: CanvasNodeHandle) => void
+  ref?: (node: import("./runtime/fragment.ts").FragmentRendererNode) => void
   x?: number
   y?: number
   opacity?: number

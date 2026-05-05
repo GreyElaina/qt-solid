@@ -1,13 +1,14 @@
 import { Show, type Component } from "solid-js"
 import { createPopup } from "@qt-solid/solid"
 import type { PopupDismissEvent } from "@qt-solid/solid"
+import type { QtNode } from "@qt-solid/core/native"
 
 import { useTheme } from "../theme.ts"
 import { Button } from "./Button.tsx"
 import { TransparentButton } from "./TransparentButton.tsx"
 
 export interface TeachingTipProps {
-  anchor?: { readonly id: number }
+  anchor?: QtNode
   visible?: boolean
   placement?: "bottom" | "top" | "right" | "left"
   title?: string
