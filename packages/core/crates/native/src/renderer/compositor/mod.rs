@@ -56,6 +56,8 @@ struct WindowSurface {
     /// Composite pipeline for drawing promoted layer textures with transform/opacity.
     composite_pipeline: wgpu::RenderPipeline,
     composite_bind_group_layout: wgpu::BindGroupLayout,
+    /// Outer shadow pipeline (renders behind composite layers on the surface).
+    outer_shadow_pipeline: effects::OuterShadowPipeline,
     /// Per-promoted-layer retained textures.
     layer_textures: HashMap<FragmentLayerKey, LayerTextureState>,
     /// Retained GPU Scene (vello_hybrid) to avoid per-frame alloc/dealloc.
@@ -1151,6 +1153,8 @@ fn create_window_surface_with_backends(
         cache: None,
     });
 
+    let outer_shadow_pipeline = effects::create_outer_shadow_pipeline(&device, surface_format);
+
     Ok(WindowSurface {
         surface,
         device,
@@ -1169,6 +1173,7 @@ fn create_window_surface_with_backends(
         blit_sampler,
         composite_pipeline,
         composite_bind_group_layout,
+        outer_shadow_pipeline,
         layer_textures: HashMap::new(),
         retained_gpu_scene: None,
         zero_buffer: None,
