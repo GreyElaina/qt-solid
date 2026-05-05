@@ -557,6 +557,10 @@ impl FragmentTree {
                 perspective_pose: node.perspective_pose,
                 content_filter: node.props.content_filter,
                 outer_shadow,
+                vibrancy: node.props.vibrancy,
+                mask_layer_key: node.mask_child.and_then(|mid| {
+                    nodes.get(&mid).and_then(|mn| mn.layer_key)
+                }),
             }));
 
             collector.resume_inline_after_split();

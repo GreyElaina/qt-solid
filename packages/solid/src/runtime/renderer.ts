@@ -9,6 +9,7 @@ import {
   canvasFragmentCreate,
   canvasFragmentRequestRepaint,
   canvasFragmentSetProp,
+  canvasFragmentSetF64Prop,
   canvasFragmentSetListener,
 } from "@qt-solid/core/native"
 
@@ -412,6 +413,18 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
     const state = ensureInlineMotion(node)
     state.bag[key] = next
     state.trigger()
+    return
+  }
+
+  // Mask prop: render mask element as child, tell native it's a mask
+  if (key === "mask") {
+    const maskNode = next as FragmentRendererNode | null
+    if (maskNode) {
+      node.insertChild(maskNode)
+      canvasFragmentSetF64Prop(node.canvasNodeId, node.fragmentId, "maskChild", maskNode.fragmentId)
+    } else {
+      canvasFragmentSetProp(node.canvasNodeId, node.fragmentId, "maskChild", { type: "unset" } as never)
+    }
     return
   }
 

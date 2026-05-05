@@ -74,6 +74,10 @@ pub struct PromotedLayer {
     pub content_filter: Option<super::node::ContentFilterParams>,
     /// Outer shadow params: (offset_x, offset_y, blur, corner_radius, color_rgba_premul).
     pub outer_shadow: Option<(f64, f64, f64, f64, [f32; 4])>,
+    /// Vibrancy effect applied during compositing.
+    pub vibrancy: Option<super::node::VibrancyParams>,
+    /// Layer key of the mask texture (if this layer is masked).
+    pub mask_layer_key: Option<FragmentLayerKey>,
 }
 
 #[derive(Debug)]
@@ -152,6 +156,10 @@ pub struct CompositedLayer {
     pub content_filter: Option<super::node::ContentFilterParams>,
     /// Outer shadow params: (offset_x, offset_y, blur, corner_radius, color_rgba_premul).
     pub outer_shadow: Option<(f64, f64, f64, f64, [f32; 4])>,
+    /// Vibrancy effect applied during compositing.
+    pub vibrancy: Option<super::node::VibrancyParams>,
+    /// Layer key of the mask texture (if this layer is masked).
+    pub mask_layer_key: Option<FragmentLayerKey>,
 }
 
 /// Partitioned render plan produced by `PaintPlan::partition()`.
@@ -263,6 +271,8 @@ impl PaintPlan {
                         perspective_pose: layer.perspective_pose,
                         content_filter: layer.content_filter,
                         outer_shadow: layer.outer_shadow,
+                        vibrancy: layer.vibrancy,
+                        mask_layer_key: layer.mask_layer_key,
                     });
                 }
                 (PaintChunk::Promoted(layer), false) => {

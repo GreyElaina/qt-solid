@@ -177,6 +177,36 @@ pub fn fragment_store_set_prop(
             }
         }
 
+        // Mask child — needs tree-level access for two-node mutation.
+        if key == "maskChild" {
+            match &value {
+                FragmentValue::F64 { value: v } => {
+                    let mask_fid = FragmentId(*v as u32);
+                    if let Some(node) = tree.nodes.get_mut(&fragment_id) {
+                        node.mask_child = Some(mask_fid);
+                    }
+                    if let Some(mask_node) = tree.nodes.get_mut(&mask_fid) {
+                        mask_node.props.visible = false;
+                        mask_node.promoted = true;
+                    }
+                }
+                FragmentValue::Unset => {
+                    let old_mask = tree.nodes.get_mut(&fragment_id)
+                        .and_then(|n| n.mask_child.take());
+                    if let Some(old_fid) = old_mask {
+                        if let Some(mask_node) = tree.nodes.get_mut(&old_fid) {
+                            mask_node.props.visible = true;
+                            mask_node.promoted = false;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            tree.any_dirty = true;
+            tree.invalidate_subtree_cache_for(fragment_id);
+            return;
+        }
+
         // Track explicit width/height and sync taffy size (before value is moved).
         if key == "width" || key == "height" {
             if let FragmentValue::F64 { value: v } = &value {
@@ -1447,6 +1477,36 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
                 }
                 FragmentValue::Unset => {
                     node.props.content_filter = None;
+                }
+                _ => {}
+            }
+            return;
+        }
+        "vibrancyDesaturation" => {
+            match value {
+                FragmentValue::F64 { value } => {
+                    let v = node.props.vibrancy.get_or_insert(VibrancyParams {
+                        desaturation: 0.5, blend_mode: 3, tint: [1.0, 1.0, 1.0, 0.5],
+                    });
+                    v.desaturation = value as f32;
+                }
+                FragmentValue::Unset => {
+                    node.props.vibrancy = None;
+                }
+                _ => {}
+            }
+            return;
+        }
+        "vibrancyBlendMode" => {
+            match value {
+                FragmentValue::F64 { value } => {
+                    let v = node.props.vibrancy.get_or_insert(VibrancyParams {
+                        desaturation: 0.5, blend_mode: 3, tint: [1.0, 1.0, 1.0, 0.5],
+                    });
+                    v.blend_mode = value as u32;
+                }
+                FragmentValue::Unset => {
+                    node.props.vibrancy = None;
                 }
                 _ => {}
             }

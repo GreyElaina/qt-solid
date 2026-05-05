@@ -68,6 +68,20 @@ impl Default for ContentFilterParams {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Vibrancy parameters for promoted layers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+pub struct VibrancyParams {
+    /// 0.0 = keep colour, 1.0 = fully desaturated.
+    pub desaturation: f32,
+    /// 0 = multiply, 1 = screen, 2 = overlay, 3 = plus-lighter.
+    pub blend_mode: u32,
+    /// Premultiplied RGBA tint applied to the desaturated backdrop.
+    pub tint: [f32; 4],
+}
+
 impl ContentFilterParams {
     pub fn is_identity(&self) -> bool {
         self.grayscale < 0.001
@@ -101,6 +115,7 @@ pub struct FragmentProps {
     pub transform: Affine,
     pub backdrop_blur: Option<f64>,
     pub content_filter: Option<ContentFilterParams>,
+    pub vibrancy: Option<VibrancyParams>,
     pub z_index: i32,
 }
 
@@ -122,6 +137,7 @@ impl Default for FragmentProps {
             transform: Affine::IDENTITY,
             backdrop_blur: None,
             content_filter: None,
+            vibrancy: None,
             z_index: 0,
         }
     }
@@ -210,6 +226,8 @@ pub struct FragmentNode {
     pub semantics: Option<SemanticsData>,
     /// 3D pose: (rotate_x_deg, rotate_y_deg, perspective). Only meaningful for promoted layers.
     pub perspective_pose: (f64, f64, f64),
+    /// FragmentId of a child that acts as alpha mask for this node.
+    pub mask_child: Option<FragmentId>,
 }
 
 impl FragmentNode {

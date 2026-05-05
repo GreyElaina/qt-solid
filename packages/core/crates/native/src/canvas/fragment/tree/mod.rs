@@ -211,6 +211,7 @@ impl FragmentTree {
                 listeners: FragmentListeners::empty(),
                 semantics: inferred_semantics,
                 perspective_pose: (0.0, 0.0, 0.0),
+                mask_child: None,
             },
         );
         // Node not yet attached to a parent — just mark global dirty.
