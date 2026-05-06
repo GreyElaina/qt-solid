@@ -71,6 +71,8 @@ pub fn derive_taffy_style(
         }
         None => {
             style.display = Display::Flex;
+            style.flex_direction = FlexDirection::Column;
+            style.align_items = Some(AlignItems::Stretch);
         }
     }
 

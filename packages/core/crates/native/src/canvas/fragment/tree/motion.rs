@@ -286,10 +286,13 @@ impl FragmentTree {
     pub fn compute_intrinsic_size(&mut self) -> Option<(f64, f64)> {
         let root = self.taffy_root?;
 
+        // Ensure layout intents are flushed to taffy styles before measuring.
+        self.sync_layout_intents();
         self.sync_intrinsic_leaf_measures();
 
         // Temporarily set root to auto so it shrink-wraps to content.
-        let mut root_style = self.taffy.style(root).cloned().unwrap_or_default();
+        let prev_style = self.taffy.style(root).cloned().ok()?;
+        let mut root_style = prev_style.clone();
         root_style.size = taffy::geometry::Size {
             width: taffy::style::Dimension::auto(),
             height: taffy::style::Dimension::auto(),
@@ -303,10 +306,14 @@ impl FragmentTree {
         };
         let _ = self.taffy.compute_layout(root, available);
         let layout = self.taffy.layout(root).ok()?;
-        Some((
+        let size = (
             layout.size.width.ceil() as f64,
             layout.size.height.ceil() as f64,
-        ))
+        );
+
+        // Restore original root style so normal layout pass isn't affected.
+        let _ = self.taffy.set_style(root, prev_style);
+        Some(size)
     }
 
     /// Start a layout FLIP animation: instantly set layout channels to the

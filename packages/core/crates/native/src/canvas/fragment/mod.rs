@@ -71,6 +71,13 @@ pub fn fragment_store_insert_child(
 ) {
     runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
         tree.insert_child(parent, child, before);
+
+        // Child's taffy style depends on parent direction — re-derive after reparenting.
+        if let Some(node) = tree.nodes.get_mut(&child) {
+            node.layout_dirty = true;
+        }
+        tree.any_dirty = true;
+
         // Invalidate parent text shaped cache when a span is inserted.
         if let Some(parent_id) = parent {
             if let Some(child_node) = tree.nodes.get(&child) {
@@ -942,11 +949,10 @@ pub fn fragment_store_set_layout_flip(
 }
 
 // ---------------------------------------------------------------------------
-// Layout intent prop keys — unified (Figma-style + legacy CSS-style)
+// Layout intent prop keys
 // ---------------------------------------------------------------------------
 
 const LAYOUT_INTENT_PROPS: &[&str] = &[
-    // Figma-style
     "w",
     "h",
     "direction",
@@ -988,16 +994,6 @@ const LAYOUT_INTENT_PROPS: &[&str] = &[
     "layoutGridColSpan",
     "layoutGridHAlign",
     "layoutGridVAlign",
-    // Legacy CSS-style
-    "display",
-    "flexDirection",
-    "flexGrow",
-    "flexShrink",
-    "flexBasis",
-    "flexWrap",
-    "alignItems",
-    "alignSelf",
-    "justifyContent",
     "gap",
     "wrap",
     "padding",
@@ -1005,26 +1001,6 @@ const LAYOUT_INTENT_PROPS: &[&str] = &[
     "paddingRight",
     "paddingBottom",
     "paddingLeft",
-    "margin",
-    "marginTop",
-    "marginRight",
-    "marginBottom",
-    "marginLeft",
-    "minWidth",
-    "minHeight",
-    "maxWidth",
-    "maxHeight",
-    "position",
-    "overflow",
-    "overflowX",
-    "overflowY",
-    "gridTemplateRows",
-    "gridTemplateColumns",
-    "gridAutoFlow",
-    "gridRow",
-    "gridColumn",
-    "gridRowSpan",
-    "gridColSpan",
 ];
 
 fn is_layout_intent_prop(key: &str) -> bool {
@@ -1466,185 +1442,6 @@ fn apply_layout_intent_prop(node: &mut FragmentNode, key: &str, value: &Fragment
                 };
                 if let Placement::GridCell { v_align, .. } = &mut node.placement {
                     *v_align = a;
-                }
-            }
-        }
-
-        // ─── Legacy CSS-style keys ───
-
-        "flexDirection" => {
-            if let FragmentValue::Str { value } = value {
-                let dir = match value.as_str() {
-                    "row" => Direction::Horizontal,
-                    "column" => Direction::Vertical,
-                    _ => Direction::Vertical,
-                };
-                ensure_flex_container(node);
-                if let Some(Container::Flex { direction, .. }) = &mut node.container {
-                    *direction = dir;
-                }
-            }
-        }
-        "justifyContent" => {
-            if let FragmentValue::Str { value } = value {
-                let align = match value.as_str() {
-                    "flex-start" | "start" => PrimaryAlign::Start,
-                    "flex-end" | "end" => PrimaryAlign::End,
-                    "center" => PrimaryAlign::Center,
-                    "space-between" => PrimaryAlign::SpaceBetween,
-                    "space-around" => PrimaryAlign::SpaceAround,
-                    "space-evenly" => PrimaryAlign::SpaceEvenly,
-                    _ => PrimaryAlign::Start,
-                };
-                ensure_flex_container(node);
-                if let Some(Container::Flex { primary_align, .. }) = &mut node.container {
-                    *primary_align = align;
-                }
-            }
-        }
-        "alignItems" => {
-            if let FragmentValue::Str { value } = value {
-                let align = match value.as_str() {
-                    "flex-start" | "start" => CrossAlign::Start,
-                    "flex-end" | "end" => CrossAlign::End,
-                    "center" => CrossAlign::Center,
-                    "stretch" => CrossAlign::Stretch,
-                    "baseline" => CrossAlign::Baseline,
-                    _ => CrossAlign::Start,
-                };
-                ensure_flex_container(node);
-                if let Some(Container::Flex { cross_align, .. }) = &mut node.container {
-                    *cross_align = align;
-                }
-            }
-        }
-        "flexWrap" => {
-            if let FragmentValue::Str { value } = value {
-                let w = matches!(value.as_str(), "wrap");
-                ensure_flex_container(node);
-                if let Some(Container::Flex { wrap, .. }) = &mut node.container {
-                    *wrap = w;
-                }
-            }
-        }
-        "display" => {
-            if let FragmentValue::Str { value } = value {
-                match value.as_str() {
-                    "none" => node.layout_visible = false,
-                    "grid" => {
-                        if !matches!(node.container, Some(Container::Grid { .. })) {
-                            node.container = Some(Container::Grid {
-                                columns: Vec::new(),
-                                rows: Vec::new(),
-                                column_gap: 0.0,
-                                row_gap: 0.0,
-                            });
-                        }
-                        node.layout_visible = true;
-                    }
-                    _ => {
-                        node.layout_visible = true;
-                    }
-                }
-            }
-        }
-        "flexGrow" => {
-            if let FragmentValue::F64 { value } = value {
-                if *value as f32 > 0.0 {
-                    placement_sizing_mut(&mut node.placement).w = Sizing::Fill;
-                }
-            }
-        }
-        "flexShrink" | "flexBasis" => {
-            // Subsumed by Sizing::Fill/Hug/Fixed — derive generates correct values.
-        }
-        "alignSelf" => {
-            if let FragmentValue::Str { value } = value {
-                let a = match value.as_str() {
-                    "flex-start" | "start" => Some(CrossAlign::Start),
-                    "flex-end" | "end" => Some(CrossAlign::End),
-                    "center" => Some(CrossAlign::Center),
-                    "stretch" => Some(CrossAlign::Stretch),
-                    _ => None,
-                };
-                if let Placement::Flow { align_self, .. } = &mut node.placement {
-                    *align_self = a;
-                }
-            }
-        }
-        "gridTemplateColumns" | "gridTemplateRows" => {
-            if let FragmentValue::GridTracks { tracks } = value {
-                let parsed: Vec<TrackSize> = tracks.iter().map(|t| parse_intent_track(t)).collect();
-                match key {
-                    "gridTemplateColumns" => {
-                        match &mut node.container {
-                            Some(Container::Grid { columns, .. }) => *columns = parsed,
-                            _ => {
-                                node.container = Some(Container::Grid {
-                                    columns: parsed,
-                                    rows: Vec::new(),
-                                    column_gap: 0.0,
-                                    row_gap: 0.0,
-                                });
-                            }
-                        }
-                    }
-                    "gridTemplateRows" => {
-                        match &mut node.container {
-                            Some(Container::Grid { rows, .. }) => *rows = parsed,
-                            _ => {
-                                node.container = Some(Container::Grid {
-                                    columns: Vec::new(),
-                                    rows: parsed,
-                                    column_gap: 0.0,
-                                    row_gap: 0.0,
-                                });
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        "gridAutoFlow" => {
-            if !matches!(node.container, Some(Container::Grid { .. })) {
-                node.container = Some(Container::Grid {
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    column_gap: 0.0,
-                    row_gap: 0.0,
-                });
-            }
-        }
-        "gridRow" => {
-            if let FragmentValue::F64 { value } = value {
-                ensure_grid_cell(node);
-                if let Placement::GridCell { row, .. } = &mut node.placement {
-                    *row = *value as u16;
-                }
-            }
-        }
-        "gridColumn" => {
-            if let FragmentValue::F64 { value } = value {
-                ensure_grid_cell(node);
-                if let Placement::GridCell { column, .. } = &mut node.placement {
-                    *column = *value as u16;
-                }
-            }
-        }
-        "gridRowSpan" => {
-            if let FragmentValue::F64 { value } = value {
-                ensure_grid_cell(node);
-                if let Placement::GridCell { row_span, .. } = &mut node.placement {
-                    *row_span = (*value as u16).max(1);
-                }
-            }
-        }
-        "gridColSpan" => {
-            if let FragmentValue::F64 { value } = value {
-                ensure_grid_cell(node);
-                if let Placement::GridCell { col_span, .. } = &mut node.placement {
-                    *col_span = (*value as u16).max(1);
                 }
             }
         }

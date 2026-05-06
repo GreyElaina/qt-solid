@@ -53,10 +53,10 @@ pub enum PrimaryAlign {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum CrossAlign {
-    #[default]
     Start,
     Center,
     End,
+    #[default]
     Stretch,
     Baseline,
 }
