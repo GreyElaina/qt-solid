@@ -1921,7 +1921,7 @@ const StoryboardChrome: Component<{
       <rect w={1} fill={chrome.border()} />
 
       {/* Content area */}
-      <rect fill={chrome.bg()} h="fill">
+      <rect fill={chrome.bg()} w="fill">
         <ScrollView h="fill">
           <StoryDetail story={activeStory()} />
         </ScrollView>
