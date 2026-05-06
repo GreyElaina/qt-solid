@@ -1939,15 +1939,15 @@ fn format_color(c: &Color) -> String {
 
 fn serialize_taffy_style(props: &mut HashMap<String, String>, style: &taffy::Style) {
     match style.flex_direction {
-        taffy::FlexDirection::Row => {}
-        taffy::FlexDirection::Column => {
-            props.insert("flexDirection".into(), "column".into());
+        taffy::FlexDirection::Row => {
+            props.insert("direction".into(), "horizontal".into());
         }
+        taffy::FlexDirection::Column => {}
         taffy::FlexDirection::RowReverse => {
-            props.insert("flexDirection".into(), "row-reverse".into());
+            props.insert("direction".into(), "horizontal-reverse".into());
         }
         taffy::FlexDirection::ColumnReverse => {
-            props.insert("flexDirection".into(), "column-reverse".into());
+            props.insert("direction".into(), "vertical-reverse".into());
         }
     }
     if style.flex_grow != 0.0 {
@@ -1969,13 +1969,13 @@ fn serialize_taffy_style(props: &mut HashMap<String, String>, style: &taffy::Sty
     serialize_taffy_rect_lp("padding", &style.padding, props);
     if let Some(ai) = style.align_items {
         props.insert(
-            "alignItems".into(),
+            "crossAlign".into(),
             format!("{:?}", ai).to_ascii_lowercase(),
         );
     }
     if let Some(jc) = style.justify_content {
         props.insert(
-            "justifyContent".into(),
+            "primaryAlign".into(),
             format!("{:?}", jc).to_ascii_lowercase(),
         );
     }
