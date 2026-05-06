@@ -348,15 +348,12 @@ export function bindMotionNode(
   const writeConfig = () => {
     const props = readMotion();
     const layoutEnabled = props.layout === true || props.layout === "position" || props.layout === "size";
-    const enabled =
-      props.layer === true ||
-      layoutEnabled ||
-      props.initial != null ||
-      props.animate != null;
     const hasGestures = props.whileHover != null || props.whileTap != null
       || props.whileFocus != null || props.drag != null;
     node.setMotionConfig({
-      layerEnabled: enabled,
+      // Only promote to compositor layer when explicitly requested via `layer` prop.
+      // 3D rotateX/rotateY auto-promote from the native side (apply_sampled_pose_to_fragment).
+      layerEnabled: props.layer === true,
       layoutEnabled,
       hitTestEnabled: props.hitTest === true || hasGestures,
     });

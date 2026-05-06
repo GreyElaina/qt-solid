@@ -228,6 +228,9 @@ pub struct FragmentNode {
     pub perspective_pose: (f64, f64, f64),
     /// FragmentId of a child that acts as alpha mask for this node.
     pub mask_child: Option<FragmentId>,
+    /// True if this node serves as a mask texture source for another layer.
+    /// It renders into its own layer texture but is NOT composited to surface.
+    pub is_mask_source: bool,
 }
 
 impl FragmentNode {

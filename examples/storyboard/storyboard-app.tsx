@@ -725,7 +725,7 @@ const EffectContentFiltersDemo: Component = () => {
 
 const EffectLayerMaskDemo: Component = () => {
   return (
-    <group flexDirection="row" gap={24} alignItems="center">
+    <group flexDirection="row" gap={24} alignItems="center" flexWrap="wrap">
       <group flexDirection="column" gap={4} alignItems="center">
         <rect
           width={120} height={120}
@@ -760,38 +760,350 @@ const EffectLayerMaskDemo: Component = () => {
         </rect>
         <CaptionLabel text="Rounded mask" />
       </group>
+      {/* Small mask on larger content — tests mask smaller than parent */}
+      <group flexDirection="column" gap={4} alignItems="center">
+        <rect
+          width={120} height={120}
+          fill="#00cc6a"
+          layer
+          mask={
+            <rect
+              width={60} height={60}
+              cornerRadius={30}
+              fill="#ffffff"
+              x={30} y={30}
+            />
+          }
+        >
+          <text text="Small" fontSize={14} color="#ffffff" />
+        </rect>
+        <CaptionLabel text="Small centered" />
+      </group>
+      {/* Offset mask — tests mask not at origin */}
+      <group flexDirection="column" gap={4} alignItems="center">
+        <rect
+          width={120} height={120}
+          fill="#744da9"
+          layer
+          mask={
+            <rect
+              width={80} height={80}
+              cornerRadius={12}
+              fill="#ffffff"
+              x={20} y={20}
+            />
+          }
+        >
+          <text text="Offset" fontSize={14} color="#ffffff" />
+        </rect>
+        <CaptionLabel text="Offset 20,20" />
+      </group>
     </group>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Effect · Vibrancy — blur + desaturate + blend
+// Effect · Vibrancy — frosted glass compositing
 // ---------------------------------------------------------------------------
 
 const EffectVibrancyDemo: Component = () => {
-  const theme = useTheme()
-
   return (
-    <group flexDirection="column" gap={4} alignItems="center">
+    <group flexDirection="column" gap={16} alignItems="flex-start">
+      {/* Hero scene — dark workspace with vibrancy panels */}
       <rect
-        width={280} height={160} cornerRadius={12}
-        fill={theme().accentDefault}
+        width={560}
+        height={340}
+        cornerRadius={16}
+        clip
+        fill={{
+          type: "linearGradient",
+          startX: 0, startY: 0, endX: 560, endY: 340,
+          stops: [
+            { offset: 0.0, color: "#0c0c18" },
+            { offset: 0.4, color: "#141432" },
+            { offset: 0.75, color: "#0a2a4a" },
+            { offset: 1.0, color: "#061820" },
+          ],
+        }}
       >
-        <text text="Background content here" fontSize={16} color="#ffffff" />
+        {/* Background shapes for blur to catch */}
+        <circle cx={80} cy={60} r={72} fill="#e8456b" opacity={0.7} />
+        <circle cx={440} cy={50} r={90} fill="#22c8e8" opacity={0.6} />
+        <circle cx={320} cy={280} r={100} fill="#7c3aed" opacity={0.55} />
+        <rect x={200} y={40} width={240} height={60} cornerRadius={12} fill="#ffffff14" />
+        <rect x={200} y={120} width={300} height={12} cornerRadius={6} fill="#ffffff0c" />
+        <rect x={200} y={144} width={260} height={12} cornerRadius={6} fill="#ffffff08" />
+
+        {/* Sidebar — plus-lighter, heavy desaturation */}
         <rect
-          width={200} height={80}
-          cornerRadius={8}
-          fill="transparent"
-          backdropBlur={12}
+          x={16} y={16}
+          width={160} height={308}
+          cornerRadius={14}
+          fill="#ffffff08"
+          stroke="#ffffff30"
+          strokeWidth={0.5}
+          backdropBlur={20}
           layer
-          vibrancyDesaturation={0.6}
+          vibrancyDesaturation={0.85}
           vibrancyBlendMode={3}
-          y={60} x={40}
         >
-          <text text="Vibrant overlay" fontSize={14} color="#ffffff" />
+          <text text="Library" x={14} y={14} fontSize={14} fontWeight={700} color="#ffffff" />
+          <text text="plus-lighter · blur 20" x={14} y={34} fontSize={9} color="#ffffff80" />
+          <rect x={14} y={52} width={132} height={0.5} fill="#ffffff20" />
+          <text text="Recents" x={14} y={64} fontSize={11} color="#ffffff" />
+          <text text="Shared" x={14} y={84} fontSize={11} color="#ffffffcc" />
+          <text text="Notes" x={14} y={104} fontSize={11} color="#ffffffcc" />
+        </rect>
+
+        {/* Floating card — screen blend */}
+        <rect
+          x={360} y={130}
+          width={170} height={120}
+          cornerRadius={14}
+          fill="#ffffff08"
+          stroke="#ffffff30"
+          strokeWidth={0.5}
+          backdropBlur={14}
+          layer
+          vibrancyDesaturation={0.5}
+          vibrancyBlendMode={1}
+        >
+          <text text="Signal" x={14} y={14} fontSize={13} fontWeight={700} color="#ffffff" />
+          <text text="screen · blur 14" x={14} y={32} fontSize={9} color="#ffffff80" />
+          <rect x={14} y={48} width={142} height={0.5} fill="#ffffff20" />
+          <text text="Catches light" x={14} y={60} fontSize={11} color="#ffffff" />
+          <text text="without mud" x={14} y={78} fontSize={11} color="#ffffffcc" />
+        </rect>
+
+        {/* Bottom tray — overlay blend */}
+        <rect
+          x={200} y={260}
+          width={340} height={64}
+          cornerRadius={14}
+          fill="#ffffff08"
+          stroke="#ffffff30"
+          strokeWidth={0.5}
+          backdropBlur={16}
+          layer
+          vibrancyDesaturation={0.65}
+          vibrancyBlendMode={2}
+        >
+          <text text="Overlay tray" x={14} y={12} fontSize={13} fontWeight={700} color="#ffffff" />
+          <text text="desaturation 0.65 · blur 16" x={14} y={32} fontSize={9} color="#ffffff80" />
         </rect>
       </rect>
-      <CaptionLabel text="Vibrancy over accent background" />
+
+      {/* Blend mode comparison strip */}
+      <group flexDirection="row" gap={8}>
+        <For each={[
+          { label: "multiply", mode: 0, blur: 10 },
+          { label: "screen", mode: 1, blur: 14 },
+          { label: "overlay", mode: 2, blur: 18 },
+          { label: "plus-lighter", mode: 3, blur: 22 },
+        ]}>
+          {(item) => (
+            <rect
+              width={130} height={64}
+              cornerRadius={12}
+              fill={{
+                type: "linearGradient",
+                startX: 0, startY: 0, endX: 130, endY: 64,
+                stops: [
+                  { offset: 0.0, color: "#e8456b" },
+                  { offset: 0.5, color: "#22c8e8" },
+                  { offset: 1.0, color: "#34d399" },
+                ],
+              }}
+            >
+              <rect
+                x={8} y={8}
+                width={114} height={48}
+                cornerRadius={10}
+                fill="#ffffff08"
+                stroke="#ffffff30"
+                strokeWidth={0.5}
+                backdropBlur={item.blur}
+                layer
+                vibrancyDesaturation={0.6}
+                vibrancyBlendMode={item.mode}
+              >
+                <text text={item.label} x={10} y={10} fontSize={10} fontWeight={700} color="#ffffff" />
+                <text text={`blur ${item.blur}`} x={10} y={26} fontSize={9} color="#ffffffaa" />
+              </rect>
+            </rect>
+          )}
+        </For>
+      </group>
+      <CaptionLabel text="Vibrancy: blur backdrop → desaturate → blend promoted layer foreground." />
+    </group>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Effect · Fluent Materials — Acrylic & Mica approximations
+// ---------------------------------------------------------------------------
+
+const FluentMaterialsDemo: Component = () => {
+  // Fluent Acrylic recipe: backdrop blur → exclusion blend (≈ screen) →
+  // tint color overlay → noise texture (not yet available, use grain-like fill).
+  // Mica: heavy blur + heavy desaturation, near-opaque tint, wallpaper-derived.
+
+  return (
+    <group flexDirection="column" gap={16} alignItems="flex-start">
+      {/* --- Acrylic: dark theme --- */}
+      <group flexDirection="column" gap={4} alignItems="flex-start">
+        <text text="Acrylic · Dark" fontSize={13} fontWeight={700} color="#ffffffcc" />
+        <rect
+          width={480} height={260}
+          cornerRadius={12}
+          clip
+          fill={{
+            type: "linearGradient",
+            startX: 0, startY: 0, endX: 480, endY: 260,
+            stops: [
+              { offset: 0.0, color: "#1b1b3a" },
+              { offset: 0.5, color: "#2d1b69" },
+              { offset: 1.0, color: "#0d4f6e" },
+            ],
+          }}
+        >
+          {/* Rich backdrop content */}
+          <circle cx={60} cy={50} r={56} fill="#c026d3" opacity={0.5} />
+          <circle cx={380} cy={40} r={70} fill="#06b6d4" opacity={0.45} />
+          <circle cx={240} cy={200} r={80} fill="#4f46e5" opacity={0.4} />
+          <rect x={140} y={30} width={200} height={40} cornerRadius={8} fill="#ffffff12" />
+          <rect x={140} y={80} width={280} height={8} cornerRadius={4} fill="#ffffff08" />
+          <rect x={140} y={96} width={220} height={8} cornerRadius={4} fill="#ffffff06" />
+
+          {/* Acrylic sidebar panel — blur 30, screen blend, dark tint */}
+          <rect
+            x={12} y={12}
+            width={180} height={236}
+            cornerRadius={10}
+            fill="#2a2a3a90"
+            stroke="#ffffff18"
+            strokeWidth={0.5}
+            backdropBlur={30}
+            layer
+            vibrancyDesaturation={0.3}
+            vibrancyBlendMode={1}
+          >
+            <text text="Navigation" x={14} y={14} fontSize={12} fontWeight={600} color="#ffffff" />
+            <rect x={14} y={36} width={152} height={0.5} fill="#ffffff15" />
+            <text text="Home" x={14} y={48} fontSize={11} color="#ffffffcc" />
+            <text text="Projects" x={14} y={68} fontSize={11} color="#ffffffcc" />
+            <text text="Settings" x={14} y={88} fontSize={11} color="#ffffff88" />
+          </rect>
+
+          {/* Acrylic flyout — transient surface */}
+          <rect
+            x={220} y={140}
+            width={200} height={100}
+            cornerRadius={10}
+            fill="#3a3a5090"
+            stroke="#ffffff20"
+            strokeWidth={0.5}
+            backdropBlur={30}
+            layer
+            vibrancyDesaturation={0.25}
+            vibrancyBlendMode={1}
+          >
+            <text text="Quick actions" x={14} y={14} fontSize={11} fontWeight={600} color="#ffffff" />
+            <rect x={14} y={34} width={172} height={0.5} fill="#ffffff15" />
+            <text text="New file" x={14} y={46} fontSize={10} color="#ffffffcc" />
+            <text text="Open recent" x={14} y={64} fontSize={10} color="#ffffffcc" />
+            <text text="Import..." x={14} y={82} fontSize={10} color="#ffffff88" />
+          </rect>
+        </rect>
+      </group>
+
+      {/* --- Acrylic: light theme --- */}
+      <group flexDirection="column" gap={4} alignItems="flex-start">
+        <text text="Acrylic · Light" fontSize={13} fontWeight={700} color="#ffffffcc" />
+        <rect
+          width={480} height={200}
+          cornerRadius={12}
+          clip
+          fill={{
+            type: "linearGradient",
+            startX: 0, startY: 0, endX: 480, endY: 200,
+            stops: [
+              { offset: 0.0, color: "#e0e7ff" },
+              { offset: 0.5, color: "#fce7f3" },
+              { offset: 1.0, color: "#cffafe" },
+            ],
+          }}
+        >
+          <circle cx={100} cy={60} r={50} fill="#818cf8" opacity={0.3} />
+          <circle cx={380} cy={140} r={60} fill="#22d3ee" opacity={0.25} />
+          <rect x={40} y={30} width={180} height={30} cornerRadius={6} fill="#00000008" />
+          <rect x={40} y={70} width={300} height={8} cornerRadius={4} fill="#00000006" />
+          <rect x={40} y={86} width={240} height={8} cornerRadius={4} fill="#00000005" />
+
+          {/* Light acrylic panel — tinted white */}
+          <rect
+            x={240} y={16}
+            width={220} height={168}
+            cornerRadius={10}
+            fill="#ffffffb0"
+            stroke="#00000012"
+            strokeWidth={0.5}
+            backdropBlur={30}
+            layer
+            vibrancyDesaturation={0.2}
+            vibrancyBlendMode={1}
+          >
+            <text text="Properties" x={14} y={14} fontSize={12} fontWeight={600} color="#1a1a2e" />
+            <rect x={14} y={34} width={192} height={0.5} fill="#00000010" />
+            <text text="Name: Document.md" x={14} y={48} fontSize={10} color="#333333" />
+            <text text="Size: 4.2 KB" x={14} y={66} fontSize={10} color="#333333" />
+            <text text="Modified: today" x={14} y={84} fontSize={10} color="#555555" />
+          </rect>
+        </rect>
+      </group>
+
+      {/* --- Mica approximation --- */}
+      <group flexDirection="column" gap={4} alignItems="flex-start">
+        <text text="Mica (approximation)" fontSize={13} fontWeight={700} color="#ffffffcc" />
+        <rect
+          width={480} height={160}
+          cornerRadius={12}
+          clip
+          fill={{
+            type: "linearGradient",
+            startX: 0, startY: 0, endX: 480, endY: 160,
+            stops: [
+              { offset: 0.0, color: "#6366f1" },
+              { offset: 0.35, color: "#a855f7" },
+              { offset: 0.7, color: "#ec4899" },
+              { offset: 1.0, color: "#f97316" },
+            ],
+          }}
+        >
+          {/* Mica: near-opaque, heavy desaturation — wallpaper subtly tints */}
+          <rect
+            x={0} y={0}
+            width={480} height={160}
+            fill="#20202880"
+            backdropBlur={60}
+            layer
+            vibrancyDesaturation={0.92}
+            vibrancyBlendMode={0}
+          >
+            {/* App content on mica base */}
+            <text text="App title bar" x={16} y={14} fontSize={12} fontWeight={600} color="#ffffffcc" />
+            <rect x={16} y={38} width={448} height={0.5} fill="#ffffff15" />
+            {/* Content layer card */}
+            <rect x={16} y={50} width={448} height={94} cornerRadius={8} fill="#ffffff08" stroke="#ffffff10" strokeWidth={0.5}>
+              <text text="Content area" x={14} y={14} fontSize={11} fontWeight={600} color="#ffffffcc" />
+              <text text="Mica provides a subtle, personalized backdrop" x={14} y={34} fontSize={10} color="#ffffff88" />
+              <text text="derived from the desktop wallpaper." x={14} y={50} fontSize={10} color="#ffffff88" />
+            </rect>
+          </rect>
+        </rect>
+      </group>
+
+      <CaptionLabel text="Fluent materials: Acrylic = blur 30 + screen blend + tint overlay. Mica = heavy blur + desaturation." />
     </group>
   )
 }
@@ -1303,8 +1615,14 @@ const STORIES: StoryDef[] = [
     render: () => <EffectVibrancyDemo />,
     axes: {},
     defaults: {},
-  },
-  {
+    },
+    {
+    name: "Effect · Fluent Materials",
+    render: () => <FluentMaterialsDemo />,
+    axes: {},
+    defaults: {},
+    },
+    {
     name: "Context Menu",
     render: () => <ContextMenuDemo />,
     axes: {},

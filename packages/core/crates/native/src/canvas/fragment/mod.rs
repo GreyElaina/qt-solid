@@ -186,18 +186,27 @@ pub fn fragment_store_set_prop(
                         node.mask_child = Some(mask_fid);
                     }
                     if let Some(mask_node) = tree.nodes.get_mut(&mask_fid) {
-                        mask_node.props.visible = false;
+                        mask_node.is_mask_source = true;
                         mask_node.promoted = true;
                     }
+                    // Pull mask child out of flex flow so it doesn't shift
+                    // sibling layout. Absolute positioning with no inset
+                    // places it at (0,0) relative to the parent.
+                    tree.with_taffy_style_mut(mask_fid, |style| {
+                        style.position = taffy::style::Position::Absolute;
+                    });
                 }
                 FragmentValue::Unset => {
                     let old_mask = tree.nodes.get_mut(&fragment_id)
                         .and_then(|n| n.mask_child.take());
                     if let Some(old_fid) = old_mask {
                         if let Some(mask_node) = tree.nodes.get_mut(&old_fid) {
-                            mask_node.props.visible = true;
+                            mask_node.is_mask_source = false;
                             mask_node.promoted = false;
                         }
+                        tree.with_taffy_style_mut(old_fid, |style| {
+                            style.position = taffy::style::Position::Relative;
+                        });
                     }
                 }
                 _ => {}
@@ -1498,7 +1507,7 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
             match value {
                 FragmentValue::F64 { value } => {
                     let v = node.props.vibrancy.get_or_insert(VibrancyParams {
-                        desaturation: 0.5, blend_mode: 3, tint: [1.0, 1.0, 1.0, 0.5],
+                        desaturation: 0.5, blend_mode: 3, tint: [1.0, 1.0, 1.0, 0.85],
                     });
                     v.desaturation = value as f32;
                 }
@@ -1513,7 +1522,7 @@ fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue)
             match value {
                 FragmentValue::F64 { value } => {
                     let v = node.props.vibrancy.get_or_insert(VibrancyParams {
-                        desaturation: 0.5, blend_mode: 3, tint: [1.0, 1.0, 1.0, 0.5],
+                        desaturation: 0.5, blend_mode: 3, tint: [1.0, 1.0, 1.0, 0.85],
                     });
                     v.blend_mode = value as u32;
                 }

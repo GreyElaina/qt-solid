@@ -76,8 +76,14 @@ pub struct PromotedLayer {
     pub outer_shadow: Option<(f64, f64, f64, f64, [f32; 4])>,
     /// Vibrancy effect applied during compositing.
     pub vibrancy: Option<super::node::VibrancyParams>,
+    /// Backdrop blur radius applied during compositing.
+    pub backdrop_blur: Option<f64>,
     /// Layer key of the mask texture (if this layer is masked).
     pub mask_layer_key: Option<FragmentLayerKey>,
+    /// This layer is a mask source — render to texture but don't composite to surface.
+    pub is_mask_source: bool,
+    /// Corner radius for SDF clipping in vibrancy composite shader.
+    pub corner_radius: f32,
 }
 
 #[derive(Debug)]
@@ -158,8 +164,14 @@ pub struct CompositedLayer {
     pub outer_shadow: Option<(f64, f64, f64, f64, [f32; 4])>,
     /// Vibrancy effect applied during compositing.
     pub vibrancy: Option<super::node::VibrancyParams>,
+    /// Backdrop blur radius applied during compositing.
+    pub backdrop_blur: Option<f64>,
     /// Layer key of the mask texture (if this layer is masked).
     pub mask_layer_key: Option<FragmentLayerKey>,
+    /// This layer is a mask source — render to texture but don't composite to surface.
+    pub is_mask_source: bool,
+    /// Corner radius for SDF clipping in vibrancy composite shader.
+    pub corner_radius: f32,
 }
 
 /// Partitioned render plan produced by `PaintPlan::partition()`.
@@ -219,6 +231,10 @@ impl PaintPlan {
                     let unsupported_blend = layer.blend_mode != BlendMode::default();
                     let has_path_clip = matches!(layer.clip, Some(FragmentClipShape::Path(_)));
 
+                    // Vibrancy / backdrop-blur require compositor — never demote.
+                    let requires_compositor = layer.vibrancy.is_some()
+                        || layer.backdrop_blur.is_some();
+
                     // Transform local bounds to world space for overlap check.
                     let world_bounds = super::paint::transform_local_bounds_to_world(
                         layer.bounds,
@@ -227,7 +243,7 @@ impl PaintPlan {
                     let overlaps =
                         later_base_bounds.map_or(false, |u| rects_intersect(world_bounds, u));
 
-                    if unsupported_blend || has_path_clip || overlaps {
+                    if !requires_compositor && (unsupported_blend || has_path_clip || overlaps) {
                         placements[i] = false; // demote to base
                         later_base_bounds = Some(match later_base_bounds {
                             Some(u) => u.union(world_bounds),
@@ -272,7 +288,10 @@ impl PaintPlan {
                         content_filter: layer.content_filter,
                         outer_shadow: layer.outer_shadow,
                         vibrancy: layer.vibrancy,
+                        backdrop_blur: layer.backdrop_blur,
                         mask_layer_key: layer.mask_layer_key,
+                        is_mask_source: layer.is_mask_source,
+                        corner_radius: layer.corner_radius,
                     });
                 }
                 (PaintChunk::Promoted(layer), false) => {

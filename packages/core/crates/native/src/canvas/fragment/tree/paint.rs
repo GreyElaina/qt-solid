@@ -375,6 +375,28 @@ impl FragmentTree {
             }
         }
 
+        // Resolve mask_layer_key now that all layer_keys are assigned.
+        {
+            let id_to_key: HashMap<FragmentId, FragmentLayerKey> = collector
+                .chunks
+                .iter()
+                .filter_map(|c| match c {
+                    PaintChunk::Promoted(layer) => Some((layer.fragment_id, layer.layer_key)),
+                    _ => None,
+                })
+                .collect();
+
+            for chunk in &mut collector.chunks {
+                if let PaintChunk::Promoted(layer) = chunk {
+                    if let Some(mask_child_id) =
+                        self.nodes.get(&layer.fragment_id).and_then(|n| n.mask_child)
+                    {
+                        layer.mask_layer_key = id_to_key.get(&mask_child_id).copied();
+                    }
+                }
+            }
+        }
+
         let current_keys: HashSet<FragmentLayerKey> = collector
             .chunks
             .iter()
@@ -449,6 +471,11 @@ impl FragmentTree {
         self.ensure_aabbs();
         let mut effects = Vec::new();
         for node in self.nodes.values() {
+            // Promoted layers handle their own backdrop blur via vibrancy or
+            // per-layer effect passes — don't add them to viewport-level effects.
+            if node.promoted {
+                continue;
+            }
             let Some(blur_radius) = node.props.backdrop_blur else {
                 continue;
             };
@@ -558,10 +585,54 @@ impl FragmentTree {
                 content_filter: node.props.content_filter,
                 outer_shadow,
                 vibrancy: node.props.vibrancy,
+                backdrop_blur: node.props.backdrop_blur,
                 mask_layer_key: node.mask_child.and_then(|mid| {
                     nodes.get(&mid).and_then(|mn| mn.layer_key)
                 }),
+                is_mask_source: node.is_mask_source,
+                corner_radius: match &node.kind {
+                    FragmentData::Rect(r) => r.corner_radii.as_single_radius().unwrap_or(0.0) as f32,
+                    _ => 0.0,
+                },
             }));
+
+            // If this node has a mask child, emit it as a separate promoted layer
+            // so it gets its own layer_key and texture for apply_layer_mask.
+            if let Some(mask_id) = node.mask_child {
+                if let Some(mask_node) = nodes.get(&mask_id) {
+                    if mask_node.promoted && mask_node.is_mask_source {
+                        // Render mask at its local_transform so it appears at
+                        // the correct position within the parent-sized texture.
+                        // (e.g. a 60×60 mask at x=30,y=30 on a 120×120 parent)
+                        let mut mask_scene = Scene::new();
+                        mask_node.kind.encode(&mut mask_scene, mask_node.local_transform());
+                        // Use parent's bounds so mask texture matches content
+                        // texture size — UV [0,1] alignment in the shader.
+                        let mask_bounds = bounds;
+                        let mask_transform = transform; // same position as parent
+                        collector.chunks.push(PaintChunk::Promoted(PromotedLayer {
+                            fragment_id: mask_id,
+                            layer_key: FragmentLayerKey(0),
+                            scene: mask_scene,
+                            bounds: mask_bounds,
+                            transform: mask_transform,
+                            clip: None,
+                            opacity: 1.0,
+                            blend_mode: node.props.blend_mode,
+                            content_dirty: true,
+                            pose_only_dirty: false,
+                            perspective_pose: (0.0, 0.0, 0.0),
+                            content_filter: None,
+                            outer_shadow: None,
+                            vibrancy: None,
+                            backdrop_blur: None,
+                            mask_layer_key: None,
+                            is_mask_source: true,
+                            corner_radius: 0.0,
+                        }));
+                    }
+                }
+            }
 
             collector.resume_inline_after_split();
             return;
@@ -662,6 +733,10 @@ impl FragmentTree {
 
         let children = Self::sorted_children_by_z_static(nodes, &node.children);
         for &child_id in &children {
+            // Skip mask source children — they render to their own layer texture.
+            if nodes.get(&child_id).map_or(false, |c| c.is_mask_source) {
+                continue;
+            }
             Self::paint_node_static(nodes, scroll_offsets, scene, child_id, Affine::IDENTITY);
         }
     }
@@ -712,7 +787,12 @@ impl FragmentTree {
         // Root node encoded at identity (no local_transform applied).
         let mut result: Option<Rect> = node.effective_bounds();
         // Children also painted from identity.
+        // Skip mask source children — they render to their own texture,
+        // not into this layer's content (mirrors paint_promoted_subtree_local).
         for &child_id in &node.children {
+            if nodes.get(&child_id).map_or(false, |c| c.is_mask_source) {
+                continue;
+            }
             if let Some(child_bounds) =
                 Self::compute_subtree_local_bounds(nodes, child_id, Affine::IDENTITY)
             {

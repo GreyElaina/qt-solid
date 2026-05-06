@@ -12,6 +12,7 @@ pub(crate) mod surface;
 use crate::canvas::fragment::{FragmentId, FragmentLayerKey, RenderPlan};
 use crate::image::{ImageCache, sweep_stale_images};
 use vello::wgpu;
+use wgpu::util::DeviceExt;
 use vello_hybrid::{AtlasConfig, RenderSettings, RenderSize, RenderTargetConfig, Renderer, Scene as GpuScene};
 use anyrender_vello_hybrid::Recording;
 
@@ -59,6 +60,17 @@ struct WindowSurface {
     composite_bind_group_layout: wgpu::BindGroupLayout,
     /// Outer shadow pipeline (renders behind composite layers on the surface).
     outer_shadow_pipeline: effects::OuterShadowPipeline,
+    /// Inner shadow effect pipeline.
+    inner_shadow_pipeline: wgpu::RenderPipeline,
+    /// Backdrop blur pipeline.
+    blur_pipeline: effects::BlurPipeline,
+    /// Content filter pipeline.
+    content_filter_pipeline: effects::ContentFilterPipeline,
+    /// Layer mask pipeline.
+    mask_pipeline: effects::MaskPipeline,
+    /// Vibrancy composite pipeline — composites layer with vibrancy at draw time (no in-place mutation).
+    vibrancy_composite_pipeline: wgpu::RenderPipeline,
+    vibrancy_composite_bind_group_layout: wgpu::BindGroupLayout,
     /// Per-promoted-layer retained textures.
     layer_textures: HashMap<FragmentLayerKey, LayerTextureState>,
     /// Retained GPU Scene (vello_hybrid) to avoid per-frame alloc/dealloc.
@@ -69,6 +81,10 @@ struct WindowSurface {
     zero_buffer: Option<(wgpu::Buffer, usize)>,
     /// Per-subtree cached Recordings for strip caching.
     subtree_recordings: HashMap<FragmentId, Recording>,
+    /// Scratch texture for backdrop blur ping-pong.
+    blur_scratch: Option<effects::ScratchTexture>,
+    /// Scratch texture shared by content filter and layer mask (sequential use).
+    effect_scratch: Option<effects::ScratchTexture>,
 }
 
 /// Cached CPU render state to avoid per-frame allocation of RenderContext + Pixmap.
@@ -98,6 +114,7 @@ static WINDOW_SURFACES: Lazy<Mutex<HashMap<u32, WindowRenderMode>>> =
 
 const BLIT_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/blit_shader.wgsl"));
 const COMPOSITE_LAYER_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/composite_layer.wgsl"));
+const COMPOSITE_VIBRANCY_SHADER: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/composite_vibrancy.wgsl"));
 
 /// Like `render_and_present` but accepts per-subtree scenes with dirty flags
 /// for Recording-based strip caching. GPU path only (CPU falls back to merged).
@@ -370,12 +387,12 @@ fn render_gpu_and_present_subtrees(
             },
         );
         effects::apply_backdrop_blurs(
-            &ws.device, &ws.queue, &mut fx_encoder,
+            &ws.device, &ws.blur_pipeline, &ws.queue, &mut fx_encoder,
             &ws.output_texture, &ws.output_view,
-            tex_size, backdrop_blurs,
+            tex_size, backdrop_blurs, &mut ws.blur_scratch,
         );
         effects::apply_inner_shadows(
-            &ws.device, &ws.queue, &mut fx_encoder,
+            &ws.device, &ws.inner_shadow_pipeline, &ws.queue, &mut fx_encoder,
             &ws.output_view, tex_size, inner_shadows,
         );
         encoder = fx_encoder;
@@ -487,23 +504,28 @@ pub(crate) fn render_composited_and_present(
 
     let pose_only = render_plan.pose_only;
 
-    let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("qt-solid-composited-encoder"),
-    });
+    // =====================================================================
+    // Phase A — Vello renders.  Each render gets its own encoder+submit
+    // because vello_hybrid uses queue.write_buffer for internal uniforms
+    // (immediate staging, not recorded in the encoder).  Multiple Vello
+    // renders sharing one submit would clobber each other's uniform data.
+    // =====================================================================
 
-    // --- Step 1: Render base scene into base_texture (unless pose-only) ---
+    // --- A1: Base scene → base_texture (unless pose-only) ---
     if !pose_only {
         let is_noop = matches!(dirty_rects, Some(rects) if rects.is_empty());
         let partial_rects = dirty_rects.filter(|r| !r.is_empty());
 
         if is_noop && render_plan.composited_layers.is_empty() {
-            // Nothing dirty, no layers — just re-present.
+            let mut enc = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("qt-solid-noop-blit"),
+            });
             let surface_texture = ws.surface.get_current_texture()
                 .map_err(|e| qt_error(format!("surface acquire: {e}")))?;
             let surface_view = surface_texture.texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
             {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("qt-solid-composited-noop-blit"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &surface_view,
@@ -514,23 +536,23 @@ pub(crate) fn render_composited_and_present(
                             store: wgpu::StoreOp::Store,
                         },
                     })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
+                    ..Default::default()
                 });
                 pass.set_pipeline(&ws.blit_pipeline);
                 pass.set_bind_group(0, &ws.base_bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
-            ws.queue.submit([encoder.finish()]);
+            ws.queue.submit([enc.finish()]);
             surface_texture.present();
             return Ok(true);
         }
 
-        // Clear or partial-clear base_texture.
+        let mut enc = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("qt-solid-vello-base"),
+        });
+
         if partial_rects.is_none() {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let _pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("qt-solid-composited-clear-base"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &ws.base_view,
@@ -541,10 +563,7 @@ pub(crate) fn render_composited_and_present(
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
+                ..Default::default()
             });
         } else {
             for &(dx, dy, dw, dh) in partial_rects.unwrap() {
@@ -553,43 +572,41 @@ pub(crate) fn render_composited_and_present(
                 let dw = dw.min(width_px.saturating_sub(dx));
                 let dh = dh.min(height_px.saturating_sub(dy));
                 clear_texture_rect(
-                    &ws.device, &mut encoder, &ws.base_texture,
+                    &ws.device, &mut enc, &ws.base_texture,
                     &mut ws.zero_buffer, dx, dy, dw, dh,
                 );
             }
         }
 
-        // Vello render base scene into base_texture.
         let retained = ws.retained_gpu_scene.take();
         let gpu_scene = build_gpu_scene(
             width_px, height_px, scale_factor, &render_plan.base_scene,
-            &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            &mut ws.renderer, &ws.device, &ws.queue, &mut enc,
             &mut ws.image_cache,
             retained,
         )?;
         sweep_stale_images(
-            &render_plan.base_scene, &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            &render_plan.base_scene, &mut ws.renderer, &ws.device, &ws.queue, &mut enc,
             &mut ws.image_cache,
         );
         ws.renderer.render(
-            &gpu_scene, &ws.device, &ws.queue, &mut encoder,
+            &gpu_scene, &ws.device, &ws.queue, &mut enc,
             &RenderSize { width: width_px, height: height_px },
             &ws.base_view,
         ).map_err(|e| qt_error(format!("vello base render: {e}")))?;
         ws.retained_gpu_scene = Some(gpu_scene);
+        ws.queue.submit([enc.finish()]);
     }
 
-    // --- Step 2: Render each composited layer into its own texture ---
+    // --- A2: Each composited layer → its own texture (separate submit each) ---
     for layer in &render_plan.composited_layers {
         if !layer.content_dirty && ws.layer_textures.contains_key(&layer.layer_key) {
-            continue; // Reuse retained texture.
+            continue;
         }
 
-        // Determine layer texture size from bounds (in device pixels).
         let lw = ((layer.bounds.width() * scale_factor).ceil() as u32).max(1);
         let lh = ((layer.bounds.height() * scale_factor).ceil() as u32).max(1);
 
-        // Recreate texture if size changed or new layer.
         let needs_recreate = ws.layer_textures.get(&layer.layer_key)
             .map_or(true, |t| t.width != lw || t.height != lh);
         if needs_recreate {
@@ -638,10 +655,11 @@ pub(crate) fn render_composited_and_present(
         }
 
         let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
-
-        // Clear layer texture.
+        let mut enc = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("qt-solid-vello-layer"),
+        });
         {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let _pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("qt-solid-layer-clear"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &lt.view,
@@ -652,33 +670,45 @@ pub(crate) fn render_composited_and_present(
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
+                ..Default::default()
             });
         }
 
-        // Vello render layer scene into layer texture.
         let gpu_scene = build_gpu_scene(
             lw, lh, scale_factor, &layer.scene,
-            &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            &mut ws.renderer, &ws.device, &ws.queue, &mut enc,
             &mut ws.image_cache,
             None,
         )?;
         sweep_stale_images(
-            &layer.scene, &mut ws.renderer, &ws.device, &ws.queue, &mut encoder,
+            &layer.scene, &mut ws.renderer, &ws.device, &ws.queue, &mut enc,
             &mut ws.image_cache,
         );
         ws.renderer.render(
-            &gpu_scene, &ws.device, &ws.queue, &mut encoder,
+            &gpu_scene, &ws.device, &ws.queue, &mut enc,
             &RenderSize { width: lw, height: lh },
             &lt.view,
         ).map_err(|e| qt_error(format!("vello layer render: {e}")))?;
+        ws.queue.submit([enc.finish()]);
+    }
 
-        // Apply content filter after Vello render, before compositing.
+    // =====================================================================
+    // Phase B — Effect passes + compositing.  Separate encoder, no Vello
+    // uniform conflicts.
+    // =====================================================================
+    let mut encoder = ws.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("qt-solid-effects-encoder"),
+    });
+
+    // --- B1: Per-layer post-process (content filter) ---
+    for layer in &render_plan.composited_layers {
+        if !layer.content_dirty {
+            continue;
+        }
         if let Some(ref filter) = layer.content_filter {
             let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
+            let lw = lt.width;
+            let lh = lt.height;
             let effect = effects::ContentFilterEffect {
                 grayscale: filter.grayscale,
                 saturate: filter.saturate,
@@ -689,27 +719,32 @@ pub(crate) fn render_composited_and_present(
                 sepia: filter.sepia,
             };
             effects::apply_content_filter(
-                &ws.device, &ws.queue, &mut encoder,
+                &ws.device, &ws.content_filter_pipeline, &ws.queue, &mut encoder,
                 &lt.texture, &lt.view, (lw, lh),
-                &effect,
+                &effect, &mut ws.effect_scratch,
             );
         }
+    }
 
-        // Apply layer mask (multiply layer alpha by mask alpha).
+    // --- B2: Layer masks (all layer textures exist now) ---
+    for layer in &render_plan.composited_layers {
         if let Some(ref mask_key) = layer.mask_layer_key {
-            if let Some(mask_lt) = ws.layer_textures.get(mask_key) {
-                let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
+            if let (Some(mask_lt), Some(lt)) = (
+                ws.layer_textures.get(mask_key),
+                ws.layer_textures.get(&layer.layer_key),
+            ) {
                 effects::apply_layer_mask(
-                    &ws.device, &mut encoder,
+                    &ws.device, &ws.mask_pipeline, &mut encoder,
                     &lt.texture, &lt.view,
                     &mask_lt.view,
                     (lt.width, lt.height),
+                    &mut ws.effect_scratch,
                 );
             }
         }
     }
 
-    // --- Step 3: Effects pass on base_texture → output_texture ---
+    // --- B3: Viewport effects (backdrop blur, inner shadow) ---
     let has_effects = !backdrop_blurs.is_empty() || !inner_shadows.is_empty();
     let blit_bind_group = if has_effects && !pose_only {
         encoder.copy_texture_to_texture(
@@ -728,12 +763,12 @@ pub(crate) fn render_composited_and_present(
             wgpu::Extent3d { width: width_px, height: height_px, depth_or_array_layers: 1 },
         );
         effects::apply_backdrop_blurs(
-            &ws.device, &ws.queue, &mut encoder,
+            &ws.device, &ws.blur_pipeline, &ws.queue, &mut encoder,
             &ws.output_texture, &ws.output_view,
-            (width_px, height_px), backdrop_blurs,
+            (width_px, height_px), backdrop_blurs, &mut ws.blur_scratch,
         );
         effects::apply_inner_shadows(
-            &ws.device, &ws.queue, &mut encoder,
+            &ws.device, &ws.inner_shadow_pipeline, &ws.queue, &mut encoder,
             &ws.output_view, (width_px, height_px), inner_shadows,
         );
         &ws.output_bind_group
@@ -741,14 +776,13 @@ pub(crate) fn render_composited_and_present(
         &ws.base_bind_group
     };
 
-    // --- Step 4: Composite pass → surface ---
+    // --- B4: Blit base → surface ---
     let surface_texture = ws.surface.get_current_texture()
         .map_err(|e| qt_error(format!("surface acquire: {e}")))?;
     let surface_view = surface_texture.texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
     {
-        // Blit base_texture (or output_texture if effects) to surface.
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("qt-solid-composited-blit-base"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -760,49 +794,54 @@ pub(crate) fn render_composited_and_present(
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
+            ..Default::default()
         });
         pass.set_pipeline(&ws.blit_pipeline);
         pass.set_bind_group(0, blit_bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 
-    // --- Step 4a: Apply vibrancy to affected layer textures (before composite pass) ---
-    if !render_plan.composited_layers.is_empty() {
-        let viewport_w = width_px as f32 / scale_factor as f32;
-        let viewport_h = height_px as f32 / scale_factor as f32;
-        let backdrop_view = if has_effects { &ws.output_view } else { &ws.base_view };
-
+    // --- B5: Pre-composite backdrop blur for vibrancy layers ---
+    let mut vibrancy_backdrop_ready = false;
+    {
+        let sf = scale_factor as f32;
+        let mut needs_copy = true;
         for layer in &render_plan.composited_layers {
-            if let Some(vib) = &layer.vibrancy {
-                let lt = ws.layer_textures.get(&layer.layer_key).unwrap();
-                let uv_offset = [
-                    layer.bounds.x0 as f32 / viewport_w,
-                    layer.bounds.y0 as f32 / viewport_h,
-                ];
-                let uv_scale = [
-                    layer.bounds.width() as f32 / viewport_w,
-                    layer.bounds.height() as f32 / viewport_h,
-                ];
-                effects::apply_vibrancy_in_place(
-                    &ws.device, &mut encoder,
-                    &lt.texture, &lt.view, backdrop_view,
-                    (lt.width, lt.height),
-                    &effects::VibrancyEffect {
-                        desaturation: vib.desaturation,
-                        blend_mode: vib.blend_mode,
-                        tint: vib.tint,
-                    },
-                    uv_offset, uv_scale,
-                );
+            if layer.vibrancy.is_some() {
+                let blur_radius = layer.backdrop_blur.unwrap_or(0.0);
+                if blur_radius > 0.0 {
+                    if needs_copy && !has_effects {
+                        encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo { texture: &ws.base_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                            wgpu::TexelCopyTextureInfo { texture: &ws.output_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                            wgpu::Extent3d { width: width_px, height: height_px, depth_or_array_layers: 1 },
+                        );
+                        needs_copy = false;
+                    }
+                    let coeffs = layer.transform.as_coeffs();
+                    let world_x = coeffs[4] as f32 + layer.bounds.x0 as f32 * coeffs[0] as f32
+                        + layer.bounds.y0 as f32 * coeffs[2] as f32;
+                    let world_y = coeffs[5] as f32 + layer.bounds.x0 as f32 * coeffs[1] as f32
+                        + layer.bounds.y0 as f32 * coeffs[3] as f32;
+                    effects::apply_backdrop_blurs(
+                        &ws.device, &ws.blur_pipeline, &ws.queue, &mut encoder,
+                        &ws.output_texture, &ws.output_view,
+                        (width_px, height_px),
+                        &[effects::BackdropBlurEffect {
+                            rect_min: [world_x * sf, world_y * sf],
+                            rect_size: [layer.bounds.width() as f32 * sf, layer.bounds.height() as f32 * sf],
+                            corner_radius: 0.0,
+                            blur_radius: blur_radius as f32 * sf,
+                        }],
+                        &mut ws.blur_scratch,
+                    );
+                    vibrancy_backdrop_ready = true;
+                }
             }
         }
     }
 
-    // --- Step 4b: Composite all layers to surface ---
+    // --- B6: Composite all layers → surface ---
     if !render_plan.composited_layers.is_empty() {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("qt-solid-composited-layers-pass"),
@@ -825,6 +864,10 @@ pub(crate) fn render_composited_and_present(
         let viewport_h = height_px as f64 / scale_factor;
 
         for layer in &render_plan.composited_layers {
+            // Mask source layers only exist for apply_layer_mask reads — don't draw.
+            if layer.is_mask_source {
+                continue;
+            }
             let Some(lt) = ws.layer_textures.get(&layer.layer_key) else {
                 continue;
             };
@@ -868,12 +911,67 @@ pub(crate) fn render_composited_and_present(
                 layer.opacity,
                 layer.perspective_pose,
                 (0.5, 0.5),
+                layer.corner_radius,
             );
             ws.queue.write_buffer(&lt.uniform_buffer, 0, &uniform_data);
 
-            pass.set_pipeline(&ws.composite_pipeline);
-            pass.set_bind_group(0, &lt.composite_bind_group, &[]);
-            pass.draw(0..6, 0..1);
+            if let Some(vib) = &layer.vibrancy {
+                // Determine backdrop source
+                let backdrop_view_for_vib = if has_effects || vibrancy_backdrop_ready { &ws.output_view } else { &ws.base_view };
+
+                let viewport_w_f = width_px as f32 / scale_factor as f32;
+                let viewport_h_f = height_px as f32 / scale_factor as f32;
+                // World-space top-left of the layer quad:
+                // transform * bounds.xy  (handles non-zero bounds origin).
+                let world_x = coeffs[4] as f32 + layer.bounds.x0 as f32 * coeffs[0] as f32
+                    + layer.bounds.y0 as f32 * coeffs[2] as f32;
+                let world_y = coeffs[5] as f32 + layer.bounds.x0 as f32 * coeffs[1] as f32
+                    + layer.bounds.y0 as f32 * coeffs[3] as f32;
+                let uv_offset = [
+                    world_x / viewport_w_f,
+                    world_y / viewport_h_f,
+                ];
+                let uv_scale = [
+                    layer.bounds.width() as f32 / viewport_w_f,
+                    layer.bounds.height() as f32 / viewport_h_f,
+                ];
+
+                let vib_data = effects::make_vibrancy_uniform_pub(
+                    &effects::VibrancyEffect {
+                        desaturation: vib.desaturation,
+                        blend_mode: vib.blend_mode,
+                        tint: vib.tint,
+                    },
+                    (lt.width, lt.height),
+                    uv_offset,
+                    uv_scale,
+                );
+                let vib_uniform = ws.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("vibrancy-composite-uniform"),
+                    contents: &vib_data,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+
+                let vib_bind_group = ws.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("vibrancy-composite-bg"),
+                    layout: &ws.vibrancy_composite_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Sampler(&ws.blit_sampler) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&lt.view) },
+                        wgpu::BindGroupEntry { binding: 2, resource: lt.uniform_buffer.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(backdrop_view_for_vib) },
+                        wgpu::BindGroupEntry { binding: 4, resource: vib_uniform.as_entire_binding() },
+                    ],
+                });
+
+                pass.set_pipeline(&ws.vibrancy_composite_pipeline);
+                pass.set_bind_group(0, &vib_bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            } else {
+                pass.set_pipeline(&ws.composite_pipeline);
+                pass.set_bind_group(0, &lt.composite_bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            }
         }
     }
 
@@ -1254,6 +1352,50 @@ fn create_window_surface_with_backends(
     });
 
     let outer_shadow_pipeline = effects::create_outer_shadow_pipeline(&device, surface_format);
+    let inner_shadow_pipeline = effects::create_inner_shadow_pipeline(&device);
+    let blur_pipeline = effects::create_blur_pipeline(&device);
+    let content_filter_pipeline = effects::create_content_filter_pipeline(&device);
+    let mask_pipeline = effects::create_mask_pipeline(&device);
+
+    let vibrancy_composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("vibrancy-composite-shader"),
+        source: wgpu::ShaderSource::Wgsl(COMPOSITE_VIBRANCY_SHADER.into()),
+    });
+    let vibrancy_composite_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("vibrancy-composite-bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::VERTEX_FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::VERTEX_FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: std::num::NonZeroU64::new(128) }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: std::num::NonZeroU64::new(64) }, count: None },
+        ],
+    });
+    let vibrancy_composite_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("vibrancy-composite-pl"),
+        bind_group_layouts: &[&vibrancy_composite_bind_group_layout],
+        immediate_size: 0,
+    });
+    let vibrancy_composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("vibrancy-composite-pipeline"),
+        layout: Some(&vibrancy_composite_pipeline_layout),
+        vertex: wgpu::VertexState { module: &vibrancy_composite_shader, entry_point: Some("vs_main"), buffers: &[], compilation_options: Default::default() },
+        fragment: Some(wgpu::FragmentState {
+            module: &vibrancy_composite_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
 
     Ok(WindowSurface {
         surface,
@@ -1274,10 +1416,18 @@ fn create_window_surface_with_backends(
         composite_pipeline,
         composite_bind_group_layout,
         outer_shadow_pipeline,
+        inner_shadow_pipeline,
+        blur_pipeline,
+        content_filter_pipeline,
+        mask_pipeline,
+        vibrancy_composite_pipeline,
+        vibrancy_composite_bind_group_layout,
         layer_textures: HashMap::new(),
         retained_gpu_scene: None,
         zero_buffer: None,
         subtree_recordings: HashMap::new(),
+        blur_scratch: None,
+        effect_scratch: None,
     })
 }
 
@@ -1466,6 +1616,7 @@ fn make_layer_uniform(
     opacity: f32,
     perspective_pose: (f64, f64, f64),
     origin: (f64, f64),
+    corner_radius: f32,
 ) -> [u8; 128] {
     let mat = build_composite_matrix(
         affine_coeffs, bounds_x, bounds_y, bounds_w, bounds_h,
@@ -1492,6 +1643,8 @@ fn make_layer_uniform(
     data[96..100].copy_from_slice(&opacity.to_le_bytes());
     // backface_visible = 1.0 (always show for now)
     data[100..104].copy_from_slice(&1.0f32.to_le_bytes());
+    // corner_radius at offset 104 (opacity_flags.z)
+    data[104..108].copy_from_slice(&corner_radius.to_le_bytes());
     data
 }
 
@@ -1499,7 +1652,7 @@ fn make_layer_uniform(
 /// to wgpu clip space [-1,1] with perspective.
 fn build_composite_matrix(
     affine_coeffs: &[f64; 6],
-    bounds_x: f64, bounds_y: f64,
+    _bounds_x: f64, _bounds_y: f64,
     bounds_w: f64, bounds_h: f64,
     viewport_w: f64, viewport_h: f64,
     perspective_pose: (f64, f64, f64),

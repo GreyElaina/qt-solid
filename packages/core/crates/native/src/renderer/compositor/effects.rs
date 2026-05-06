@@ -1,5 +1,3 @@
-use std::sync::{Mutex, OnceLock};
-
 use bytemuck::{Pod, Zeroable};
 use vello::wgpu;
 use wgpu::util::DeviceExt;
@@ -21,16 +19,7 @@ pub struct InnerShadowEffect {
     pub color: [f32; 4],
 }
 
-struct EffectPipelineState {
-    pipeline: wgpu::RenderPipeline,
-}
-
-fn effect_pipeline(device: &wgpu::Device) -> &'static EffectPipelineState {
-    static STATE: OnceLock<EffectPipelineState> = OnceLock::new();
-    STATE.get_or_init(|| create_pipeline(device))
-}
-
-fn create_pipeline(device: &wgpu::Device) -> EffectPipelineState {
+pub(crate) fn create_inner_shadow_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
     let shader_source = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/shaders/inner_shadow.wgsl"
@@ -100,7 +89,7 @@ fn create_pipeline(device: &wgpu::Device) -> EffectPipelineState {
         cache: None,
     });
 
-    EffectPipelineState { pipeline }
+    pipeline
 }
 
 /// Apply inner shadow effects to the given render target.
@@ -121,6 +110,7 @@ fn create_pipeline(device: &wgpu::Device) -> EffectPipelineState {
 /// ```
 pub fn apply_inner_shadows(
     device: &wgpu::Device,
+    pipeline: &wgpu::RenderPipeline,
     _queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     target_view: &wgpu::TextureView,
@@ -131,8 +121,6 @@ pub fn apply_inner_shadows(
         return;
     }
 
-    let state = effect_pipeline(device);
-
     for effect in effects {
         let data = make_inner_shadow_uniform(effect, texture_size);
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -142,7 +130,7 @@ pub fn apply_inner_shadows(
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("inner-shadow-bind-group"),
-            layout: &state.pipeline.get_bind_group_layout(0),
+            layout: &pipeline.get_bind_group_layout(0),
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: uniform.as_entire_binding(),
@@ -163,7 +151,7 @@ pub fn apply_inner_shadows(
             ..Default::default()
         });
 
-        pass.set_pipeline(&state.pipeline);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
@@ -207,18 +195,13 @@ pub struct BackdropBlurEffect {
     pub blur_radius: f32,
 }
 
-struct BlurPipelineState {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+pub(crate) struct BlurPipeline {
+    pub(crate) pipeline: wgpu::RenderPipeline,
+    pub(crate) bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) sampler: wgpu::Sampler,
 }
 
-fn blur_pipeline(device: &wgpu::Device) -> &'static BlurPipelineState {
-    static STATE: OnceLock<BlurPipelineState> = OnceLock::new();
-    STATE.get_or_init(|| create_blur_pipeline(device))
-}
-
-fn create_blur_pipeline(device: &wgpu::Device) -> BlurPipelineState {
+pub(crate) fn create_blur_pipeline(device: &wgpu::Device) -> BlurPipeline {
     let shader_source = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/shaders/backdrop_blur.wgsl"
@@ -306,7 +289,7 @@ fn create_blur_pipeline(device: &wgpu::Device) -> BlurPipelineState {
         ..Default::default()
     });
 
-    BlurPipelineState {
+    BlurPipeline {
         pipeline,
         bind_group_layout,
         sampler,
@@ -314,78 +297,36 @@ fn create_blur_pipeline(device: &wgpu::Device) -> BlurPipelineState {
 }
 
 // ---------------------------------------------------------------------------
-// Scratch texture cache for ping-pong blur passes
+// Scratch texture — per-window, passed in by caller
 // ---------------------------------------------------------------------------
 
-struct ScratchTexture {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    width: u32,
-    height: u32,
+pub(crate) struct ScratchTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub width: u32,
+    pub height: u32,
 }
 
-static SCRATCH: OnceLock<Mutex<Option<ScratchTexture>>> = OnceLock::new();
-
-static VIBRANCY_SCRATCH: OnceLock<Mutex<Option<ScratchTexture>>> = OnceLock::new();
-
-fn ensure_scratch_texture(
+/// Ensure the scratch matches the requested size.
+/// `exact = true`: recreate if size differs (content filter, mask — UV maps to full texture).
+/// `exact = false`: grow-only, reuse if large enough (blur — only uses a sub-region).
+pub(crate) fn ensure_scratch<'a>(
+    scratch: &'a mut Option<ScratchTexture>,
     device: &wgpu::Device,
     width: u32,
     height: u32,
-) -> &'static Mutex<Option<ScratchTexture>> {
-    let mutex = SCRATCH.get_or_init(|| Mutex::new(None));
-    let mut guard = mutex.lock().unwrap();
-    let needs_recreate = match guard.as_ref() {
-        Some(s) => s.width != width || s.height != height,
-        None => true,
-    };
-    if needs_recreate {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("backdrop-blur-scratch"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        *guard = Some(ScratchTexture {
-            texture,
-            view,
-            width,
-            height,
-        });
-    }
-    mutex
-}
-
-fn ensure_vibrancy_scratch(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-) -> &'static Mutex<Option<ScratchTexture>> {
-    let mutex = VIBRANCY_SCRATCH.get_or_init(|| Mutex::new(None));
-    let mut guard = mutex.lock().unwrap();
-    let needs_recreate = match guard.as_ref() {
+    label: &str,
+    exact: bool,
+) -> &'a ScratchTexture {
+    let needs_recreate = match scratch.as_ref() {
+        Some(s) if exact => s.width != width || s.height != height,
         Some(s) => s.width < width || s.height < height,
         None => true,
     };
     if needs_recreate {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("vibrancy-scratch"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+            label: Some(label),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -396,14 +337,9 @@ fn ensure_vibrancy_scratch(
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        *guard = Some(ScratchTexture {
-            texture,
-            view,
-            width,
-            height,
-        });
+        *scratch = Some(ScratchTexture { texture, view, width, height });
     }
-    mutex
+    scratch.as_ref().unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -412,18 +348,18 @@ fn ensure_vibrancy_scratch(
 
 pub fn apply_backdrop_blurs(
     device: &wgpu::Device,
+    pipeline: &BlurPipeline,
     _queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     target_texture: &wgpu::Texture,
     target_view: &wgpu::TextureView,
     texture_size: (u32, u32),
     effects: &[BackdropBlurEffect],
+    scratch: &mut Option<ScratchTexture>,
 ) {
     if effects.is_empty() {
         return;
     }
-
-    let blur_state = blur_pipeline(device);
 
     // Create a separate view of the target texture for sampling.
     let target_sample_view = target_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -442,9 +378,7 @@ pub fn apply_backdrop_blurs(
         let scratch_w = (texture_size.0 / downscale).max(1);
         let scratch_h = (texture_size.1 / downscale).max(1);
 
-        let scratch_mutex = ensure_scratch_texture(device, scratch_w, scratch_h);
-        let scratch_guard = scratch_mutex.lock().unwrap();
-        let scratch = scratch_guard.as_ref().unwrap();
+        let s = ensure_scratch(scratch, device, scratch_w, scratch_h, "blur-scratch", false);
 
         // Horizontal uniform: source = full-res target, direction = (1, 0)
         let h_uniform = {
@@ -476,7 +410,7 @@ pub fn apply_backdrop_blurs(
 
         let h_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("backdrop-blur-h-bind-group"),
-            layout: &blur_state.bind_group_layout,
+            layout: &pipeline.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -488,7 +422,7 @@ pub fn apply_backdrop_blurs(
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&blur_state.sampler),
+                    resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
                 },
             ],
         });
@@ -498,7 +432,7 @@ pub fn apply_backdrop_blurs(
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("backdrop-blur-h-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &scratch.view,
+                    view: &s.view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -508,14 +442,14 @@ pub fn apply_backdrop_blurs(
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&blur_state.pipeline);
+            pass.set_pipeline(&pipeline.pipeline);
             pass.set_bind_group(0, &h_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
         let v_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("backdrop-blur-v-bind-group"),
-            layout: &blur_state.bind_group_layout,
+            layout: &pipeline.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -523,11 +457,11 @@ pub fn apply_backdrop_blurs(
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&scratch.view),
+                    resource: wgpu::BindingResource::TextureView(&s.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&blur_state.sampler),
+                    resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
                 },
             ],
         });
@@ -547,7 +481,7 @@ pub fn apply_backdrop_blurs(
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&blur_state.pipeline);
+            pass.set_pipeline(&pipeline.pipeline);
             pass.set_bind_group(0, &v_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -796,18 +730,13 @@ impl Default for ContentFilterEffect {
     }
 }
 
-struct ContentFilterPipelineState {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+pub(crate) struct ContentFilterPipeline {
+    pub(crate) pipeline: wgpu::RenderPipeline,
+    pub(crate) bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) sampler: wgpu::Sampler,
 }
 
-fn content_filter_pipeline(device: &wgpu::Device) -> &'static ContentFilterPipelineState {
-    static STATE: OnceLock<ContentFilterPipelineState> = OnceLock::new();
-    STATE.get_or_init(|| create_content_filter_pipeline(device))
-}
-
-fn create_content_filter_pipeline(device: &wgpu::Device) -> ContentFilterPipelineState {
+pub(crate) fn create_content_filter_pipeline(device: &wgpu::Device) -> ContentFilterPipeline {
     let shader_source = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/shaders/content_filter.wgsl"
@@ -898,7 +827,7 @@ fn create_content_filter_pipeline(device: &wgpu::Device) -> ContentFilterPipelin
         ..Default::default()
     });
 
-    ContentFilterPipelineState {
+    ContentFilterPipeline {
         pipeline,
         bind_group_layout,
         sampler,
@@ -944,23 +873,20 @@ fn make_content_filter_uniform(
 /// back to `target_view`. No-op when the filter is identity.
 pub fn apply_content_filter(
     device: &wgpu::Device,
+    pipeline: &ContentFilterPipeline,
     _queue: &wgpu::Queue,
     encoder: &mut wgpu::CommandEncoder,
     target_texture: &wgpu::Texture,
     target_view: &wgpu::TextureView,
     texture_size: (u32, u32),
     effect: &ContentFilterEffect,
+    scratch: &mut Option<ScratchTexture>,
 ) {
     if effect.is_identity() {
         return;
     }
 
-    let state = content_filter_pipeline(device);
-
-    // Reuse the shared scratch texture (same one as backdrop blur).
-    let scratch_mutex = ensure_scratch_texture(device, texture_size.0, texture_size.1);
-    let scratch_guard = scratch_mutex.lock().unwrap();
-    let scratch = scratch_guard.as_ref().unwrap();
+    let s = ensure_scratch(scratch, device, texture_size.0, texture_size.1, "effect-scratch", true);
 
     // Copy current layer content to scratch so we can sample it.
     encoder.copy_texture_to_texture(
@@ -971,7 +897,7 @@ pub fn apply_content_filter(
             aspect: wgpu::TextureAspect::All,
         },
         wgpu::TexelCopyTextureInfo {
-            texture: &scratch.texture,
+            texture: &s.texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -992,7 +918,7 @@ pub fn apply_content_filter(
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("content-filter-bind-group"),
-        layout: &state.bind_group_layout,
+        layout: &pipeline.bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -1000,11 +926,11 @@ pub fn apply_content_filter(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(&scratch.view),
+                resource: wgpu::BindingResource::TextureView(&s.view),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::Sampler(&state.sampler),
+                resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
             },
         ],
     });
@@ -1023,7 +949,7 @@ pub fn apply_content_filter(
         ..Default::default()
     });
 
-    pass.set_pipeline(&state.pipeline);
+    pass.set_pipeline(&pipeline.pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.draw(0..3, 0..1);
 }
@@ -1032,18 +958,13 @@ pub fn apply_content_filter(
 // Layer mask
 // ---------------------------------------------------------------------------
 
-struct MaskPipelineState {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+pub(crate) struct MaskPipeline {
+    pub(crate) pipeline: wgpu::RenderPipeline,
+    pub(crate) bind_group_layout: wgpu::BindGroupLayout,
+    pub(crate) sampler: wgpu::Sampler,
 }
 
-fn mask_pipeline(device: &wgpu::Device) -> &'static MaskPipelineState {
-    static STATE: OnceLock<MaskPipelineState> = OnceLock::new();
-    STATE.get_or_init(|| create_mask_pipeline(device))
-}
-
-fn create_mask_pipeline(device: &wgpu::Device) -> MaskPipelineState {
+pub(crate) fn create_mask_pipeline(device: &wgpu::Device) -> MaskPipeline {
     let shader_source = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/shaders/layer_mask.wgsl"
@@ -1137,7 +1058,7 @@ fn create_mask_pipeline(device: &wgpu::Device) -> MaskPipelineState {
         ..Default::default()
     });
 
-    MaskPipelineState {
+    MaskPipeline {
         pipeline,
         bind_group_layout,
         sampler,
@@ -1148,18 +1069,16 @@ fn create_mask_pipeline(device: &wgpu::Device) -> MaskPipelineState {
 /// Reads content from `content_view`, mask from `mask_view`, writes to `target_view`.
 pub fn apply_layer_mask(
     device: &wgpu::Device,
+    pipeline: &MaskPipeline,
     encoder: &mut wgpu::CommandEncoder,
     target_texture: &wgpu::Texture,
     target_view: &wgpu::TextureView,
     mask_view: &wgpu::TextureView,
     texture_size: (u32, u32),
+    scratch: &mut Option<ScratchTexture>,
 ) {
-    let state = mask_pipeline(device);
-
     // Copy target → scratch so we can sample content while writing back.
-    let scratch_mutex = ensure_scratch_texture(device, texture_size.0, texture_size.1);
-    let scratch_guard = scratch_mutex.lock().unwrap();
-    let scratch = scratch_guard.as_ref().unwrap();
+    let s = ensure_scratch(scratch, device, texture_size.0, texture_size.1, "effect-scratch", true);
 
     encoder.copy_texture_to_texture(
         wgpu::TexelCopyTextureInfo {
@@ -1169,7 +1088,7 @@ pub fn apply_layer_mask(
             aspect: wgpu::TextureAspect::All,
         },
         wgpu::TexelCopyTextureInfo {
-            texture: &scratch.texture,
+            texture: &s.texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -1197,7 +1116,7 @@ pub fn apply_layer_mask(
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("layer-mask-bind-group"),
-        layout: &state.bind_group_layout,
+        layout: &pipeline.bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -1205,7 +1124,7 @@ pub fn apply_layer_mask(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(&scratch.view),
+                resource: wgpu::BindingResource::TextureView(&s.view),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -1213,7 +1132,7 @@ pub fn apply_layer_mask(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: wgpu::BindingResource::Sampler(&state.sampler),
+                resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
             },
         ],
     });
@@ -1231,7 +1150,7 @@ pub fn apply_layer_mask(
         })],
         ..Default::default()
     });
-    pass.set_pipeline(&state.pipeline);
+    pass.set_pipeline(&pipeline.pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.draw(0..3, 0..1);
 }
@@ -1255,126 +1174,6 @@ pub struct VibrancyEffect {
     pub tint: [f32; 4],
 }
 
-struct VibrancyPipelineState {
-    pipeline: wgpu::RenderPipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-}
-
-fn vibrancy_pipeline(device: &wgpu::Device) -> &'static VibrancyPipelineState {
-    static STATE: OnceLock<VibrancyPipelineState> = OnceLock::new();
-    STATE.get_or_init(|| create_vibrancy_pipeline(device))
-}
-
-fn create_vibrancy_pipeline(device: &wgpu::Device) -> VibrancyPipelineState {
-    let shader_source = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/shaders/vibrancy.wgsl"
-    ));
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("vibrancy-shader"),
-        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-    });
-
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("vibrancy-bind-group-layout"),
-        entries: &[
-            // binding 0: VibrancyParams uniform (64 bytes)
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: std::num::NonZeroU64::new(64),
-                },
-                count: None,
-            },
-            // binding 1: backdrop texture (already blurred)
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            // binding 2: foreground texture
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            // binding 3: sampler
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("vibrancy-pipeline-layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        immediate_size: 0,
-    });
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("vibrancy-pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: Default::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: Default::default(),
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
-
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("vibrancy-sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    });
-
-    VibrancyPipelineState {
-        pipeline,
-        bind_group_layout,
-        sampler,
-    }
-}
-
 /// Uniform buffer layout matching the WGSL `VibrancyParams` struct (64 bytes).
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
@@ -1389,7 +1188,7 @@ struct VibrancyUniforms {
     _padding: [f32; 2],
 }
 
-fn make_vibrancy_uniform(
+pub fn make_vibrancy_uniform_pub(
     effect: &VibrancyEffect,
     texture_size: (u32, u32),
     backdrop_uv_offset: [f32; 2],
@@ -1405,98 +1204,4 @@ fn make_vibrancy_uniform(
         backdrop_uv_scale,
         _padding: [0.0; 2],
     })
-}
-
-/// Apply vibrancy effect in-place on a layer texture.
-///
-/// Copies `target_texture` to scratch (for reading foreground), then renders
-/// the vibrancy blend (desaturated backdrop + foreground) back to `target_view`.
-/// `backdrop_view` is the full-viewport texture (already blurred); UV remapping
-/// is controlled by `backdrop_uv_offset`/`backdrop_uv_scale`.
-pub fn apply_vibrancy_in_place(
-    device: &wgpu::Device,
-    encoder: &mut wgpu::CommandEncoder,
-    target_texture: &wgpu::Texture,
-    target_view: &wgpu::TextureView,
-    backdrop_view: &wgpu::TextureView,
-    texture_size: (u32, u32),
-    effect: &VibrancyEffect,
-    backdrop_uv_offset: [f32; 2],
-    backdrop_uv_scale: [f32; 2],
-) {
-    let state = vibrancy_pipeline(device);
-
-    // Use dedicated vibrancy scratch texture (not shared with backdrop blur).
-    let scratch_mutex = ensure_vibrancy_scratch(device, texture_size.0, texture_size.1);
-    let scratch_guard = scratch_mutex.lock().unwrap();
-    let scratch = scratch_guard.as_ref().unwrap();
-
-    // Copy target → scratch (foreground backup)
-    encoder.copy_texture_to_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: target_texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyTextureInfo {
-            texture: &scratch.texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::Extent3d {
-            width: texture_size.0,
-            height: texture_size.1,
-            depth_or_array_layers: 1,
-        },
-    );
-
-    let data = make_vibrancy_uniform(effect, texture_size, backdrop_uv_offset, backdrop_uv_scale);
-    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("vibrancy-uniform"),
-        contents: &data,
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("vibrancy-bind-group"),
-        layout: &state.bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(backdrop_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&scratch.view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::Sampler(&state.sampler),
-            },
-        ],
-    });
-
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("vibrancy-in-place-pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: target_view,
-            resolve_target: None,
-            depth_slice: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        ..Default::default()
-    });
-
-    pass.set_pipeline(&state.pipeline);
-    pass.set_bind_group(0, &bind_group, &[]);
-    pass.draw(0..3, 0..1);
 }
