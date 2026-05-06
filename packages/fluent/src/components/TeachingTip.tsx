@@ -38,8 +38,7 @@ export const TeachingTip: Component<TeachingTipProps> = (props) => {
         stroke={theme().strokeDefault}
         strokeWidth={1}
         cornerRadius={theme().radiusLg}
-        width={TIP_WIDTH}
-        flexDirection="column"
+        w={TIP_WIDTH}
         padding={theme().spacingXl}
         gap={theme().spacingMd}
       >
@@ -58,8 +57,8 @@ export const TeachingTip: Component<TeachingTipProps> = (props) => {
           />
         </Show>
         <group
-          flexDirection="row"
-          justifyContent="flex-end"
+          row
+          align="top right"
           gap={theme().spacingMd}
         >
           <Show when={props.actionText}>

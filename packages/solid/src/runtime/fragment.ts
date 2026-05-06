@@ -16,7 +16,7 @@ import {
 } from "@qt-solid/core/native"
 
 import type { QtNode } from "@qt-solid/core/native"
-import type { QtMotionConfig } from "../qt-intrinsics.ts"
+import type { MotionConfig } from "../intrinsics.ts"
 import type { TransitionSpec } from "../app/motion/types.ts"
 import { setLayoutId as registrySetLayoutId, unsetLayoutId as registryUnsetLayoutId } from "../app/motion/layout-id.ts"
 
@@ -34,6 +34,8 @@ export class FragmentRendererNode {
   /** Gesture handlers installed by inline motion binding — dispatched alongside eventHandlers. */
   readonly motionGestureHandlers: Map<string, (...args: unknown[]) => void> = new Map()
   _motionCompleteCallback: (() => void) | null = null
+  _usesIntentLayout: boolean = false
+  _direction: 'horizontal' | 'vertical' = 'vertical'
 
   parent: FragmentRendererNode | null = null
   firstChild: FragmentRendererNode | null = null
@@ -150,7 +152,7 @@ export class FragmentRendererNode {
     }
   }
 
-  setMotionConfig(config: QtMotionConfig): void {
+  setMotionConfig(config: MotionConfig): void {
     if (config.layerEnabled) {
       writeFragmentProp(this.canvasNodeId, this.fragmentId, "layer", true)
     }

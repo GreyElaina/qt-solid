@@ -17,7 +17,7 @@ import {
   type QtPerPropertyTransition,
   type QtTransitionSpec,
 } from "@qt-solid/core/native";
-import type { QtMotionConfig } from "../../qt-intrinsics.ts";
+import type { MotionConfig } from "../../intrinsics.ts";
 
 import type {
   MotionComponentProps,
@@ -37,7 +37,7 @@ export type MotionNodeHandle = QtNode & {
     transition: QtPerPropertyTransition,
     delay?: number | null,
   ): void;
-  setMotionConfig(config: QtMotionConfig): void;
+  setMotionConfig(config: MotionConfig): void;
   onMotionComplete(callback: () => void): void;
   setLayoutId(layoutId: string, transition?: TransitionSpec): void;
   unsetLayoutId(layoutId: string): void;

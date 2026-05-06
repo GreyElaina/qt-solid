@@ -31,48 +31,45 @@ export function PreviewShell(props: PreviewShellProps): JSX.Element {
   }
 
   return (
-    <rect fill={SHELL_BG} flexGrow={1} flexDirection="column">
+    <rect fill={SHELL_BG} h="fill">
       {/* Title bar */}
       <rect
         fill={TITLE_BG}
-        height={36}
-        flexDirection="row"
-        alignItems="center"
+        h={36}
+        row
+        align="center left"
         paddingLeft={12}
         paddingRight={12}
         gap={8}
       >
-        <rect fill={ACCENT} width={8} height={8} cornerRadius={4} />
+        <rect fill={ACCENT} w={8} h={8} cornerRadius={4} />
         <text
           text={props.componentName}
           fontSize={12}
           fontWeight={500}
           color={TITLE_FG}
-          flexGrow={1}
+          w="fill"
         />
         <text text={sizeLabel()} fontSize={10} color={DIM_FG} />
         <text text="Preview" fontSize={10} color={DIM_FG} />
       </rect>
 
       {/* Separator */}
-      <rect fill={BORDER} height={1} />
+      <rect fill={BORDER} h={1} />
 
       {/* Canvas area */}
       <rect
         fill={CANVAS_BG}
-        flexGrow={1}
-        alignItems="center"
-        justifyContent="center"
+        h="fill"
+        align="center"
         padding={32}
       >
         <rect
-          flexDirection="column"
-          alignItems="center"
+          align="top center"
           gap={12}
         >
           {/* Component stage */}
           <rect
-            flexDirection="column"
             cornerRadius={6}
             stroke={BORDER}
             strokeWidth={1}

@@ -1,6 +1,6 @@
 import { createSignal, type Component, type JSX } from "solid-js"
 
-import { createVariants, Rect } from "@qt-solid/solid"
+import { type SizingValue, createVariants, type RectProps } from "@qt-solid/solid"
 import { useTheme } from "../theme.ts"
 
 export interface TransparentButtonProps {
@@ -9,10 +9,12 @@ export interface TransparentButtonProps {
   onClick?: () => void
   width?: number
   height?: number
-  flexGrow?: number
+  w?: SizingValue
 }
 
-const PressableRect = createVariants(Rect, {
+const RectBase: Component<RectProps> = (props) => <rect {...props} />
+
+const PressableRect = createVariants(RectBase, {
   base: { scale: 1, opacity: 1 },
   variants: {
     interaction: {
@@ -48,13 +50,10 @@ export const TransparentButton: Component<TransparentButtonProps> = (props) => {
       interaction={pressed() ? "pressed" : "idle"}
       fill={bg()}
       cornerRadius={theme().radiusMd}
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
+      align="center"
       padding={props.height != null ? 0 : 5}
-      width={props.width}
-      height={props.height ?? 32}
-      flexGrow={props.flexGrow}
+      w={props.w ?? props.width}
+      h={props.height ?? 32}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => { setHovered(false); setPressed(false) }}

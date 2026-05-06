@@ -9,6 +9,9 @@ use std::collections::{HashMap, HashSet};
 
 use taffy::prelude::*;
 
+use crate::canvas::fragment::layout::{
+    Container, Direction, EdgeInsets, Overflow, Placement,
+};
 use crate::canvas::fragment::node::{
     FragmentData, FragmentNode, FragmentProps, LayoutResult, SemanticsData,
 };
@@ -213,6 +216,13 @@ impl FragmentTree {
                 perspective_pose: (0.0, 0.0, 0.0),
                 mask_child: None,
                 is_mask_source: false,
+                placement: Placement::default(),
+                container: None,
+                padding: EdgeInsets::default(),
+                overflow_x: Overflow::default(),
+                overflow_y: Overflow::default(),
+                layout_visible: true,
+                layout_dirty: false,
             },
         );
         // Node not yet attached to a parent — just mark global dirty.
@@ -560,6 +570,7 @@ impl FragmentTree {
             height: AvailableSpace::Definite(available_height as f32),
         };
 
+        self.sync_layout_intents();
         self.sync_intrinsic_leaf_measures();
 
         let _ = self.taffy.compute_layout(root, available);
@@ -687,6 +698,57 @@ impl FragmentTree {
         let mut style = current;
         f(&mut style);
         let _ = self.taffy.set_style(taffy_node, style);
+    }
+
+    // -----------------------------------------------------------------------
+    // Layout intent → taffy style derivation
+    // -----------------------------------------------------------------------
+
+    /// Resolve the flex direction of the parent container for a given node.
+    fn parent_direction(&self, id: FragmentId) -> Direction {
+        self.nodes
+            .get(&id)
+            .and_then(|n| n.parent)
+            .and_then(|pid| self.nodes.get(&pid))
+            .and_then(|parent| parent.container.as_ref())
+            .map(|c| match c {
+                Container::Flex { direction, .. } => *direction,
+                Container::Grid { .. } => Direction::Horizontal,
+            })
+            .unwrap_or(Direction::Vertical)
+    }
+
+    /// Derive taffy styles from layout intents for all dirty nodes.
+    fn sync_layout_intents(&mut self) {
+        let dirty_ids: Vec<FragmentId> = self
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.layout_dirty)
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in dirty_ids {
+            let parent_dir = self.parent_direction(id);
+            let Some(node) = self.nodes.get(&id) else {
+                continue;
+            };
+            let Some(taffy_node) = node.taffy_node else {
+                continue;
+            };
+
+            let style = crate::canvas::fragment::layout::derive_taffy_style(
+                &node.placement,
+                node.container.as_ref(),
+                &node.padding,
+                node.overflow_x,
+                node.overflow_y,
+                node.layout_visible,
+                parent_dir,
+            );
+            let _ = self.taffy.set_style(taffy_node, style);
+
+            self.nodes.get_mut(&id).unwrap().layout_dirty = false;
+        }
     }
 
     // -----------------------------------------------------------------------

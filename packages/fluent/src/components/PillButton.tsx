@@ -1,6 +1,6 @@
 import { createSignal, type Component, type JSX } from "solid-js"
 
-import { createVariants, Rect } from "@qt-solid/solid"
+import { createVariants, type RectProps } from "@qt-solid/solid"
 import { useTheme } from "../theme.ts"
 
 export interface PillButtonProps {
@@ -12,7 +12,9 @@ export interface PillButtonProps {
   height?: number
 }
 
-const PressableRect = createVariants(Rect, {
+const RectBase: Component<RectProps> = (props) => <rect {...props} />
+
+const PressableRect = createVariants(RectBase, {
   base: { scale: 1, opacity: 1 },
   variants: {
     interaction: {
@@ -58,12 +60,10 @@ export const PillButton: Component<PillButtonProps> = (props) => {
       stroke={borderColor()}
       strokeWidth={focused() ? theme().focusStrokeWidth : 1}
       cornerRadius={theme().radiusCircular}
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
+      align="center"
       padding={props.height != null ? 0 : 5}
-      width={props.width}
-      height={props.height ?? 32}
+      w={props.width}
+      h={props.height ?? 32}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => { setHovered(false); setPressed(false) }}

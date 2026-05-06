@@ -1,6 +1,5 @@
 import type { Accessor, JSX } from "solid-js"
 
-import { createElement as createQtElement, spread as spreadQtProps } from "../runtime/renderer.ts"
 import { QT_SOLID_SOURCE_META_PROP } from "../devtools/source-metadata.ts"
 
 import { readQtSourceMetadata } from "./source-meta.ts"
@@ -9,12 +8,6 @@ import type {
   WidgetProps,
 } from "./types.ts"
 import type { WindowProps } from "./windowing/types.ts"
-
-export function createRuntimeElement(type: string, props: Record<string, unknown>): JSX.Element {
-  const node = createQtElement(type)
-  spreadQtProps(node, props)
-  return node
-}
 
 export function toAccessor<T>(value: T | Accessor<T>): Accessor<T> {
   return typeof value === "function" ? (value as Accessor<T>) : () => value
@@ -34,16 +27,15 @@ export function widgetPropsFrom(read: Accessor<WidgetProps>): Record<string, unk
     height: getter(() => read().height),
     minWidth: getter(() => read().minWidth),
     minHeight: getter(() => read().minHeight),
-    maxWidth: getter(() => (read() as any).maxWidth),
-    maxHeight: getter(() => (read() as any).maxHeight),
-    aspectRatio: getter(() => (read() as any).aspectRatio),
+    maxWidth: getter(() => read().maxWidth),
+    maxHeight: getter(() => read().maxHeight),
     grow: getter(() => read().flexGrow),
     shrink: getter(() => read().flexShrink),
-    basis: getter(() => (read() as any).flexBasis),
-    alignSelf: getter(() => (read() as any).alignSelf),
-    margin: getter(() => (read() as any).margin),
+    basis: getter(() => read().flexBasis),
+    alignSelf: getter(() => read().alignSelf),
+    margin: getter(() => read().margin),
     enabled: getter(() => read().enabled),
-    hidden: getter(() => (read() as any).hidden),
+    hidden: getter(() => read().hidden),
     onHoverEnter: getter(() => read().onHoverEnter),
     onHoverLeave: getter(() => read().onHoverLeave),
     [QT_SOLID_SOURCE_META_PROP]: getter(() => readQtSourceMetadata(read())),

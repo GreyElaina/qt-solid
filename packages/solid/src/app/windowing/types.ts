@@ -1,19 +1,15 @@
 import type { Accessor, JSX } from "solid-js";
 import type { QtNode } from "@qt-solid/core/native";
-import type {
-  ViewIntrinsicProps,
-  WindowIntrinsicProps,
-} from "../../qt-intrinsics.ts";
 import type { ViewProps } from "../types.ts";
 
 export interface WindowProps extends ViewProps {
-  title?: WindowIntrinsicProps["title"];
-  visible?: WindowIntrinsicProps["visible"];
-  frameless?: WindowIntrinsicProps["frameless"];
-  transparentBackground?: WindowIntrinsicProps["transparentBackground"];
-  alwaysOnTop?: WindowIntrinsicProps["alwaysOnTop"];
-  gpu?: WindowIntrinsicProps["gpu"];
-  onCloseRequested?: WindowIntrinsicProps["onCloseRequested"];
+  title?: string;
+  visible?: boolean;
+  frameless?: boolean;
+  transparentBackground?: boolean;
+  alwaysOnTop?: boolean;
+  gpu?: boolean;
+  onCloseRequested?: () => void;
 }
 
 export interface PopupDismissEvent {

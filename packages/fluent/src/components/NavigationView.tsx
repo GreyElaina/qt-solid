@@ -1,6 +1,7 @@
 import { createSignal, For, Show, type Component, type JSX } from "solid-js"
 
 import { ScrollView } from "@qt-solid/solid"
+import type { SizingValue } from "@qt-solid/solid"
 import { useTheme } from "../theme.ts"
 
 export interface NavItem {
@@ -15,8 +16,8 @@ export interface NavigationViewProps {
   onSelect?: (key: string) => void
   width?: number
   height?: number
-  flexGrow?: number
-  flexShrink?: number
+  w?: SizingValue
+  h?: SizingValue
   header?: JSX.Element
   footer?: JSX.Element
 }
@@ -26,9 +27,9 @@ export const NavigationView: Component<NavigationViewProps> = (props) => {
   const [hoveredKey, setHoveredKey] = createSignal<string | null>(null)
   const [pressedKey, setPressedKey] = createSignal<string | null>(null)
 
-  const w = () => props.width ?? 280
+  const width = () => props.width ?? 280
   const pad = 4
-  const itemW = () => w() - pad * 2
+  const itemW = () => width() - pad * 2
 
   const isSelected = (key: string) => key === props.selectedKey
 
@@ -53,27 +54,24 @@ export const NavigationView: Component<NavigationViewProps> = (props) => {
 
   return (
     <group
-      flexDirection="column"
-      width={w()}
-      height={props.height}
-      flexGrow={props.flexGrow ?? 0}
-      flexShrink={props.flexShrink ?? 0}
+      w={props.w ?? width()}
+      h={props.h ?? props.height}
       onPointerLeave={() => { setHoveredKey(null); setPressedKey(null) }}
     >
       <Show when={props.header}>{props.header}</Show>
 
-      <ScrollView direction="vertical" width={w()} flexGrow={1}>
-        <group flexDirection="column" gap={2} padding={pad}>
+      <ScrollView direction="vertical" w={width()} h="fill">
+        <group gap={2} padding={pad}>
           <For each={props.items}>
             {(item) => (
               <rect
                 fill={itemBg(item.key)}
                 cornerRadius={theme().radiusMd}
-                flexDirection="row"
-                alignItems="center"
+                row
+                align="center left"
                 gap={theme().spacingMd}
-                height={40}
-                width={itemW()}
+                h={40}
+                w={itemW()}
                 padding={theme().spacingMd}
                 onPointerEnter={() => setHoveredKey(item.key)}
                 onPointerLeave={() => {
@@ -89,18 +87,18 @@ export const NavigationView: Component<NavigationViewProps> = (props) => {
               >
                 <Show when={isSelected(item.key)}>
                   <rect
-                    x={0}
-                    y={12}
-                    width={3}
-                    height={16}
+                    transformX={0}
+                    transformY={12}
+                    w={3}
+                    h={16}
                     fill={theme().foregroundOnAccent}
                     cornerRadius={theme().radiusCircular}
                   />
                 </Show>
 
-                <group width={24} height={16} alignItems="center" justifyContent="center">
+                <group w={24} h={16} align="center">
                   <Show when={item.icon}>
-                    <path d={item.icon!} stroke={itemFg(item.key)} strokeWidth={1.2} width={16} height={16} />
+                    <path d={item.icon!} stroke={itemFg(item.key)} strokeWidth={1.2} w={16} h={16} />
                   </Show>
                 </group>
 

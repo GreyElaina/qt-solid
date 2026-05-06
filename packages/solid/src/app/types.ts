@@ -1,54 +1,44 @@
 import type { QtApp, QtHostEvent } from "@qt-solid/core";
 import type { QtWidgetCapture } from "@qt-solid/core/native";
-import type {
-  ViewIntrinsicProps,
-} from "../qt-intrinsics.ts";
 import type { Accessor, JSX } from "solid-js";
 
-export type WidgetGeometry = Pick<
-  ViewIntrinsicProps,
-  "width" | "height" | "minWidth" | "minHeight" | "maxWidth" | "maxHeight" | "aspectRatio"
->;
-export type WidgetFlex = Pick<ViewIntrinsicProps, "grow" | "shrink" | "basis" | "alignSelf" | "margin">;
-export type WidgetState = Pick<ViewIntrinsicProps, "enabled" | "hidden">;
-export type ViewLayout = Pick<
-  ViewIntrinsicProps,
-  "direction" | "justifyContent" | "alignItems" | "gap" | "padding" | "wrap"
->;
+// ---------------------------------------------------------------------------
+// Widget-level props — used by native widget nodes (Window, Canvas, Popup)
+// ---------------------------------------------------------------------------
 
 export interface WidgetProps {
   ref?: (node: { readonly id: number }) => void;
-  width?: WidgetGeometry["width"];
-  height?: WidgetGeometry["height"];
-  minWidth?: WidgetGeometry["minWidth"];
-  minHeight?: WidgetGeometry["minHeight"];
-  flexGrow?: WidgetFlex["grow"];
-  flexShrink?: WidgetFlex["shrink"];
-  enabled?: WidgetState["enabled"];
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+  flexGrow?: number;
+  flexShrink?: number;
+  flexBasis?: number;
+  alignSelf?: string;
+  margin?: number;
+  enabled?: boolean;
+  hidden?: boolean;
   onHoverEnter?: () => void;
   onHoverLeave?: () => void;
 }
 
-export interface FlexChildProps {
-  maxWidth?: WidgetGeometry["maxWidth"];
-  maxHeight?: WidgetGeometry["maxHeight"];
-  aspectRatio?: WidgetGeometry["aspectRatio"];
-  flexBasis?: WidgetFlex["basis"];
-  alignSelf?: WidgetFlex["alignSelf"];
-  margin?: WidgetFlex["margin"];
-  hidden?: WidgetState["hidden"];
-}
-
-export interface ViewProps extends WidgetProps, FlexChildProps {
-  direction?: ViewLayout["direction"];
-  justifyContent?: ViewLayout["justifyContent"];
-  alignItems?: ViewLayout["alignItems"];
-  gap?: ViewLayout["gap"];
-  padding?: ViewLayout["padding"];
-  wrap?: ViewLayout["wrap"];
-  backgroundColor?: ViewIntrinsicProps["backgroundColor"];
+export interface ViewProps extends WidgetProps {
+  direction?: "column" | "row";
+  justifyContent?: string;
+  alignItems?: string;
+  gap?: number;
+  padding?: number;
+  wrap?: "nowrap" | "wrap" | "wrap-reverse";
+  backgroundColor?: string;
   children?: JSX.Element;
 }
+
+// ---------------------------------------------------------------------------
+// App & window types
+// ---------------------------------------------------------------------------
 
 export interface RenderQtOptions {
   attachNativeEvents?: (handleEvent: (event: QtHostEvent) => void) => void;

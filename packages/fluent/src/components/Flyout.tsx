@@ -33,8 +33,8 @@ export const Flyout: Component<FlyoutProps> = (props) => {
         stroke={theme().strokeDefault}
         strokeWidth={1}
         cornerRadius={theme().radiusLg}
-        width={props.width}
-        height={props.height}
+        w={props.width}
+        h={props.height}
         padding={theme().spacingXl}
       >
         {props.children}

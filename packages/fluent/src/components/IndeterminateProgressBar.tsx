@@ -35,10 +35,10 @@ export const IndeterminateProgressBar: Component<IndeterminateProgressBarProps> 
   }
 
   return (
-    <rect width={w()} height={h()} clip={true} fill="#00000000">
-      <rect position="absolute" width={w()} height={h()} fill={theme().strokeDefault} opacity={0.3} cornerRadius={rr()} />
-      <rect position="absolute" x={shortPos() * w()} width={0.4 * w()} height={h()} fill={barColor()} cornerRadius={rr()} />
-      <rect position="absolute" x={longPos() * w()} width={0.6 * w()} height={h()} fill={barColor()} cornerRadius={rr()} />
+    <rect w={w()} h={h()} clip={true} fill="#00000000">
+      <rect absolute w={w()} h={h()} fill={theme().strokeDefault} opacity={0.3} cornerRadius={rr()} />
+      <rect absolute transformX={shortPos() * w()} w={0.4 * w()} h={h()} fill={barColor()} cornerRadius={rr()} />
+      <rect absolute transformX={longPos() * w()} w={0.6 * w()} h={h()} fill={barColor()} cornerRadius={rr()} />
     </rect>
   )
 }

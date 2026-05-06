@@ -69,27 +69,27 @@ export const ScrollBar: Component<ScrollBarProps> = (props) => {
   return (
     <Show when={shouldShow()}>
       <group
-        width={vertical() ? TRACK_THICKNESS : trackLength()}
-        height={vertical() ? trackLength() : TRACK_THICKNESS}
+        w={vertical() ? TRACK_THICKNESS : trackLength()}
+        h={vertical() ? trackLength() : TRACK_THICKNESS}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={() => { setHovered(false); setDragging(false) }}
       >
         {/* Track */}
         <rect
-          position="absolute"
-          width={vertical() ? TRACK_THICKNESS : trackLength()}
-          height={vertical() ? trackLength() : TRACK_THICKNESS}
+          absolute
+          w={vertical() ? TRACK_THICKNESS : trackLength()}
+          h={vertical() ? trackLength() : TRACK_THICKNESS}
           fill={theme().controlDefault}
           cornerRadius={theme().radiusSm}
         />
         {/* Thumb */}
         <rect
-          position="absolute"
-          x={vertical() ? 0 : thumbOffset()}
-          y={vertical() ? thumbOffset() : 0}
-          width={vertical() ? TRACK_THICKNESS : thumbSize()}
-          height={vertical() ? thumbSize() : TRACK_THICKNESS}
+          absolute
+          transformX={vertical() ? 0 : thumbOffset()}
+          transformY={vertical() ? thumbOffset() : 0}
+          w={vertical() ? TRACK_THICKNESS : thumbSize()}
+          h={vertical() ? thumbSize() : TRACK_THICKNESS}
           fill={thumbFill()}
           cornerRadius={theme().radiusSm}
           onPointerEnter={() => setHovered(true)}

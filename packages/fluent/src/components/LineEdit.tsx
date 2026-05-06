@@ -60,8 +60,8 @@ export const LineEdit: Component<LineEditProps> = (props) => {
 
   return (
     <rect
-      width={w()}
-      height={h()}
+      w={w()}
+      h={h()}
       fill={bg()}
       stroke={borderColor()}
       strokeWidth={1}
@@ -74,9 +74,9 @@ export const LineEdit: Component<LineEditProps> = (props) => {
       {/* Placeholder text */}
       <Show when={val() === "" && !focused()}>
         <text
-          position="absolute"
-          x={theme().spacingMd}
-          y={(h() - theme().fontSizeBody) / 2}
+          absolute
+          transformX={theme().spacingMd}
+          transformY={(h() - theme().fontSizeBody) / 2}
           text={props.placeholder ?? ""}
           fontSize={theme().fontSizeBody}
           color={theme().foregroundDisabled}
@@ -84,11 +84,11 @@ export const LineEdit: Component<LineEditProps> = (props) => {
       </Show>
       {/* Text input */}
       <textinput
-        position="absolute"
-        x={theme().spacingMd}
-        y={(h() - theme().fontSizeBody) / 2}
-        width={w() - theme().spacingMd * 2}
-        height={theme().fontSizeBody + 4}
+        absolute
+        transformX={theme().spacingMd}
+        transformY={(h() - theme().fontSizeBody) / 2}
+        w={w() - theme().spacingMd * 2}
+        h={theme().fontSizeBody + 4}
         text={val()}
         fontSize={theme().fontSizeBody}
         color={textColor()}
@@ -97,11 +97,11 @@ export const LineEdit: Component<LineEditProps> = (props) => {
       {/* Bottom accent bar */}
       <Show when={bottomAccent() !== undefined}>
         <rect
-          position="absolute"
-          x={0}
-          y={h() - 2}
-          width={w()}
-          height={2}
+          absolute
+          transformX={0}
+          transformY={h() - 2}
+          w={w()}
+          h={2}
           fill={bottomAccent()!}
           cornerRadius={1}
         />

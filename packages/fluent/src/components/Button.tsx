@@ -9,7 +9,6 @@ export interface ButtonProps {
   onClick?: () => void
   width?: number
   height?: number
-  flexGrow?: number
 }
 
 export const Button: Component<ButtonProps> = (props) => {
@@ -45,13 +44,10 @@ export const Button: Component<ButtonProps> = (props) => {
       stroke={borderColor()}
       strokeWidth={focused() ? theme().focusStrokeWidth : 1}
       cornerRadius={theme().radiusMd}
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
+      align="center"
       padding={props.height != null ? 0 : 5}
-      width={props.width}
-      height={props.height ?? 32}
-      flexGrow={props.flexGrow}
+      w={props.width}
+      h={props.height ?? 32}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => { setHovered(false); setPressed(false) }}

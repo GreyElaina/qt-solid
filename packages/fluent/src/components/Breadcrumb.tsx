@@ -19,7 +19,7 @@ export const Breadcrumb: Component<BreadcrumbProps> = (props) => {
   const isLast = (index: number) => index === props.items.length - 1
 
   return (
-    <group flexDirection="row" alignItems="center" gap={theme().spacingSm}>
+    <group row align="center left" gap={theme().spacingSm}>
       <For each={props.items}>
         {(item, index) => (
           <>

@@ -11,8 +11,8 @@ export const HorizontalSeparator: Component<SeparatorProps> = (props) => {
 
   return (
     <rect
-      width={props.length}
-      height={1}
+      w={props.length}
+      h={1}
       fill={theme().strokeDefault}
     />
   )
@@ -23,8 +23,8 @@ export const VerticalSeparator: Component<SeparatorProps> = (props) => {
 
   return (
     <rect
-      width={1}
-      height={props.length}
+      w={1}
+      h={props.length}
       fill={theme().strokeDefault}
     />
   )

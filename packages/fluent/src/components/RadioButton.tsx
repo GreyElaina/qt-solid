@@ -55,8 +55,8 @@ export const RadioButton: Component<RadioButtonProps> = (props) => {
 
   return (
     <group
-      flexDirection="row"
-      alignItems="center"
+      row
+      align="center left"
       gap={theme().spacingMd}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
@@ -68,9 +68,9 @@ export const RadioButton: Component<RadioButtonProps> = (props) => {
       }}
       onClick={() => {}}
     >
-      <group width={SIZE} height={SIZE}>
+      <group w={SIZE} h={SIZE}>
         <circle
-          position="absolute"
+          absolute
           cx={OUTER_R}
           cy={OUTER_R}
           r={OUTER_R}
@@ -80,7 +80,7 @@ export const RadioButton: Component<RadioButtonProps> = (props) => {
         />
         {checked() && (
           <circle
-            position="absolute"
+            absolute
             cx={OUTER_R}
             cy={OUTER_R}
             r={innerR()}

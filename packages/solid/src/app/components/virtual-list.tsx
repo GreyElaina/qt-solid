@@ -14,7 +14,7 @@ import {
   canvasFragmentRequestRepaint,
 } from "@qt-solid/core/native"
 
-import type { WheelEventPayload } from "../../qt-intrinsics.ts"
+import type { SizingValue, WheelEventPayload } from "../../intrinsics.ts"
 import type { FragmentRendererNode } from "../../runtime/fragment.ts"
 
 export interface VirtualListProps {
@@ -27,11 +27,9 @@ export interface VirtualListProps {
   /** Number of extra items to render above/below viewport. Default 2. */
   overscan?: number
   /** Container width (explicit or flex-driven). */
-  width?: number
+  w?: SizingValue
   /** Container height (explicit or flex-driven). */
-  height?: number
-  flexGrow?: number
-  flexShrink?: number
+  h?: SizingValue
 }
 
 export const VirtualList: Component<VirtualListProps> = (props) => {
@@ -96,10 +94,8 @@ export const VirtualList: Component<VirtualListProps> = (props) => {
   return (
     <rect
       ref={(node: FragmentRendererNode) => { containerRef = node }}
-      width={props.width}
-      height={props.height}
-      flexGrow={props.flexGrow}
-      flexShrink={props.flexShrink}
+      w={props.w}
+      h={props.h}
       overflowY="scroll"
       overflowX="clip"
       clip={true}
@@ -107,15 +103,15 @@ export const VirtualList: Component<VirtualListProps> = (props) => {
       onLayout={onLayout}
     >
       {/* Spacer — establishes total scrollable content height */}
-      <rect height={totalHeight()} width={0} position="absolute" />
+      <rect h={totalHeight()} w={0} absolute />
       {/* Visible items */}
       <For each={visibleIndices()}>
         {(index) => (
           <rect
-            position="absolute"
-            y={index * props.itemHeight}
-            height={props.itemHeight}
-            width="100%"
+            absolute
+            transformY={index * props.itemHeight}
+            h={props.itemHeight}
+            w="fill"
           >
             {props.renderItem(index)}
           </rect>

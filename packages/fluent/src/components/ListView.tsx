@@ -36,16 +36,16 @@ export function ListView<T>(props: ListViewProps<T>): JSX.Element {
   }
 
   return (
-    <ScrollView width={props.width} height={props.height} direction="vertical">
+    <ScrollView w={props.width} h={props.height} direction="vertical">
       <For each={props.items}>
         {(item, i) => (
           <rect
             fill={rowBg(i())}
             cornerRadius={theme().radiusMd}
-            width={props.width}
-            height={itemH()}
-            flexDirection="row"
-            alignItems="center"
+            w={props.width}
+            h={itemH()}
+            row
+            align="center left"
             padding={theme().spacingMd}
             onPointerEnter={() => setHoveredIndex(i())}
             onPointerLeave={() => { if (hoveredIndex() === i()) setHoveredIndex(-1) }}

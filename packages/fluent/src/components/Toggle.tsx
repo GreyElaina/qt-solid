@@ -53,8 +53,8 @@ export const Toggle: Component<ToggleProps> = (props) => {
 
   return (
     <group
-      width={TRACK_W}
-      height={TRACK_H}
+      w={TRACK_W}
+      h={TRACK_H}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => { setHovered(false); setPressed(false) }}
@@ -66,16 +66,16 @@ export const Toggle: Component<ToggleProps> = (props) => {
       onClick={() => {}}
     >
       <rect
-        position="absolute"
-        width={TRACK_W}
-        height={TRACK_H}
+        absolute
+        w={TRACK_W}
+        h={TRACK_H}
         fill={trackBg()}
         stroke={trackBorder()}
         strokeWidth={1}
         cornerRadius={TRACK_H / 2}
       />
       <circle
-        position="absolute"
+        absolute
         cx={thumbX()}
         cy={TRACK_H / 2}
         r={pressed() ? THUMB_R + 1 : THUMB_R}

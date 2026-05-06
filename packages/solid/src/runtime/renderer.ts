@@ -400,6 +400,248 @@ function ensureInlineMotion(node: FragmentRendererNode): InlineMotionState {
 }
 
 // ---------------------------------------------------------------------------
+// Layout prop system
+// ---------------------------------------------------------------------------
+
+const LAYOUT_PROPS = new Set([
+  // Direction
+  'row', 'column',
+  // Sizing
+  'w', 'h',
+  // Alignment & distribution
+  'align', 'spacing',
+  // Gap, padding, margin
+  'gap', 'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
+  // Constraints
+  'minWidth', 'maxWidth', 'minHeight', 'maxHeight',
+  // Absolute
+  'absolute', 'top', 'right', 'bottom', 'left',
+  // Layout visibility
+  'layoutVisible',
+  // Overflow & stacking
+  'overflow', 'overflowX', 'overflowY', 'zIndex', 'wrap',
+  // Grid child
+  'gridRow', 'gridColumn', 'rowSpan', 'colSpan',
+  // Grid container (on <grid> element)
+  'columns', 'rows', 'columnGap', 'rowGap',
+])
+
+function isLayoutProp(key: string): boolean {
+  return LAYOUT_PROPS.has(key)
+}
+
+// Parse align string: "center" → [v, h] both center; "top right" → [top, right]
+function parseAlign(value: string, isRow: boolean): { primary: string; cross: string } {
+  const parts = value.trim().split(/\s+/)
+  let vertical: string
+  let horizontal: string
+  if (parts.length === 1) {
+    vertical = parts[0]!
+    horizontal = parts[0]!
+  } else {
+    vertical = parts[0]!
+    horizontal = parts[1]!
+  }
+
+  // Map screen-space to primary/cross based on direction
+  // row: primary = horizontal axis, cross = vertical axis
+  // column: primary = vertical axis, cross = horizontal axis
+  const vMap: Record<string, string> = { top: 'start', center: 'center', bottom: 'end', stretch: 'stretch' }
+  const hMap: Record<string, string> = { left: 'start', center: 'center', right: 'end', stretch: 'stretch' }
+
+  const mappedV = vMap[vertical] ?? 'start'
+  const mappedH = hMap[horizontal] ?? 'start'
+
+  if (isRow) {
+    return { primary: mappedH, cross: mappedV }
+  }
+  return { primary: mappedV, cross: mappedH }
+}
+
+function writeLayoutProp(node: FragmentRendererNode, key: string, value: unknown): void {
+  if (value == null) {
+    canvasFragmentSetProp(node.canvasNodeId, node.fragmentId, key, { type: "unset" } as never)
+    return
+  }
+
+  switch (key) {
+    // ─── Direction ───
+    case 'row':
+      if (value === true) {
+        node._direction = 'horizontal'
+        writeFragmentProp(node.canvasNodeId, node.fragmentId, 'direction', 'horizontal')
+      }
+      break
+    case 'column':
+      if (value === true) {
+        node._direction = 'vertical'
+        writeFragmentProp(node.canvasNodeId, node.fragmentId, 'direction', 'vertical')
+      }
+      break
+
+    // ─── Sizing ───
+    case 'w':
+    case 'h':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, key, value)
+      break
+
+    // ─── Alignment ───
+    case 'align': {
+      const isRow = node._direction === 'horizontal'
+      const { primary, cross } = parseAlign(value as string, isRow)
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'primaryAlign', primary)
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'crossAlign', cross)
+      break
+    }
+
+    // ─── Spacing distribution ───
+    case 'spacing': {
+      const spacingMap: Record<string, string> = {
+        between: 'space-between',
+        around: 'space-around',
+        evenly: 'space-evenly',
+      }
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'primaryAlign', spacingMap[value as string] ?? value)
+      break
+    }
+
+    // ─── Gap ───
+    case 'gap':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'gap', value)
+      break
+
+    // ─── Padding ───
+    case 'padding':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutPadding', value)
+      break
+    case 'paddingTop':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutPaddingTop', value)
+      break
+    case 'paddingRight':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutPaddingRight', value)
+      break
+    case 'paddingBottom':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutPaddingBottom', value)
+      break
+    case 'paddingLeft':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutPaddingLeft', value)
+      break
+
+    // ─── Margin ───
+    case 'margin':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMargin', value)
+      break
+    case 'marginTop':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMarginTop', value)
+      break
+    case 'marginRight':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMarginRight', value)
+      break
+    case 'marginBottom':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMarginBottom', value)
+      break
+    case 'marginLeft':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMarginLeft', value)
+      break
+
+    // ─── Constraints ───
+    case 'minWidth':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMinWidth', value)
+      break
+    case 'maxWidth':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMaxWidth', value)
+      break
+    case 'minHeight':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMinHeight', value)
+      break
+    case 'maxHeight':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutMaxHeight', value)
+      break
+
+    // ─── Absolute positioning ───
+    case 'absolute':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutPosition', value ? 'absolute' : 'relative')
+      break
+    case 'top':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutTop', value)
+      break
+    case 'right':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutRight', value)
+      break
+    case 'bottom':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutBottom', value)
+      break
+    case 'left':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutLeft', value)
+      break
+
+    // ─── Layout visibility ───
+    case 'layoutVisible':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutVisible', value)
+      break
+
+    // ─── Overflow ───
+    case 'overflow':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutOverflow', value)
+      break
+    case 'overflowX':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutOverflowX', value)
+      break
+    case 'overflowY':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutOverflowY', value)
+      break
+
+    // ─── zIndex ───
+    case 'zIndex':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'zIndex', value)
+      break
+
+    // ─── Wrap ───
+    case 'wrap':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'wrap', value)
+      break
+
+    // ─── Grid child ───
+    case 'gridRow':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridRow', value)
+      break
+    case 'gridColumn':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridColumn', value)
+      break
+    case 'rowSpan':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridRowSpan', value)
+      break
+    case 'colSpan':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridColSpan', value)
+      break
+
+    // ─── Grid container ───
+    case 'columns':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridColumns', {
+        type: "gridtracks",
+        tracks: (value as Array<number | string>).map((t) => typeof t === "number" ? String(t) : t),
+      })
+      break
+    case 'rows':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridRows', {
+        type: "gridtracks",
+        tracks: (value as Array<number | string>).map((t) => typeof t === "number" ? String(t) : t),
+      })
+      break
+    case 'columnGap':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridColumnGap', value)
+      break
+    case 'rowGap':
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, 'layoutGridRowGap', value)
+      break
+
+    default:
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, key, value)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Prop patching — fragment nodes
 // ---------------------------------------------------------------------------
 
@@ -452,6 +694,37 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
         typeof next === "function",
       )
     }
+    return
+  }
+
+  // Figma layout intent interception
+  if (LAYOUT_PROPS.has(key)) {
+    node._usesIntentLayout = true
+  }
+
+  if (node._usesIntentLayout && isLayoutProp(key)) {
+    writeLayoutProp(node, key, next)
+    canvasFragmentRequestRepaint(node.canvasNodeId)
+    return
+  }
+
+  // Transform prop rename: transformX/transformY → native x/y
+  if (key === "transformX") {
+    if (next == null) {
+      canvasFragmentSetProp(node.canvasNodeId, node.fragmentId, "x", { type: "unset" } as never)
+    } else {
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, "x", next)
+    }
+    canvasFragmentRequestRepaint(node.canvasNodeId)
+    return
+  }
+  if (key === "transformY") {
+    if (next == null) {
+      canvasFragmentSetProp(node.canvasNodeId, node.fragmentId, "y", { type: "unset" } as never)
+    } else {
+      writeFragmentProp(node.canvasNodeId, node.fragmentId, "y", next)
+    }
+    canvasFragmentRequestRepaint(node.canvasNodeId)
     return
   }
 

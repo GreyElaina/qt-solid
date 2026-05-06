@@ -36,9 +36,9 @@ const ComboBoxItem: Component<{
 
   return (
     <rect
-      height={ITEM_HEIGHT}
-      flexDirection="row"
-      alignItems="center"
+      h={ITEM_HEIGHT}
+      row
+      align="center left"
       padding={theme().spacingMd}
       fill={bg()}
       cornerRadius={theme().radiusSm}
@@ -83,12 +83,12 @@ export const ComboBox: Component<ComboBoxProps> = (props) => {
   }
 
   return (
-    <group width={w()}>
+    <group w={w()}>
       <rect
-        width={w()}
-        height={COMBO_HEIGHT}
-        flexDirection="row"
-        alignItems="center"
+        w={w()}
+        h={COMBO_HEIGHT}
+        row
+        align="center left"
         fill={bg()}
         stroke={theme().strokeDefault}
         strokeWidth={1}
@@ -99,17 +99,17 @@ export const ComboBox: Component<ComboBoxProps> = (props) => {
         onClick={() => {}}
       >
         <text
-          position="absolute"
-          x={theme().spacingMd}
-          y={(COMBO_HEIGHT - theme().fontSizeBody) / 2}
+          absolute
+          transformX={theme().spacingMd}
+          transformY={(COMBO_HEIGHT - theme().fontSizeBody) / 2}
           text={selectedText() || props.placeholder || ""}
           fontSize={theme().fontSizeBody}
           color={fg()}
         />
         <path
-          position="absolute"
-          x={w() - CHEVRON_SIZE - theme().spacingMd}
-          y={(COMBO_HEIGHT - CHEVRON_SIZE) / 2}
+          absolute
+          transformX={w() - CHEVRON_SIZE - theme().spacingMd}
+          transformY={(COMBO_HEIGHT - CHEVRON_SIZE) / 2}
           d="M 4 6 L 8 10 L 12 6"
           stroke={props.disabled ? theme().foregroundDisabled : theme().foregroundSecondary}
           strokeWidth={1.5}
@@ -118,10 +118,9 @@ export const ComboBox: Component<ComboBoxProps> = (props) => {
       </rect>
       <Show when={open()}>
         <rect
-          position="absolute"
-          y={COMBO_HEIGHT + 2}
-          width={w()}
-          flexDirection="column"
+          absolute
+          transformY={COMBO_HEIGHT + 2}
+          w={w()}
           padding={theme().spacingSm}
           fill={theme().backgroundDefault}
           stroke={theme().strokeDefault}

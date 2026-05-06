@@ -1,5 +1,3 @@
-export { createRuntimeElement as createIntrinsicElement } from "./props.ts";
-export { defineIntrinsicComponent, Group, Rect, Circle, Text, TextInput, Path, Img, Span } from "./intrinsic.ts";
 export { createApp, renderQt } from "./app.ts";
 export { withQtSourceMeta } from "./source-meta.ts";
 
@@ -99,21 +97,26 @@ export type {
   CreateAppOptions,
   RenderQtOptions,
   ViewProps,
-  WidgetProps,
   WindowAllClosedContext,
   WindowHandle,
   WindowFrameState,
 } from "./types.ts";
 
 export type {
-  CanvasCommonProps,
-  CanvasGroupProps,
-  CanvasRectProps,
-  CanvasCircleProps,
-  CanvasTextProps,
-  CanvasTextInputProps,
-  CanvasPathProps,
+  CommonProps,
+  EventProps,
+  TransformProps,
+  VisualProps,
+  FilterProps,
+  LayoutProps,
+  SizingValue,
+  GroupProps,
+  RectProps,
+  CircleProps,
+  TextProps,
+  TextInputProps,
+  PathProps,
   WheelEventPayload,
-} from "../qt-intrinsics.ts";
+} from "../intrinsics.ts";
 
 export type { FragmentRendererNode } from "../runtime/fragment.ts";

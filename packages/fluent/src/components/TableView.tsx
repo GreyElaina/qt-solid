@@ -46,12 +46,12 @@ export function TableView<T>(props: TableViewProps<T>): JSX.Element {
   }
 
   return (
-    <group width={props.width} flexDirection="column">
+    <group w={props.width}>
       {/* Header */}
-      <rect fill={theme().backgroundSecondary} width={props.width} height={headerH()} flexDirection="row" alignItems="center">
+      <rect fill={theme().backgroundSecondary} w={props.width} h={headerH()} row align="center left">
         <For each={props.columns}>
           {(col) => (
-            <group width={col.width} height={headerH()} alignItems="center" justifyContent="center">
+            <group w={col.width} h={headerH()} align="center">
               <text
                 text={col.title}
                 fontSize={theme().fontSizeBody}
@@ -62,25 +62,25 @@ export function TableView<T>(props: TableViewProps<T>): JSX.Element {
         </For>
       </rect>
       {/* Header bottom border */}
-      <rect width={props.width} height={1} fill={theme().strokeDefault} />
+      <rect w={props.width} h={1} fill={theme().strokeDefault} />
       {/* Body */}
-      <ScrollView width={props.width} height={bodyHeight()} direction="vertical">
+      <ScrollView w={props.width} h={bodyHeight()} direction="vertical">
         <For each={props.items}>
           {(item, i) => (
             <rect
               fill={rowBg(i())}
               cornerRadius={theme().radiusMd}
-              width={props.width}
-              height={rowH()}
-              flexDirection="row"
-              alignItems="center"
+              w={props.width}
+              h={rowH()}
+              row
+              align="center left"
               onPointerEnter={() => setHoveredIndex(i())}
               onPointerLeave={() => { if (hoveredIndex() === i()) setHoveredIndex(-1) }}
               onClick={() => props.onSelect?.(i())}
             >
               <For each={props.columns}>
                 {(col) => (
-                  <group width={col.width} height={rowH()} alignItems="center" justifyContent="center">
+                  <group w={col.width} h={rowH()} align="center">
                     {cellContent(col, item, i())}
                   </group>
                 )}

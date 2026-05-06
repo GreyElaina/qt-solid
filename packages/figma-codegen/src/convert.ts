@@ -297,21 +297,48 @@ function extractAbsolutePosition(node: SceneNode): AbsolutePosition | null {
 function mapAutoLayout(node: FrameNode | ComponentNode | InstanceNode): Record<string, unknown> {
   const props: Record<string, unknown> = {}
 
-  if (node.layoutMode === "HORIZONTAL") {
-    props.flexDirection = "row"
-  } else if (node.layoutMode === "VERTICAL") {
-    props.flexDirection = "column"
+  const isRow = node.layoutMode === "HORIZONTAL"
+
+  if (isRow) {
+    props.row = true
   }
+  // column is default — no prop needed for VERTICAL
 
   if (node.layoutMode !== "NONE") {
+    // Map Figma primary + counter alignment → screen-space align string
     const primaryAlign = node.primaryAxisAlignItems
-    if (primaryAlign === "CENTER") props.justifyContent = "center"
-    else if (primaryAlign === "MAX") props.justifyContent = "flex-end"
-    else if (primaryAlign === "SPACE_BETWEEN") props.justifyContent = "space-between"
-
     const counterAlign = node.counterAxisAlignItems
-    if (counterAlign === "CENTER") props.alignItems = "center"
-    else if (counterAlign === "MAX") props.alignItems = "flex-end"
+
+    // Primary axis distribution
+    if (primaryAlign === "SPACE_BETWEEN") {
+      props.spacing = "between"
+    }
+
+    // Build align value: "vertical horizontal"
+    let vertical: string | null = null
+    let horizontal: string | null = null
+
+    if (isRow) {
+      // Row: primary = horizontal, cross = vertical
+      if (primaryAlign === "CENTER") horizontal = "center"
+      else if (primaryAlign === "MAX") horizontal = "right"
+      if (counterAlign === "CENTER") vertical = "center"
+      else if (counterAlign === "MAX") vertical = "bottom"
+    } else {
+      // Column: primary = vertical, cross = horizontal
+      if (primaryAlign === "CENTER") vertical = "center"
+      else if (primaryAlign === "MAX") vertical = "bottom"
+      if (counterAlign === "CENTER") horizontal = "center"
+      else if (counterAlign === "MAX") horizontal = "right"
+    }
+
+    if (vertical && horizontal) {
+      props.align = vertical === horizontal ? vertical : `${vertical} ${horizontal}`
+    } else if (vertical) {
+      props.align = isRow ? `${vertical} left` : vertical
+    } else if (horizontal) {
+      props.align = isRow ? horizontal : `top ${horizontal}`
+    }
 
     if (node.itemSpacing > 0) {
       props.gap = node.itemSpacing
@@ -320,19 +347,15 @@ function mapAutoLayout(node: FrameNode | ComponentNode | InstanceNode): Record<s
     // T1.2: layout wrap
     const wrap = (node as any).layoutWrap
     if (wrap === "WRAP") {
-      props.flexWrap = "wrap"
-    } else if (wrap === "WRAP_REVERSE") {
-      props.flexWrap = "wrap-reverse"
+      props.wrap = true
     }
   }
 
   if (node.layoutSizingHorizontal === "FILL") {
-    props.flexGrow = 1
+    props.w = "fill"
   }
 
-  if (node.layoutSizingHorizontal === "HUG" || node.layoutSizingVertical === "HUG") {
-    props.flexShrink = 0
-  }
+  // HUG is default (omit) — no flexShrink equivalent needed
 
   if (node.clipsContent) {
     const overflowDir = (node as any).overflowDirection
@@ -457,9 +480,9 @@ function applyVisualProps(props: Record<string, unknown>, node: SceneNode): void
   // Absolute positioning
   const absPos = extractAbsolutePosition(node)
   if (absPos) {
-    props.position = "absolute"
-    props.x = absPos.x
-    props.y = absPos.y
+    props.absolute = true
+    props.transformX = absPos.x
+    props.transformY = absPos.y
   }
 }
 
@@ -533,8 +556,8 @@ async function convertFrame(node: FrameNode, ctx: ConvertContext): Promise<strin
   }
 
   // Size
-  if (node.layoutSizingHorizontal === "FIXED") props.width = Math.round(node.width)
-  if (node.layoutSizingVertical === "FIXED") props.height = Math.round(node.height)
+  if (node.layoutSizingHorizontal === "FIXED") props.w = Math.round(node.width)
+  if (node.layoutSizingVertical === "FIXED") props.h = Math.round(node.height)
   if (node.minWidth != null && node.minWidth > 0) props.minWidth = node.minWidth
   if (node.minHeight != null && node.minHeight > 0) props.minHeight = node.minHeight
   if (node.maxWidth != null && node.maxWidth < Infinity) props.maxWidth = node.maxWidth
@@ -670,8 +693,8 @@ async function convertRectangle(node: RectangleNode, ctx: ConvertContext): Promi
   }
 
   const props: Record<string, unknown> = {}
-  props.width = Math.round(node.width)
-  props.height = Math.round(node.height)
+  props.w = Math.round(node.width)
+  props.h = Math.round(node.height)
 
   const fill = await resolveNodeFill(node)
   if (fill) props.fill = fill
@@ -731,7 +754,7 @@ async function convertText(node: TextNode, ctx: ConvertContext): Promise<string>
     if (segments.length > 1) {
       const textProps: Record<string, unknown> = {}
       if ("layoutSizingHorizontal" in node && (node as any).layoutSizingHorizontal === "FILL") {
-        textProps.flexGrow = 1
+        textProps.w = "fill"
       }
       applyVisualProps(textProps, node)
       const propStr = serializeProps(textProps)
@@ -781,7 +804,7 @@ async function convertText(node: TextNode, ctx: ConvertContext): Promise<string>
   if (fill) props.color = fill
 
   if ("layoutSizingHorizontal" in node && (node as any).layoutSizingHorizontal === "FILL") {
-    props.flexGrow = 1
+    props.w = "fill"
   }
 
   applyVisualProps(props, node)
@@ -789,7 +812,7 @@ async function convertText(node: TextNode, ctx: ConvertContext): Promise<string>
 }
 
 async function convertLine(node: LineNode, ctx: ConvertContext): Promise<string> {
-  const props: Record<string, unknown> = { height: 1, flexGrow: 1 }
+  const props: Record<string, unknown> = { h: 1, w: "fill" }
   const stroke = await resolveNodeStroke(node)
   if (stroke) props.fill = stroke
   else props.fill = "#FFFFFF14"

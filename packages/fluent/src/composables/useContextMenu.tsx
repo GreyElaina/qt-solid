@@ -47,8 +47,7 @@ export function useContextMenu(options: UseContextMenuOptions): UseContextMenuRe
         stroke={theme().strokeDefault}
         strokeWidth={1}
         cornerRadius={theme().radiusMd}
-        width={menuWidth()}
-        flexDirection="column"
+        w={menuWidth()}
         padding={theme().spacingSm}
       >
         <For each={options.items()}>

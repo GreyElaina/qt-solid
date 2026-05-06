@@ -16,13 +16,13 @@ export const Icon: Component<IconProps> = (props) => {
   const c = () => props.color ?? theme().foregroundPrimary
 
   return (
-    <group width={s()} height={s()}>
+    <group w={s()} h={s()}>
       <path
         d={icon().d}
         stroke={c()}
         strokeWidth={1.2}
-        width={s()}
-        height={s()}
+        w={s()}
+        h={s()}
       />
     </group>
   )

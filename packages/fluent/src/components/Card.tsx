@@ -2,7 +2,7 @@ import { createSignal, type Component, type JSX } from "solid-js"
 
 import {
   createVariants,
-  Rect,
+  type RectProps,
 } from "@qt-solid/solid"
 import { useTheme } from "../theme.ts"
 
@@ -17,8 +17,10 @@ export interface CardProps {
   onClick?: () => void
 }
 
+const RectBase: Component<RectProps> = (props) => <rect {...props} />
+
 const PressableRect = createVariants(
-  Rect,
+  RectBase,
   {
     base: { scale: 1 },
     variants: {
@@ -57,10 +59,9 @@ export const Card: Component<CardProps> = (props) => {
       stroke={props.disabled ? theme().strokeDisabled : theme().strokeDefault}
       strokeWidth={1}
       cornerRadius={radius()}
-      flexDirection="column"
       padding={pad()}
-      width={props.width}
-      height={props.height}
+      w={props.width}
+      h={props.height}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => { setHovered(false); setPressed(false) }}
       onPointerDown={() => { if (props.clickable && !props.disabled) setPressed(true) }}

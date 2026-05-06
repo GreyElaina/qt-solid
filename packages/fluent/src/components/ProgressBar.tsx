@@ -26,23 +26,23 @@ export const ProgressBar: Component<ProgressBarProps> = (props) => {
   }
 
   return (
-    <group width={w()} height={h()}>
+    <group w={w()} h={h()}>
       <rect
-        position="absolute"
-        x={0}
-        y={0}
-        width={w()}
-        height={h()}
+        absolute
+        transformX={0}
+        transformY={0}
+        w={w()}
+        h={h()}
         fill={theme().strokeDefault}
         opacity={0.3}
         cornerRadius={r()}
       />
       <rect
-        position="absolute"
-        x={0}
-        y={0}
-        width={barWidth()}
-        height={h()}
+        absolute
+        transformX={0}
+        transformY={0}
+        w={barWidth()}
+        h={h()}
         fill={barColor()}
         cornerRadius={r()}
       />

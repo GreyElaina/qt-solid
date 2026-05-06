@@ -33,13 +33,13 @@ export const ProgressRing: Component<ProgressRingProps> = (props) => {
   }
 
   return (
-    <group width={sz()} height={sz()}>
+    <group w={sz()} h={sz()}>
       <path d={bgArc()} stroke={theme().strokeDefault} strokeWidth={sw()} />
       {v() > 0 && <path d={fgArc()} stroke={barColor()} strokeWidth={sw()} />}
       {props.showText && (
         <text
-          x={half()}
-          y={half()}
+          transformX={half()}
+          transformY={half()}
           text={`${Math.round(v())}%`}
           fontSize={theme().fontSizeBody}
           color={theme().foregroundPrimary}

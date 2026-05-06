@@ -44,7 +44,7 @@ export const IndeterminateProgressRing: Component<IndeterminateProgressRingProps
   const bgArc = () => describeArc(half(), half(), r(), 0, 359.99)
 
   return (
-    <group width={sz()} height={sz()}>
+    <group w={sz()} h={sz()}>
       <path d={bgArc()} stroke={theme().strokeDefault} strokeWidth={sw()} opacity={0.15} />
       {spanAngle() > 0 && <path d={arcPath()} stroke={barColor()} strokeWidth={sw()} />}
     </group>

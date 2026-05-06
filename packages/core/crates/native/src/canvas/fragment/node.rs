@@ -8,6 +8,7 @@ use super::kinds::{
     CircleFragment, GroupFragment, ImageFragment, PathFragment, RectFragment, SpanFragment,
     TextFragment, TextInputFragment,
 };
+use super::layout::{Container, EdgeInsets, Overflow, Placement};
 use super::types::{
     FillPaint, FragmentBoxShadow, FragmentBrush, FragmentClipShape, FragmentId, FragmentLayerKey,
     FragmentListeners,
@@ -231,6 +232,15 @@ pub struct FragmentNode {
     /// True if this node serves as a mask texture source for another layer.
     /// It renders into its own layer texture but is NOT composited to surface.
     pub is_mask_source: bool,
+
+    // ─── Layout intent (Figma-style) ───
+    pub placement: Placement,
+    pub container: Option<Container>,
+    pub padding: EdgeInsets,
+    pub overflow_x: Overflow,
+    pub overflow_y: Overflow,
+    pub layout_visible: bool,
+    pub layout_dirty: bool,
 }
 
 impl FragmentNode {

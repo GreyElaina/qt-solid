@@ -7,10 +7,10 @@ import {
   canvasFragmentRequestRepaint,
 } from "@qt-solid/core/native"
 
-import type { CanvasImageProps } from "../../qt-intrinsics.ts"
+import type { ImageProps as ImageElementProps } from "../../intrinsics.ts"
 import type { FragmentRendererNode } from "../../runtime/fragment.ts"
 
-export interface ImageProps extends CanvasImageProps {
+export interface ImageProps extends ImageElementProps {
   /** Path to an image file (PNG/JPEG/GIF/WebP). */
   src?: string
   /** Encoded image bytes (PNG/JPEG/GIF/WebP). Takes precedence over `src`. */

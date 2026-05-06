@@ -165,12 +165,12 @@ async function generateMotionVariant(
   const lines: string[] = []
 
   const imports = generateImports(ctx.imports)
-  lines.push(`import { createVariants, motion, defineIntrinsicComponent } from "@qt-solid/solid"`)
-  lines.push(`import type { CanvasRectProps } from "@qt-solid/solid"`)
+  lines.push(`import type { Component } from "solid-js"`)
+  lines.push(`import { createVariants, motion, type RectProps } from "@qt-solid/solid"`)
   if (imports) lines.push(imports)
   lines.push("")
 
-  lines.push(`const Base = motion(defineIntrinsicComponent<CanvasRectProps>("rect"))`)
+  lines.push(`const Base = motion(((props: RectProps) => <rect {...props} />) as Component<RectProps>)`)
   lines.push("")
 
   lines.push(`export const ${componentName} = createVariants(Base, {`)

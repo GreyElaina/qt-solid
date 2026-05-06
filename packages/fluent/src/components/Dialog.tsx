@@ -40,8 +40,7 @@ export const Dialog: Component<DialogProps> = (props) => {
         stroke={theme().strokeDefault}
         strokeWidth={1}
         cornerRadius={theme().radiusLg}
-        width={w()}
-        flexDirection="column"
+        w={w()}
         padding={theme().spacingXl}
         gap={theme().spacingLg}
       >
@@ -60,8 +59,8 @@ export const Dialog: Component<DialogProps> = (props) => {
           />
         </Show>
         <group
-          flexDirection="row"
-          justifyContent="flex-end"
+          row
+          align="top right"
           gap={theme().spacingMd}
         >
           <Show when={props.secondaryText}>

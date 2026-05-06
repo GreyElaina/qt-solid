@@ -20,11 +20,11 @@ export const CommandBar: Component<CommandBarProps> = (props) => {
   const [hoveredKey, setHoveredKey] = createSignal<string | null>(null)
 
   return (
-    <group flexDirection="row" alignItems="center" gap={theme().spacingXs} width={props.width}>
+    <group row align="center left" gap={theme().spacingXs} w={props.width}>
       <For each={props.items}>
         {(item) => {
           if (item.key === "separator") {
-            return <rect width={1} height={20} fill={theme().strokeDefault} />
+            return <rect w={1} h={20} fill={theme().strokeDefault} />
           }
 
           const isHovered = () => hoveredKey() === item.key && !item.disabled
@@ -33,10 +33,10 @@ export const CommandBar: Component<CommandBarProps> = (props) => {
             <rect
               fill={isHovered() ? theme().controlHover : "transparent"}
               cornerRadius={theme().radiusMd}
-              flexDirection="row"
-              alignItems="center"
+              row
+              align="center left"
               gap={theme().spacingSm}
-              height={32}
+              h={32}
               padding={theme().spacingMd}
               onPointerEnter={() => setHoveredKey(item.key)}
               onPointerLeave={() => setHoveredKey(null)}
@@ -47,8 +47,8 @@ export const CommandBar: Component<CommandBarProps> = (props) => {
                   d={item.icon!}
                   stroke={item.disabled ? theme().foregroundDisabled : theme().foregroundPrimary}
                   strokeWidth={1.2}
-                  width={16}
-                  height={16}
+                  w={16}
+                  h={16}
                 />
               </Show>
 

@@ -103,8 +103,8 @@ export const Slider: Component<SliderProps> = (props) => {
   return (
     <group
       ref={(node: FragmentRendererNode) => { sliderRef = node }}
-      width={trackWidth()}
-      height={HANDLE_SIZE}
+      w={trackWidth()}
+      h={HANDLE_SIZE}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => { setHovered(false); setPressed(false); setDragging(false) }}
@@ -114,27 +114,27 @@ export const Slider: Component<SliderProps> = (props) => {
     >
       {/* Track background */}
       <rect
-        position="absolute"
-        x={0}
-        y={trackY()}
-        width={trackWidth()}
-        height={TRACK_H}
+        absolute
+        transformX={0}
+        transformY={trackY()}
+        w={trackWidth()}
+        h={TRACK_H}
         fill={theme().strokeDefault}
         cornerRadius={2}
       />
       {/* Filled track */}
       <rect
-        position="absolute"
-        x={0}
-        y={trackY()}
-        width={filledWidth()}
-        height={TRACK_H}
+        absolute
+        transformX={0}
+        transformY={trackY()}
+        w={filledWidth()}
+        h={TRACK_H}
         fill={accentColor()}
         cornerRadius={2}
       />
       {/* Handle outer circle */}
       <circle
-        position="absolute"
+        absolute
         cx={handleX()}
         cy={HANDLE_SIZE / 2}
         r={HANDLE_SIZE / 2}
@@ -144,7 +144,7 @@ export const Slider: Component<SliderProps> = (props) => {
       />
       {/* Handle inner circle */}
       <circle
-        position="absolute"
+        absolute
         cx={handleX()}
         cy={HANDLE_SIZE / 2}
         r={innerR()}

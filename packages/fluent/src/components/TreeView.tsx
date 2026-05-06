@@ -89,29 +89,29 @@ export function TreeView<T>(props: TreeViewProps<T>): JSX.Element {
   const chevronExpanded = "M 2 4 L 8 10 L 14 4"
 
   return (
-    <ScrollView width={props.width} height={props.height} direction="vertical">
+    <ScrollView w={props.width} h={props.height} direction="vertical">
       <For each={flatRows()}>
         {(row, i) => (
           <rect
             fill={rowBg(i())}
             cornerRadius={theme().radiusMd}
-            width={props.width}
-            height={itemH()}
-            flexDirection="row"
-            alignItems="center"
+            w={props.width}
+            h={itemH()}
+            row
+            align="center left"
             onPointerEnter={() => setHoveredIndex(i())}
             onPointerLeave={() => { if (hoveredIndex() === i()) setHoveredIndex(-1) }}
           >
             {/* Indent spacer */}
-            <group width={row.depth * INDENT_PX} height={itemH()} />
+            <group w={row.depth * INDENT_PX} h={itemH()} />
             {/* Chevron or spacer */}
             <Show
               when={row.hasChildren}
-              fallback={<group width={CHEVRON_SIZE} height={CHEVRON_SIZE} />}
+              fallback={<group w={CHEVRON_SIZE} h={CHEVRON_SIZE} />}
             >
               <group
-                width={CHEVRON_SIZE}
-                height={CHEVRON_SIZE}
+                w={CHEVRON_SIZE}
+                h={CHEVRON_SIZE}
                 onClick={() => toggleExpanded(row.key)}
               >
                 <path
@@ -121,7 +121,7 @@ export function TreeView<T>(props: TreeViewProps<T>): JSX.Element {
               </group>
             </Show>
             {/* Node content */}
-            <group flexGrow={1} height={itemH()} alignItems="center" flexDirection="row">
+            <group w="fill" h={itemH()} align="center left" row>
               {props.renderNode(row.node.data, row.depth)}
             </group>
           </rect>

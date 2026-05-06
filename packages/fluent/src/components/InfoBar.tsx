@@ -56,8 +56,8 @@ export const InfoBar: Component<InfoBarProps> = (props) => {
 
   return (
     <rect
-      flexDirection="row"
-      width={props.width ?? 360}
+      row
+      w={props.width ?? 360}
       fill={theme().backgroundSecondary}
       stroke={theme().strokeDefault}
       strokeWidth={1}
@@ -65,23 +65,23 @@ export const InfoBar: Component<InfoBarProps> = (props) => {
     >
       {/* Left accent stripe */}
       <rect
-        width={4}
+        w={4}
         fill={severityColor()}
         cornerRadius={{ topLeft: theme().radiusMd, topRight: 0, bottomRight: 0, bottomLeft: theme().radiusMd }}
       />
 
       {/* Content area with padding */}
       <group
-        flexDirection="row"
-        alignItems="center"
+        row
+        align="center left"
         gap={theme().spacingMd}
         padding={theme().spacingLg}
-        flexGrow={1}
+        w="fill"
       >
         {/* Severity icon */}
-        <group width={ICON_SIZE} height={ICON_SIZE} alignItems="center" justifyContent="center">
+        <group w={ICON_SIZE} h={ICON_SIZE} align="center">
           <circle
-            position="absolute"
+            absolute
             r={ICON_SIZE / 2}
             fill={severityColor()}
           />
@@ -93,7 +93,7 @@ export const InfoBar: Component<InfoBarProps> = (props) => {
         </group>
 
         {/* Title + message */}
-        <group flexDirection="column" gap={theme().spacingXs} flexGrow={1} flexShrink={1}>
+        <group gap={theme().spacingXs} h="fill">
           {props.title && (
             <text
               text={props.title}
@@ -114,10 +114,9 @@ export const InfoBar: Component<InfoBarProps> = (props) => {
         {/* Close button */}
         {props.closable && (
           <rect
-            width={CLOSE_SIZE}
-            height={CLOSE_SIZE}
-            alignItems="center"
-            justifyContent="center"
+            w={CLOSE_SIZE}
+            h={CLOSE_SIZE}
+            align="center"
             fill={closeBg()}
             cornerRadius={theme().radiusSm}
             focusable

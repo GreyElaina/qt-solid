@@ -23,11 +23,11 @@ export const SettingCard: Component<SettingCardProps> = (props) => {
 
   return (
     <rect
-      flexDirection="row"
-      alignItems="center"
+      row
+      align="center left"
       gap={theme().spacingLg}
       padding={theme().spacingLg}
-      width={props.width}
+      w={props.width}
       fill={bg()}
       cornerRadius={theme().radiusLg}
       stroke={theme().strokeDefault}
@@ -37,10 +37,10 @@ export const SettingCard: Component<SettingCardProps> = (props) => {
       onPointerUp={() => props.onClick?.()}
     >
       <Show when={props.icon}>
-        <path d={props.icon!} stroke={theme().foregroundPrimary} strokeWidth={1.2} width={20} height={20} />
+        <path d={props.icon!} stroke={theme().foregroundPrimary} strokeWidth={1.2} w={20} h={20} />
       </Show>
 
-      <group flexDirection="column" gap={theme().spacingXs} flexGrow={1}>
+      <group gap={theme().spacingXs} w="fill">
         <text text={props.title} fontSize={theme().fontSizeBody} color={theme().foregroundPrimary} />
         <Show when={props.description}>
           <text text={props.description!} fontSize={theme().fontSizeCaption} color={theme().foregroundSecondary} />

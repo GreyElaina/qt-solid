@@ -52,8 +52,8 @@ export const CheckBox: Component<CheckBoxProps> = (props) => {
 
   return (
     <group
-      flexDirection="row"
-      alignItems="center"
+      row
+      align="center left"
       gap={theme().spacingMd}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
@@ -65,11 +65,11 @@ export const CheckBox: Component<CheckBoxProps> = (props) => {
       }}
       onClick={() => {}}
     >
-      <group width={BOX_SIZE} height={BOX_SIZE}>
+      <group w={BOX_SIZE} h={BOX_SIZE}>
         <rect
-          position="absolute"
-          width={BOX_SIZE}
-          height={BOX_SIZE}
+          absolute
+          w={BOX_SIZE}
+          h={BOX_SIZE}
           fill={boxBg()}
           stroke={boxBorder()}
           strokeWidth={1}
@@ -77,14 +77,14 @@ export const CheckBox: Component<CheckBoxProps> = (props) => {
         />
         {checked() && (
           <path
-            position="absolute"
+            absolute
             d={CHECK_PATH}
-            x={ICON_OFFSET}
-            y={ICON_OFFSET}
+            transformX={ICON_OFFSET}
+            transformY={ICON_OFFSET}
             stroke={checkColor()}
             strokeWidth={1.5}
-            width={12}
-            height={12}
+            w={12}
+            h={12}
           />
         )}
       </group>

@@ -128,12 +128,12 @@ const MotionBasicsDemo: Component = () => {
   const [toggled, setToggled] = createSignal(false)
 
   return (
-    <group flexDirection="column" gap={16}>
+    <group gap={16}>
       <Button onClick={() => setToggled(v => !v)}>Toggle</Button>
-      <group flexDirection="row" gap={16} alignItems="center">
-        <group flexDirection="column" gap={4} alignItems="center">
+      <group row gap={16} align="center left">
+        <group gap={4} align="top center">
           <rect
-            width={60} height={60} cornerRadius={8}
+            w={60} h={60} cornerRadius={8}
             fill="#0078d4"
             initial={{ scale: 1, rotate: 0 }}
             animate={{ scale: toggled() ? 1.3 : 1, rotate: toggled() ? 45 : 0 }}
@@ -141,9 +141,9 @@ const MotionBasicsDemo: Component = () => {
           />
           <CaptionLabel text="Spring" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={60} height={60} cornerRadius={30}
+            w={60} h={60} cornerRadius={30}
             fill="#e74856"
             initial={{ opacity: 1, y: 0 }}
             animate={{ opacity: toggled() ? 0.3 : 1, y: toggled() ? -20 : 0 }}
@@ -151,9 +151,9 @@ const MotionBasicsDemo: Component = () => {
           />
           <CaptionLabel text="Tween" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={60} height={60} cornerRadius={8}
+            w={60} h={60} cornerRadius={8}
             fill="#00cc6a"
             initial={{ scaleX: 1, scaleY: 1 }}
             animate={{ scaleX: toggled() ? 1.4 : 1, scaleY: toggled() ? 0.6 : 1 }}
@@ -172,10 +172,10 @@ const MotionBasicsDemo: Component = () => {
 
 const MotionGesturesDemo: Component = () => {
   return (
-    <group flexDirection="row" gap={16} alignItems="center">
-      <group flexDirection="column" gap={4} alignItems="center">
+    <group row gap={16} align="center left">
+      <group gap={4} align="top center">
         <rect
-          width={80} height={80} cornerRadius={12}
+          w={80} h={80} cornerRadius={12}
           fill="#744da9"
           animate={{ scale: 1 }}
           whileHover={{ scale: 1.1, rotate: 5 }}
@@ -185,9 +185,9 @@ const MotionGesturesDemo: Component = () => {
         />
         <CaptionLabel text="Hover + Tap" />
       </group>
-      <group flexDirection="column" gap={4} alignItems="center">
+      <group gap={4} align="top center">
         <rect
-          width={80} height={80} cornerRadius={40}
+          w={80} h={80} cornerRadius={40}
           fill="#f7630c"
           animate={{ scale: 1, opacity: 1 }}
           whileHover={{ scale: 1.15, opacity: 0.8 }}
@@ -197,9 +197,9 @@ const MotionGesturesDemo: Component = () => {
         />
         <CaptionLabel text="Circle" />
       </group>
-      <group flexDirection="column" gap={4} alignItems="center">
+      <group gap={4} align="top center">
         <rect
-          width={100} height={50} cornerRadius={25}
+          w={100} h={50} cornerRadius={25}
           fill="#0099bc"
           animate={{ scaleX: 1 }}
           whileHover={{ scaleX: 1.2 }}
@@ -221,14 +221,14 @@ const MotionPresenceDemo: Component = () => {
   const [show, setShow] = createSignal(true)
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <Button onClick={() => setShow(v => !v)}>
         {show() ? "Remove" : "Add"}
       </Button>
       <AnimatePresence when={show()}>
         {() => (
           <rect
-            width={120} height={80} cornerRadius={12}
+            w={120} h={80} cornerRadius={12}
             fill="#0078d4"
             initial={{ opacity: 0, scale: 0.8, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -255,12 +255,12 @@ const MotionStaggerDemo: Component = () => {
   }
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <Button onClick={replay}>Replay</Button>
       <AnimatePresence when={visible()}>
         {() => (
           <group
-            flexDirection="row" gap={8}
+            row gap={8}
             initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
             transition={{ staggerChildren: 0.08, delayChildren: 0.1 }}
@@ -268,7 +268,7 @@ const MotionStaggerDemo: Component = () => {
             <Index each={items}>
               {(_, i) => (
                 <rect
-                  width={40} height={40} cornerRadius={6}
+                  w={40} h={40} cornerRadius={6}
                   fill={["#0078d4", "#e74856", "#00cc6a", "#f7630c", "#744da9"][i % 5]!}
                   initial={{ opacity: 0, y: 30, scale: 0.5 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -291,14 +291,14 @@ const MotionKeyframesDemo: Component = () => {
   const [playing, setPlaying] = createSignal(false)
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <Button onClick={() => setPlaying(v => !v)}>
         {playing() ? "Reset" : "Play"}
       </Button>
-      <group flexDirection="row" gap={16} alignItems="center">
-        <group flexDirection="column" gap={4} alignItems="center">
+      <group row gap={16} align="center left">
+        <group gap={4} align="top center">
           <rect
-            width={50} height={50} cornerRadius={8}
+            w={50} h={50} cornerRadius={8}
             fill="#0078d4"
             animate={{
               rotate: playing() ? [0, 90, 180, 270, 360] : 0,
@@ -313,9 +313,9 @@ const MotionKeyframesDemo: Component = () => {
           />
           <CaptionLabel text="Spin + pulse" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={50} height={50} cornerRadius={25}
+            w={50} h={50} cornerRadius={25}
             fill="#e74856"
             animate={{
               x: playing() ? [0, 40, 0, -40, 0] : 0,
@@ -341,12 +341,12 @@ const MotionKeyframesDemo: Component = () => {
 
 const MotionDragDemo: Component = () => {
   return (
-    <group flexDirection="column" gap={8}>
-      <group flexDirection="row" gap={24} alignItems="center">
-        <group flexDirection="column" gap={4} alignItems="center">
-          <rect width={200} height={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
+    <group gap={8}>
+      <group row gap={24} align="center left">
+        <group gap={4} align="top center">
+          <rect w={200} h={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
             <rect
-              width={50} height={50} cornerRadius={8}
+              w={50} h={50} cornerRadius={8}
               fill="#0078d4"
               animate={{ x: 0, y: 0 }}
               drag
@@ -358,10 +358,10 @@ const MotionDragDemo: Component = () => {
           </rect>
           <CaptionLabel text="Drag (constrained)" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
-          <rect width={200} height={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
+        <group gap={4} align="top center">
+          <rect w={200} h={120} fill="#1a1a2e" cornerRadius={12} padding={8}>
             <rect
-              width={50} height={50} cornerRadius={25}
+              w={50} h={50} cornerRadius={25}
               fill="#f7630c"
               animate={{ x: 0, y: 0 }}
               drag="x"
@@ -385,10 +385,10 @@ const MotionDragDemo: Component = () => {
 
 const MotionLoopDemo: Component = () => {
   return (
-    <group flexDirection="row" gap={24} alignItems="center">
-      <group flexDirection="column" gap={4} alignItems="center">
+    <group row gap={24} align="center left">
+      <group gap={4} align="top center">
         <rect
-          width={50} height={50} cornerRadius={25}
+          w={50} h={50} cornerRadius={25}
           fill="#0078d4"
           initial={{ scale: 1 }}
           animate={{ scale: [1, 1.3, 1] }}
@@ -403,9 +403,9 @@ const MotionLoopDemo: Component = () => {
         />
         <CaptionLabel text="Pulse (loop)" />
       </group>
-      <group flexDirection="column" gap={4} alignItems="center">
+      <group gap={4} align="top center">
         <rect
-          width={50} height={50} cornerRadius={8}
+          w={50} h={50} cornerRadius={8}
           fill="#e74856"
           initial={{ rotate: 0 }}
           animate={{ rotate: 360 }}
@@ -419,9 +419,9 @@ const MotionLoopDemo: Component = () => {
         />
         <CaptionLabel text="Spin (∞)" />
       </group>
-      <group flexDirection="column" gap={4} alignItems="center">
+      <group gap={4} align="top center">
         <rect
-          width={50} height={50} cornerRadius={8}
+          w={50} h={50} cornerRadius={8}
           fill="#00cc6a"
           initial={{ y: 0 }}
           animate={{ y: -20 }}
@@ -448,12 +448,12 @@ const MotionColorsDemo: Component = () => {
   const colors = ["#0078d4", "#e74856", "#00cc6a", "#f7630c", "#744da9"]
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <Button onClick={() => setIndex(i => (i + 1) % colors.length)}>Next Color</Button>
-      <group flexDirection="row" gap={16} alignItems="center">
-        <group flexDirection="column" gap={4} alignItems="center">
+      <group row gap={16} align="center left">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={12}
+            w={80} h={80} cornerRadius={12}
             fill="#333"
             initial={{ opacity: 1 }}
             animate={{ backgroundColor: colors[index()]!, opacity: 1 }}
@@ -461,9 +461,9 @@ const MotionColorsDemo: Component = () => {
           />
           <CaptionLabel text="Color shift" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={12}
+            w={80} h={80} cornerRadius={12}
             fill="#0078d4"
             initial={{ blur: 0, borderRadius: 12 }}
             animate={{
@@ -474,9 +474,9 @@ const MotionColorsDemo: Component = () => {
           />
           <CaptionLabel text="Blur + radius" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={12}
+            w={80} h={80} cornerRadius={12}
             fill="#744da9"
             initial={{ shadowBlur: 0, shadowOffsetY: 0 }}
             animate={{
@@ -502,22 +502,22 @@ const MotionLayoutDemo: Component = () => {
   const tabs = ["Home", "Search", "Profile"]
 
   return (
-    <group flexDirection="column" gap={12}>
-      <group flexDirection="row" gap={0}>
+    <group gap={12}>
+      <group row gap={0}>
         <Index each={tabs}>
           {(tab, i) => (
             <rect
-              width={80} height={36}
-              flexDirection="column"
-              alignItems="center"
-              justifyContent="center"
+              w={80} h={36}
+             
+              align="center"
+             
               onPointerUp={() => setSelected(i)}
               onClick={() => {}}
             >
               <text text={tab()} fontSize={13} color={selected() === i ? "#0078d4" : "#888"} />
               <Show when={selected() === i}>
                 <rect
-                  width={40} height={3} cornerRadius={2}
+                  w={40} h={3} cornerRadius={2}
                   fill="#0078d4"
                   layoutId="tab-indicator"
                   layout="position"
@@ -541,14 +541,14 @@ const MotionCompoundDemo: Component = () => {
   const [expanded, setExpanded] = createSignal(false)
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <Button onClick={() => setExpanded(v => !v)}>
         {expanded() ? "Collapse" : "Expand"}
       </Button>
-      <group flexDirection="row" gap={12} alignItems="flex-start">
+      <group row gap={12}>
         <rect
-          width={expanded() ? 200 : 80}
-          height={expanded() ? 120 : 80}
+          w={expanded() ? 200 : 80}
+          h={expanded() ? 120 : 80}
           cornerRadius={expanded() ? 16 : 40}
           fill="#0078d4"
           layout
@@ -569,7 +569,7 @@ const MotionCompoundDemo: Component = () => {
           />
         </rect>
         <rect
-          width={80} height={80} cornerRadius={8}
+          w={80} h={80} cornerRadius={8}
           fill="#e74856"
           animate={{
             x: expanded() ? 20 : 0,
@@ -592,12 +592,12 @@ const Effect3DTransformDemo: Component = () => {
   const [flipped, setFlipped] = createSignal(false)
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <Button onClick={() => setFlipped(v => !v)}>Flip</Button>
-      <group flexDirection="row" gap={24} alignItems="center">
-        <group flexDirection="column" gap={4} alignItems="center">
+      <group row gap={24} align="center left">
+        <group gap={4} align="top center">
           <rect
-            width={100} height={100} cornerRadius={12}
+            w={100} h={100} cornerRadius={12}
             fill="#0078d4"
             perspective={800}
             layer
@@ -609,9 +609,9 @@ const Effect3DTransformDemo: Component = () => {
           </rect>
           <CaptionLabel text="rotateY" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={100} height={100} cornerRadius={12}
+            w={100} h={100} cornerRadius={12}
             fill="#e74856"
             perspective={800}
             layer
@@ -623,9 +623,9 @@ const Effect3DTransformDemo: Component = () => {
           </rect>
           <CaptionLabel text="rotateX" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={100} height={100} cornerRadius={12}
+            w={100} h={100} cornerRadius={12}
             fill="#00cc6a"
             perspective={600}
             layer
@@ -653,14 +653,14 @@ const EffectContentFiltersDemo: Component = () => {
   const [active, setActive] = createSignal(false)
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <Button onClick={() => setActive(v => !v)}>
         {active() ? "Remove filters" : "Apply filters"}
       </Button>
-      <group flexDirection="row" gap={16} alignItems="center">
-        <group flexDirection="column" gap={4} alignItems="center">
+      <group row gap={16} align="center left">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={8}
+            w={80} h={80} cornerRadius={8}
             fill="#0078d4"
             layer
             filterGrayscale={active() ? 1.0 : 0.0}
@@ -669,9 +669,9 @@ const EffectContentFiltersDemo: Component = () => {
           </rect>
           <CaptionLabel text="Grayscale" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={8}
+            w={80} h={80} cornerRadius={8}
             fill="#e74856"
             layer
             filterSepia={active() ? 1.0 : 0.0}
@@ -680,9 +680,9 @@ const EffectContentFiltersDemo: Component = () => {
           </rect>
           <CaptionLabel text="Sepia" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={8}
+            w={80} h={80} cornerRadius={8}
             fill="#00cc6a"
             layer
             filterInvert={active() ? 1.0 : 0.0}
@@ -691,9 +691,9 @@ const EffectContentFiltersDemo: Component = () => {
           </rect>
           <CaptionLabel text="Invert" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={8}
+            w={80} h={80} cornerRadius={8}
             fill="#744da9"
             layer
             filterHueRotate={active() ? 180 : 0}
@@ -702,9 +702,9 @@ const EffectContentFiltersDemo: Component = () => {
           </rect>
           <CaptionLabel text="Hue +180°" />
         </group>
-        <group flexDirection="column" gap={4} alignItems="center">
+        <group gap={4} align="top center">
           <rect
-            width={80} height={80} cornerRadius={8}
+            w={80} h={80} cornerRadius={8}
             fill="#0078d4"
             layer
             filterBrightness={active() ? 1.5 : 1.0}
@@ -725,15 +725,15 @@ const EffectContentFiltersDemo: Component = () => {
 
 const EffectLayerMaskDemo: Component = () => {
   return (
-    <group flexDirection="row" gap={24} alignItems="center" flexWrap="wrap">
-      <group flexDirection="column" gap={4} alignItems="center">
+    <group row wrap gap={24} align="center left">
+      <group gap={4} align="top center">
         <rect
-          width={120} height={120}
+          w={120} h={120}
           fill="#0078d4"
           layer
           mask={
             <rect
-              width={120} height={120}
+              w={120} h={120}
               cornerRadius={60}
               fill="#ffffff"
             />
@@ -743,14 +743,14 @@ const EffectLayerMaskDemo: Component = () => {
         </rect>
         <CaptionLabel text="Circle mask" />
       </group>
-      <group flexDirection="column" gap={4} alignItems="center">
+      <group gap={4} align="top center">
         <rect
-          width={120} height={120}
+          w={120} h={120}
           fill="#e74856"
           layer
           mask={
             <rect
-              width={120} height={120}
+              w={120} h={120}
               cornerRadius={24}
               fill="#ffffff"
             />
@@ -761,17 +761,17 @@ const EffectLayerMaskDemo: Component = () => {
         <CaptionLabel text="Rounded mask" />
       </group>
       {/* Small mask on larger content — tests mask smaller than parent */}
-      <group flexDirection="column" gap={4} alignItems="center">
+      <group gap={4} align="top center">
         <rect
-          width={120} height={120}
+          w={120} h={120}
           fill="#00cc6a"
           layer
           mask={
             <rect
-              width={60} height={60}
+              w={60} h={60}
               cornerRadius={30}
               fill="#ffffff"
-              x={30} y={30}
+              transformX={30} transformY={30}
             />
           }
         >
@@ -780,17 +780,17 @@ const EffectLayerMaskDemo: Component = () => {
         <CaptionLabel text="Small centered" />
       </group>
       {/* Offset mask — tests mask not at origin */}
-      <group flexDirection="column" gap={4} alignItems="center">
+      <group gap={4} align="top center">
         <rect
-          width={120} height={120}
+          w={120} h={120}
           fill="#744da9"
           layer
           mask={
             <rect
-              width={80} height={80}
+              w={80} h={80}
               cornerRadius={12}
               fill="#ffffff"
-              x={20} y={20}
+              transformX={20} transformY={20}
             />
           }
         >
@@ -808,11 +808,11 @@ const EffectLayerMaskDemo: Component = () => {
 
 const EffectVibrancyDemo: Component = () => {
   return (
-    <group flexDirection="column" gap={16} alignItems="flex-start">
+    <group gap={16}>
       {/* Hero scene — dark workspace with vibrancy panels */}
       <rect
-        width={560}
-        height={340}
+        w={560}
+        h={340}
         cornerRadius={16}
         clip
         fill={{
@@ -830,14 +830,14 @@ const EffectVibrancyDemo: Component = () => {
         <circle cx={80} cy={60} r={72} fill="#e8456b" opacity={0.7} />
         <circle cx={440} cy={50} r={90} fill="#22c8e8" opacity={0.6} />
         <circle cx={320} cy={280} r={100} fill="#7c3aed" opacity={0.55} />
-        <rect x={200} y={40} width={240} height={60} cornerRadius={12} fill="#ffffff14" />
-        <rect x={200} y={120} width={300} height={12} cornerRadius={6} fill="#ffffff0c" />
-        <rect x={200} y={144} width={260} height={12} cornerRadius={6} fill="#ffffff08" />
+        <rect transformX={200} transformY={40} w={240} h={60} cornerRadius={12} fill="#ffffff14" />
+        <rect transformX={200} transformY={120} w={300} h={12} cornerRadius={6} fill="#ffffff0c" />
+        <rect transformX={200} transformY={144} w={260} h={12} cornerRadius={6} fill="#ffffff08" />
 
         {/* Sidebar — plus-lighter, heavy desaturation */}
         <rect
-          x={16} y={16}
-          width={160} height={308}
+          transformX={16} transformY={16}
+          w={160} h={308}
           cornerRadius={14}
           fill="#ffffff08"
           stroke="#ffffff30"
@@ -847,18 +847,18 @@ const EffectVibrancyDemo: Component = () => {
           vibrancyDesaturation={0.85}
           vibrancyBlendMode={3}
         >
-          <text text="Library" x={14} y={14} fontSize={14} fontWeight={700} color="#ffffff" />
-          <text text="plus-lighter · blur 20" x={14} y={34} fontSize={9} color="#ffffff80" />
-          <rect x={14} y={52} width={132} height={0.5} fill="#ffffff20" />
-          <text text="Recents" x={14} y={64} fontSize={11} color="#ffffff" />
-          <text text="Shared" x={14} y={84} fontSize={11} color="#ffffffcc" />
-          <text text="Notes" x={14} y={104} fontSize={11} color="#ffffffcc" />
+          <text text="Library" transformX={14} transformY={14} fontSize={14} fontWeight={700} color="#ffffff" />
+          <text text="plus-lighter · blur 20" transformX={14} transformY={34} fontSize={9} color="#ffffff80" />
+          <rect transformX={14} transformY={52} w={132} h={0.5} fill="#ffffff20" />
+          <text text="Recents" transformX={14} transformY={64} fontSize={11} color="#ffffff" />
+          <text text="Shared" transformX={14} transformY={84} fontSize={11} color="#ffffffcc" />
+          <text text="Notes" transformX={14} transformY={104} fontSize={11} color="#ffffffcc" />
         </rect>
 
         {/* Floating card — screen blend */}
         <rect
-          x={360} y={130}
-          width={170} height={120}
+          transformX={360} transformY={130}
+          w={170} h={120}
           cornerRadius={14}
           fill="#ffffff08"
           stroke="#ffffff30"
@@ -868,17 +868,17 @@ const EffectVibrancyDemo: Component = () => {
           vibrancyDesaturation={0.5}
           vibrancyBlendMode={1}
         >
-          <text text="Signal" x={14} y={14} fontSize={13} fontWeight={700} color="#ffffff" />
-          <text text="screen · blur 14" x={14} y={32} fontSize={9} color="#ffffff80" />
-          <rect x={14} y={48} width={142} height={0.5} fill="#ffffff20" />
-          <text text="Catches light" x={14} y={60} fontSize={11} color="#ffffff" />
-          <text text="without mud" x={14} y={78} fontSize={11} color="#ffffffcc" />
+          <text text="Signal" transformX={14} transformY={14} fontSize={13} fontWeight={700} color="#ffffff" />
+          <text text="screen · blur 14" transformX={14} transformY={32} fontSize={9} color="#ffffff80" />
+          <rect transformX={14} transformY={48} w={142} h={0.5} fill="#ffffff20" />
+          <text text="Catches light" transformX={14} transformY={60} fontSize={11} color="#ffffff" />
+          <text text="without mud" transformX={14} transformY={78} fontSize={11} color="#ffffffcc" />
         </rect>
 
         {/* Bottom tray — overlay blend */}
         <rect
-          x={200} y={260}
-          width={340} height={64}
+          transformX={200} transformY={260}
+          w={340} h={64}
           cornerRadius={14}
           fill="#ffffff08"
           stroke="#ffffff30"
@@ -888,13 +888,13 @@ const EffectVibrancyDemo: Component = () => {
           vibrancyDesaturation={0.65}
           vibrancyBlendMode={2}
         >
-          <text text="Overlay tray" x={14} y={12} fontSize={13} fontWeight={700} color="#ffffff" />
-          <text text="desaturation 0.65 · blur 16" x={14} y={32} fontSize={9} color="#ffffff80" />
+          <text text="Overlay tray" transformX={14} transformY={12} fontSize={13} fontWeight={700} color="#ffffff" />
+          <text text="desaturation 0.65 · blur 16" transformX={14} transformY={32} fontSize={9} color="#ffffff80" />
         </rect>
       </rect>
 
       {/* Blend mode comparison strip */}
-      <group flexDirection="row" gap={8}>
+      <group row gap={8}>
         <For each={[
           { label: "multiply", mode: 0, blur: 10 },
           { label: "screen", mode: 1, blur: 14 },
@@ -903,7 +903,7 @@ const EffectVibrancyDemo: Component = () => {
         ]}>
           {(item) => (
             <rect
-              width={130} height={64}
+              w={130} h={64}
               cornerRadius={12}
               fill={{
                 type: "linearGradient",
@@ -916,8 +916,8 @@ const EffectVibrancyDemo: Component = () => {
               }}
             >
               <rect
-                x={8} y={8}
-                width={114} height={48}
+                transformX={8} transformY={8}
+                w={114} h={48}
                 cornerRadius={10}
                 fill="#ffffff08"
                 stroke="#ffffff30"
@@ -927,8 +927,8 @@ const EffectVibrancyDemo: Component = () => {
                 vibrancyDesaturation={0.6}
                 vibrancyBlendMode={item.mode}
               >
-                <text text={item.label} x={10} y={10} fontSize={10} fontWeight={700} color="#ffffff" />
-                <text text={`blur ${item.blur}`} x={10} y={26} fontSize={9} color="#ffffffaa" />
+                <text text={item.label} transformX={10} transformY={10} fontSize={10} fontWeight={700} color="#ffffff" />
+                <text text={`blur ${item.blur}`} transformX={10} transformY={26} fontSize={9} color="#ffffffaa" />
               </rect>
             </rect>
           )}
@@ -949,12 +949,12 @@ const FluentMaterialsDemo: Component = () => {
   // Mica: heavy blur + heavy desaturation, near-opaque tint, wallpaper-derived.
 
   return (
-    <group flexDirection="column" gap={16} alignItems="flex-start">
+    <group gap={16}>
       {/* --- Acrylic: dark theme --- */}
-      <group flexDirection="column" gap={4} alignItems="flex-start">
+      <group gap={4}>
         <text text="Acrylic · Dark" fontSize={13} fontWeight={700} color="#ffffffcc" />
         <rect
-          width={480} height={260}
+          w={480} h={260}
           cornerRadius={12}
           clip
           fill={{
@@ -971,14 +971,14 @@ const FluentMaterialsDemo: Component = () => {
           <circle cx={60} cy={50} r={56} fill="#c026d3" opacity={0.5} />
           <circle cx={380} cy={40} r={70} fill="#06b6d4" opacity={0.45} />
           <circle cx={240} cy={200} r={80} fill="#4f46e5" opacity={0.4} />
-          <rect x={140} y={30} width={200} height={40} cornerRadius={8} fill="#ffffff12" />
-          <rect x={140} y={80} width={280} height={8} cornerRadius={4} fill="#ffffff08" />
-          <rect x={140} y={96} width={220} height={8} cornerRadius={4} fill="#ffffff06" />
+          <rect transformX={140} transformY={30} w={200} h={40} cornerRadius={8} fill="#ffffff12" />
+          <rect transformX={140} transformY={80} w={280} h={8} cornerRadius={4} fill="#ffffff08" />
+          <rect transformX={140} transformY={96} w={220} h={8} cornerRadius={4} fill="#ffffff06" />
 
           {/* Acrylic sidebar panel — blur 30, screen blend, dark tint */}
           <rect
-            x={12} y={12}
-            width={180} height={236}
+            transformX={12} transformY={12}
+            w={180} h={236}
             cornerRadius={10}
             fill="#2a2a3a90"
             stroke="#ffffff18"
@@ -988,17 +988,17 @@ const FluentMaterialsDemo: Component = () => {
             vibrancyDesaturation={0.3}
             vibrancyBlendMode={1}
           >
-            <text text="Navigation" x={14} y={14} fontSize={12} fontWeight={600} color="#ffffff" />
-            <rect x={14} y={36} width={152} height={0.5} fill="#ffffff15" />
-            <text text="Home" x={14} y={48} fontSize={11} color="#ffffffcc" />
-            <text text="Projects" x={14} y={68} fontSize={11} color="#ffffffcc" />
-            <text text="Settings" x={14} y={88} fontSize={11} color="#ffffff88" />
+            <text text="Navigation" transformX={14} transformY={14} fontSize={12} fontWeight={600} color="#ffffff" />
+            <rect transformX={14} transformY={36} w={152} h={0.5} fill="#ffffff15" />
+            <text text="Home" transformX={14} transformY={48} fontSize={11} color="#ffffffcc" />
+            <text text="Projects" transformX={14} transformY={68} fontSize={11} color="#ffffffcc" />
+            <text text="Settings" transformX={14} transformY={88} fontSize={11} color="#ffffff88" />
           </rect>
 
           {/* Acrylic flyout — transient surface */}
           <rect
-            x={220} y={140}
-            width={200} height={100}
+            transformX={220} transformY={140}
+            w={200} h={100}
             cornerRadius={10}
             fill="#3a3a5090"
             stroke="#ffffff20"
@@ -1008,20 +1008,20 @@ const FluentMaterialsDemo: Component = () => {
             vibrancyDesaturation={0.25}
             vibrancyBlendMode={1}
           >
-            <text text="Quick actions" x={14} y={14} fontSize={11} fontWeight={600} color="#ffffff" />
-            <rect x={14} y={34} width={172} height={0.5} fill="#ffffff15" />
-            <text text="New file" x={14} y={46} fontSize={10} color="#ffffffcc" />
-            <text text="Open recent" x={14} y={64} fontSize={10} color="#ffffffcc" />
-            <text text="Import..." x={14} y={82} fontSize={10} color="#ffffff88" />
+            <text text="Quick actions" transformX={14} transformY={14} fontSize={11} fontWeight={600} color="#ffffff" />
+            <rect transformX={14} transformY={34} w={172} h={0.5} fill="#ffffff15" />
+            <text text="New file" transformX={14} transformY={46} fontSize={10} color="#ffffffcc" />
+            <text text="Open recent" transformX={14} transformY={64} fontSize={10} color="#ffffffcc" />
+            <text text="Import..." transformX={14} transformY={82} fontSize={10} color="#ffffff88" />
           </rect>
         </rect>
       </group>
 
       {/* --- Acrylic: light theme --- */}
-      <group flexDirection="column" gap={4} alignItems="flex-start">
+      <group gap={4}>
         <text text="Acrylic · Light" fontSize={13} fontWeight={700} color="#ffffffcc" />
         <rect
-          width={480} height={200}
+          w={480} h={200}
           cornerRadius={12}
           clip
           fill={{
@@ -1036,14 +1036,14 @@ const FluentMaterialsDemo: Component = () => {
         >
           <circle cx={100} cy={60} r={50} fill="#818cf8" opacity={0.3} />
           <circle cx={380} cy={140} r={60} fill="#22d3ee" opacity={0.25} />
-          <rect x={40} y={30} width={180} height={30} cornerRadius={6} fill="#00000008" />
-          <rect x={40} y={70} width={300} height={8} cornerRadius={4} fill="#00000006" />
-          <rect x={40} y={86} width={240} height={8} cornerRadius={4} fill="#00000005" />
+          <rect transformX={40} transformY={30} w={180} h={30} cornerRadius={6} fill="#00000008" />
+          <rect transformX={40} transformY={70} w={300} h={8} cornerRadius={4} fill="#00000006" />
+          <rect transformX={40} transformY={86} w={240} h={8} cornerRadius={4} fill="#00000005" />
 
           {/* Light acrylic panel — tinted white */}
           <rect
-            x={240} y={16}
-            width={220} height={168}
+            transformX={240} transformY={16}
+            w={220} h={168}
             cornerRadius={10}
             fill="#ffffffb0"
             stroke="#00000012"
@@ -1053,20 +1053,20 @@ const FluentMaterialsDemo: Component = () => {
             vibrancyDesaturation={0.2}
             vibrancyBlendMode={1}
           >
-            <text text="Properties" x={14} y={14} fontSize={12} fontWeight={600} color="#1a1a2e" />
-            <rect x={14} y={34} width={192} height={0.5} fill="#00000010" />
-            <text text="Name: Document.md" x={14} y={48} fontSize={10} color="#333333" />
-            <text text="Size: 4.2 KB" x={14} y={66} fontSize={10} color="#333333" />
-            <text text="Modified: today" x={14} y={84} fontSize={10} color="#555555" />
+            <text text="Properties" transformX={14} transformY={14} fontSize={12} fontWeight={600} color="#1a1a2e" />
+            <rect transformX={14} transformY={34} w={192} h={0.5} fill="#00000010" />
+            <text text="Name: Document.md" transformX={14} transformY={48} fontSize={10} color="#333333" />
+            <text text="Size: 4.2 KB" transformX={14} transformY={66} fontSize={10} color="#333333" />
+            <text text="Modified: today" transformX={14} transformY={84} fontSize={10} color="#555555" />
           </rect>
         </rect>
       </group>
 
       {/* --- Mica approximation --- */}
-      <group flexDirection="column" gap={4} alignItems="flex-start">
+      <group gap={4}>
         <text text="Mica (approximation)" fontSize={13} fontWeight={700} color="#ffffffcc" />
         <rect
-          width={480} height={160}
+          w={480} h={160}
           cornerRadius={12}
           clip
           fill={{
@@ -1082,8 +1082,8 @@ const FluentMaterialsDemo: Component = () => {
         >
           {/* Mica: near-opaque, heavy desaturation — wallpaper subtly tints */}
           <rect
-            x={0} y={0}
-            width={480} height={160}
+            transformX={0} transformY={0}
+            w={480} h={160}
             fill="#20202880"
             backdropBlur={60}
             layer
@@ -1091,13 +1091,13 @@ const FluentMaterialsDemo: Component = () => {
             vibrancyBlendMode={0}
           >
             {/* App content on mica base */}
-            <text text="App title bar" x={16} y={14} fontSize={12} fontWeight={600} color="#ffffffcc" />
-            <rect x={16} y={38} width={448} height={0.5} fill="#ffffff15" />
+            <text text="App title bar" transformX={16} transformY={14} fontSize={12} fontWeight={600} color="#ffffffcc" />
+            <rect transformX={16} transformY={38} w={448} h={0.5} fill="#ffffff15" />
             {/* Content layer card */}
-            <rect x={16} y={50} width={448} height={94} cornerRadius={8} fill="#ffffff08" stroke="#ffffff10" strokeWidth={0.5}>
-              <text text="Content area" x={14} y={14} fontSize={11} fontWeight={600} color="#ffffffcc" />
-              <text text="Mica provides a subtle, personalized backdrop" x={14} y={34} fontSize={10} color="#ffffff88" />
-              <text text="derived from the desktop wallpaper." x={14} y={50} fontSize={10} color="#ffffff88" />
+            <rect transformX={16} transformY={50} w={448} h={94} cornerRadius={8} fill="#ffffff08" stroke="#ffffff10" strokeWidth={0.5}>
+              <text text="Content area" transformX={14} transformY={14} fontSize={11} fontWeight={600} color="#ffffffcc" />
+              <text text="Mica provides a subtle, personalized backdrop" transformX={14} transformY={34} fontSize={10} color="#ffffff88" />
+              <text text="derived from the desktop wallpaper." transformX={14} transformY={50} fontSize={10} color="#ffffff88" />
             </rect>
           </rect>
         </rect>
@@ -1127,17 +1127,17 @@ const ContextMenuDemo: Component = () => {
   })
 
   return (
-    <group flexDirection="column" gap={12}>
+    <group gap={12}>
       <rect
         fill={theme().backgroundSecondary}
         stroke={theme().strokeDefault}
         strokeWidth={1}
         cornerRadius={8}
-        width={280}
-        height={160}
-        flexDirection="column"
-        alignItems="center"
-        justifyContent="center"
+        w={280}
+        h={160}
+       
+        align="center"
+       
         gap={8}
         onContextMenu={onContextMenu}
       >
@@ -1156,7 +1156,7 @@ const ContextMenuDemo: Component = () => {
 const InteractiveToggle: Component = () => {
   const [checked, setChecked] = createSignal(false)
   return (
-    <group flexDirection="row" gap={12} alignItems="center">
+    <group row gap={12} align="center left">
       <Toggle checked={checked()} onChange={setChecked} />
       <BodyLabel text={checked() ? "ON" : "OFF"} />
     </group>
@@ -1167,7 +1167,7 @@ const InteractiveCheckBox: Component = () => {
   const [a, setA] = createSignal(false)
   const [b, setB] = createSignal(true)
   return (
-    <group flexDirection="column" gap={8}>
+    <group gap={8}>
       <CheckBox label="Option A" checked={a()} onChange={setA} />
       <CheckBox label="Option B" checked={b()} onChange={setB} />
       <CaptionLabel text={`A=${a()}, B=${b()}`} />
@@ -1179,7 +1179,7 @@ const InteractiveRadioButton: Component = () => {
   const [selected, setSelected] = createSignal(0)
   const options = ["Alpha", "Beta", "Gamma"]
   return (
-    <group flexDirection="column" gap={8}>
+    <group gap={8}>
       <Index each={options}>
         {(label, i) => (
           <RadioButton
@@ -1197,7 +1197,7 @@ const InteractiveRadioButton: Component = () => {
 const InteractiveSlider: Component = () => {
   const [value, setValue] = createSignal(50)
   return (
-    <group flexDirection="column" gap={8}>
+    <group gap={8}>
       <Slider value={value()} width={200} onChange={setValue} />
       <CaptionLabel text={`Value: ${value().toFixed(0)}`} />
     </group>
@@ -1208,7 +1208,7 @@ const InteractiveLineEdit: Component = () => {
   const [text, setText] = createSignal("")
   const [submitted, setSubmitted] = createSignal("")
   return (
-    <group flexDirection="column" gap={8}>
+    <group gap={8}>
       <LineEdit
         value={text()}
         placeholder="Type and press Enter..."
@@ -1227,7 +1227,7 @@ const InteractiveLineEdit: Component = () => {
 const InteractiveToggleButton: Component = () => {
   const [checked, setChecked] = createSignal(false)
   return (
-    <group flexDirection="row" gap={12} alignItems="center">
+    <group row gap={12} align="center left">
       <ToggleButton checked={checked()} onChange={setChecked}>
         {checked() ? "Active" : "Inactive"}
       </ToggleButton>
@@ -1244,10 +1244,10 @@ const RoutingHomeView: Component = () => {
   const theme = useTheme()
   const nav = useNavigate()
   return (
-    <group flexDirection="column" gap={12} padding={16}>
+    <group gap={12} padding={16}>
       <SubtitleLabel text="Home" />
       <BodyLabel text="Welcome to the routing demo. Pick a section:" />
-      <group flexDirection="row" gap={8}>
+      <group row gap={8}>
         <Button onClick={() => nav.push("/settings/general")}>Settings</Button>
         <Button onClick={() => nav.push("/users/42")}>User #42</Button>
         <Button onClick={() => nav.push("/users/7")}>User #7</Button>
@@ -1259,7 +1259,7 @@ const RoutingHomeView: Component = () => {
 const RoutingSettingsView: Component = () => {
   const theme = useTheme()
   return (
-    <group flexDirection="column" gap={8} padding={16}>
+    <group gap={8} padding={16}>
       <SubtitleLabel text="Settings" />
       <Outlet />
     </group>
@@ -1267,13 +1267,13 @@ const RoutingSettingsView: Component = () => {
 }
 
 const RoutingGeneralView: Component = () => (
-  <group flexDirection="column" gap={8}>
+  <group gap={8}>
     <BodyLabel text="General settings page" />
-    <group flexDirection="row" gap={8} alignItems="center">
+    <group row gap={8} align="center left">
       <BodyLabel text="Notifications" />
       <Toggle checked={true} />
     </group>
-    <group flexDirection="row" gap={8} alignItems="center">
+    <group row gap={8} align="center left">
       <BodyLabel text="Dark mode auto-switch" />
       <Toggle checked={false} />
     </group>
@@ -1281,14 +1281,14 @@ const RoutingGeneralView: Component = () => (
 )
 
 const RoutingAccountsView: Component = () => (
-  <group flexDirection="column" gap={8}>
+  <group gap={8}>
     <BodyLabel text="Accounts settings page" />
     <BodyLabel text="user@example.com" />
   </group>
 )
 
 const RoutingAboutView: Component = () => (
-  <group flexDirection="column" gap={8}>
+  <group gap={8}>
     <BodyLabel text="About this app" />
     <CaptionLabel text="qt-solid storyboard v0.0.0" />
   </group>
@@ -1297,7 +1297,7 @@ const RoutingAboutView: Component = () => (
 const RoutingUserView: Component = () => {
   const params = useParams()
   return (
-    <group flexDirection="column" gap={8} padding={16}>
+    <group gap={8} padding={16}>
       <SubtitleLabel text={`User Profile: #${params().id ?? "?"}`} />
       <BodyLabel text={`Viewing user with id = ${params().id ?? "unknown"}`} />
     </group>
@@ -1348,9 +1348,9 @@ const RoutingDemoChrome: Component = () => {
   ]
 
   return (
-    <group flexDirection="column" gap={8}>
+    <group gap={8}>
       {/* Top bar: back button + breadcrumb */}
-      <group flexDirection="row" alignItems="center" gap={8}>
+      <group row align="center left" gap={8}>
         <Button
           onClick={() => nav.pop()}
           disabled={!canGoBack()}
@@ -1363,9 +1363,9 @@ const RoutingDemoChrome: Component = () => {
         />
       </group>
 
-      <group flexDirection="row" gap={8}>
+      <group row gap={8}>
         {/* Mini sidebar */}
-        <group flexDirection="column" gap={4} width={140}>
+        <group gap={4} w={140}>
           <For each={sidebarItems}>
             {(item) => (
               <Button
@@ -1382,9 +1382,9 @@ const RoutingDemoChrome: Component = () => {
         <rect
           fill={theme().backgroundSecondary}
           cornerRadius={8}
-          flexGrow={1}
+          h="fill"
           minHeight={200}
-          flexDirection="column"
+         
         >
           <Outlet />
         </rect>
@@ -1510,7 +1510,7 @@ const STORIES: StoryDef[] = [
   {
     name: "Labels",
     render: (p) => (
-      <group flexDirection="column" gap={4}>
+      <group gap={4}>
         <CaptionLabel text="Caption (12px)" />
         <BodyLabel text="Body (14px)" />
         <SubtitleLabel text="Subtitle (20px)" />
@@ -1523,7 +1523,7 @@ const STORIES: StoryDef[] = [
   {
     name: "Separators",
     render: () => (
-      <group flexDirection="row" gap={16} alignItems="center" height={40}>
+      <group row gap={16} align="center left" h={40}>
         <BodyLabel text="Left" />
         <VerticalSeparator length={30} />
         <BodyLabel text="Right" />
@@ -1658,9 +1658,9 @@ const SidebarItem: Component<{
 
   return (
     <rect
-      height={32}
-      flexDirection="row"
-      alignItems="center"
+      h={32}
+      row
+      align="center left"
       paddingLeft={12}
       paddingRight={12}
       fill={bg()}
@@ -1688,7 +1688,7 @@ const VariantCell: Component<{
   const merged = createMemo(() => ({ ...props.story.defaults, ...props.combo }))
 
   return (
-    <group flexDirection="column" gap={6} padding={8} minWidth={CELL_MIN_WIDTH} flexBasis={CELL_MIN_WIDTH} flexGrow={1}>
+    <group gap={6} padding={8} minWidth={CELL_MIN_WIDTH} w="fill">
       <text text={props.label} fontSize={10} color={chrome.dim()} />
       <rect
         fill="transparent"
@@ -1696,8 +1696,8 @@ const VariantCell: Component<{
         strokeWidth={1}
         cornerRadius={6}
         padding={12}
-        flexDirection="column"
-        alignItems="flex-start"
+       
+       
       >
         {props.story.render(merged())}
       </rect>
@@ -1728,10 +1728,10 @@ const ResponsiveGrid: Component<{
 
   return (
     <group
-      flexDirection={useColumn() ? "column" : "row"}
-      flexWrap={useColumn() ? "nowrap" : "wrap"}
+      row={!useColumn()}
+      wrap={!useColumn()}
       gap={gap()}
-      width="100%"
+      w="100%"
       onLayout={(e: { width: number; height: number }) => setContainerWidth(e.width)}
     >
       {props.children}
@@ -1752,7 +1752,7 @@ const StoryDetail: Component<{ story: StoryDef }> = (props) => {
   )
 
   return (
-    <group flexDirection="column" gap={16} padding={20} width="100%">
+    <group gap={16} padding={20} w="100%">
       {/* Header */}
       <text text={props.story.name} fontSize={24} fontWeight={600} color={chrome.text()} />
       <Show when={axisKeys().length > 0}>
@@ -1790,7 +1790,7 @@ const StoryDetail: Component<{ story: StoryDef }> = (props) => {
 
       {/* Scenarios */}
       <Show when={scenarioEntries().length > 0}>
-        <rect height={1} fill={chrome.border()} />
+        <rect h={1} fill={chrome.border()} />
         <text text="Scenarios" fontSize={14} fontWeight={600} color={chrome.text()} />
         <ResponsiveGrid count={scenarioEntries().length}>
           <For each={scenarioEntries()}>
@@ -1807,7 +1807,7 @@ const StoryDetail: Component<{ story: StoryDef }> = (props) => {
 
       {/* Interactive */}
       <Show when={props.story.interactive}>
-        <rect height={1} fill={chrome.border()} />
+        <rect h={1} fill={chrome.border()} />
         <text text="Interactive" fontSize={14} fontWeight={600} color={chrome.text()} />
         <rect
           fill="transparent"
@@ -1815,8 +1815,8 @@ const StoryDetail: Component<{ story: StoryDef }> = (props) => {
           strokeWidth={1}
           cornerRadius={6}
           padding={16}
-          flexDirection="column"
-          alignItems="flex-start"
+         
+         
         >
           {props.story.interactive!()}
         </rect>
@@ -1838,10 +1838,10 @@ const ThemeToggle: Component<{
 
   return (
     <rect
-      height={28}
-      flexDirection="row"
-      alignItems="center"
-      justifyContent="center"
+      h={28}
+      row
+      align="center"
+     
       paddingLeft={10}
       paddingRight={10}
       fill={hovered() ? chrome.hover() : "transparent"}
@@ -1874,30 +1874,30 @@ const StoryboardChrome: Component<{
   const activeStory = createMemo(() => STORIES[props.selectedIndex()]!)
 
   return (
-    <rect fill={chrome.bg()} width="100%" height="100%" flexGrow={1} flexShrink={1} flexDirection="row">
+    <rect fill={chrome.bg()} w="100%" h="100%" row>
       {/* Sidebar */}
       <rect
-        width={200}
+        w={200}
         fill={chrome.sidebar()}
-        flexDirection="column"
+       
       >
         {/* Sidebar header */}
         <rect
-          height={48}
-          flexDirection="row"
-          alignItems="center"
+          h={48}
+          row
+          align="center left"
           paddingLeft={12}
           paddingRight={12}
           gap={8}
         >
-          <rect fill={chrome.accent()} width={8} height={8} cornerRadius={4} />
+          <rect fill={chrome.accent()} w={8} h={8} cornerRadius={4} />
           <text text="Storyboard" fontSize={13} fontWeight={600} color={chrome.text()} />
         </rect>
-        <rect height={1} fill={chrome.border()} />
+        <rect h={1} fill={chrome.border()} />
 
         {/* Story list */}
-        <ScrollView flexGrow={1} flexShrink={1}>
-          <group flexDirection="column" gap={2} padding={6}>
+        <ScrollView h="fill">
+          <group gap={2} padding={6}>
             <For each={STORIES}>
               {(story, index) => (
                 <SidebarItem
@@ -1911,18 +1911,18 @@ const StoryboardChrome: Component<{
         </ScrollView>
 
         {/* Theme toggle at bottom */}
-        <rect height={1} fill={chrome.border()} />
-        <rect height={44} flexDirection="row" alignItems="center" justifyContent="center">
+        <rect h={1} fill={chrome.border()} />
+        <rect h={44} row align="center">
           <ThemeToggle isDark={props.isDark} onToggle={() => props.setIsDark((v) => !v)} />
         </rect>
       </rect>
 
       {/* Divider */}
-      <rect width={1} fill={chrome.border()} />
+      <rect w={1} fill={chrome.border()} />
 
       {/* Content area */}
-      <rect fill={chrome.bg()} flexGrow={1} flexShrink={1} flexDirection="column">
-        <ScrollView flexGrow={1} flexShrink={1}>
+      <rect fill={chrome.bg()} h="fill">
+        <ScrollView h="fill">
           <StoryDetail story={activeStory()} />
         </ScrollView>
       </rect>

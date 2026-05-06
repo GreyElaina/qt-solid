@@ -46,10 +46,9 @@ export const InfoBadge: Component<InfoBadgeProps> = (props) => {
 
   return (
     <rect
-      width={w()}
-      height={h()}
-      alignItems="center"
-      justifyContent="center"
+      w={w()}
+      h={h()}
+      align="center"
       fill={bg()}
       cornerRadius={h() / 2}
       paddingLeft={hasText() ? 6 : 0}

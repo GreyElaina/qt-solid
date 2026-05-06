@@ -25,12 +25,10 @@ export const HyperlinkButton: Component<HyperlinkButtonProps> = (props) => {
 
   return (
     <group
-      flexDirection="column"
-      alignItems="center"
-      justifyContent="center"
+      align="center"
       padding={props.height != null ? 0 : 5}
-      width={props.width}
-      height={props.height ?? 32}
+      w={props.width}
+      h={props.height ?? 32}
       focusable={!props.disabled}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => { setHovered(false); setPressed(false) }}

@@ -26,12 +26,11 @@ export const Pivot: Component<PivotProps> = (props) => {
   }
 
   return (
-    <group flexDirection="row" alignItems="flex-end" gap={theme().spacingXl} width={props.width}>
+    <group row align="bottom left" gap={theme().spacingXl} w={props.width}>
       <For each={props.items}>
         {(item) => (
           <group
-            flexDirection="column"
-            alignItems="center"
+            align="top center"
             gap={theme().spacingSm}
             onPointerEnter={() => setHoveredKey(item.key)}
             onPointerLeave={() => setHoveredKey(null)}
@@ -43,7 +42,7 @@ export const Pivot: Component<PivotProps> = (props) => {
               color={fg(item.key)}
             />
             {item.key === props.selectedKey && (
-              <rect width={20} height={2} fill={theme().accentDefault} cornerRadius={1} />
+              <rect w={20} h={2} fill={theme().accentDefault} cornerRadius={1} />
             )}
           </group>
         )}

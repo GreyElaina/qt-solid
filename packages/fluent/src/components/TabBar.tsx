@@ -35,8 +35,8 @@ export const TabBar: Component<TabBarProps> = (props) => {
   }
 
   return (
-    <group flexDirection="column">
-      <group flexDirection="row" alignItems="flex-end">
+    <group>
+      <group row align="bottom left">
         <For each={props.items}>
           {(item) => (
             <rect
@@ -44,10 +44,10 @@ export const TabBar: Component<TabBarProps> = (props) => {
               cornerRadius={isSelected(item.key)
                 ? { topLeft: theme().radiusMd, topRight: theme().radiusMd, bottomRight: 0, bottomLeft: 0 }
                 : 0}
-              height={36}
+              h={36}
               padding={theme().spacingMd}
-              flexDirection="row"
-              alignItems="center"
+              row
+              align="center left"
               gap={theme().spacingSm}
               onPointerEnter={() => setHoveredKey(item.key)}
               onPointerLeave={() => setHoveredKey(null)}
@@ -62,10 +62,9 @@ export const TabBar: Component<TabBarProps> = (props) => {
 
               {item.closable && (
                 <group
-                  width={16}
-                  height={16}
-                  alignItems="center"
-                  justifyContent="center"
+                  w={16}
+                  h={16}
+                  align="center"
                   onPointerUp={() => props.onClose?.(item.key)}
                   onClick={() => {}}
                 >
@@ -77,7 +76,7 @@ export const TabBar: Component<TabBarProps> = (props) => {
         </For>
       </group>
 
-      <rect height={1} fill={theme().strokeDefault} />
+      <rect h={1} fill={theme().strokeDefault} />
     </group>
   )
 }

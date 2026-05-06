@@ -45,9 +45,9 @@ export const MenuItemRow: Component<{
     <rect
       fill={bg()}
       cornerRadius={theme().radiusSm}
-      height={ITEM_HEIGHT}
-      flexDirection="row"
-      alignItems="center"
+      h={ITEM_HEIGHT}
+      row
+      align="center left"
       padding={theme().spacingMd}
       gap={theme().spacingMd}
       onPointerEnter={() => setHovered(true)}
@@ -64,8 +64,8 @@ export const MenuItemRow: Component<{
         <path
           d={props.item.icon}
           fill={fg()}
-          width={16}
-          height={16}
+          w={16}
+          h={16}
         />
       )}
       <text
@@ -95,8 +95,7 @@ export const Menu: Component<MenuProps> = (props) => {
         stroke={theme().strokeDefault}
         strokeWidth={1}
         cornerRadius={theme().radiusMd}
-        width={menuWidth()}
-        flexDirection="column"
+        w={menuWidth()}
         padding={theme().spacingSm}
       >
         <For each={props.items}>

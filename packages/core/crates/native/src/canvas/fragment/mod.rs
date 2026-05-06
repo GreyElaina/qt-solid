@@ -3,6 +3,7 @@ pub mod decl;
 mod encode;
 mod hit_test;
 mod kinds;
+pub mod layout;
 mod node;
 mod paint;
 mod parse;
@@ -21,14 +22,16 @@ pub use types::*;
 
 use std::collections::HashMap;
 
-use taffy::prelude::*;
-
 use super::vello::Scene;
 use super::vello::peniko::kurbo::{Affine, BezPath, Point, Rect, Vec2};
 use super::vello::peniko::{Color, ImageData};
 use crate::renderer::compositor::effects::{BackdropBlurEffect, InnerShadowEffect};
 use crate::runtime;
 use decl::FragmentValue;
+use layout::{
+    AbsoluteInset, CellAlign, Container, CrossAlign, Direction, EdgeInsets, Overflow, Placement,
+    PrimaryAlign, SizeIntent, Sizing, TrackSize, WrapDistribute,
+};
 
 pub fn fragment_store_ensure(canvas_node_id: u32) {
     runtime::ensure_fragment_tree(canvas_node_id);
@@ -39,8 +42,25 @@ pub fn fragment_store_remove(canvas_node_id: u32) {
 }
 
 pub fn fragment_store_create_node(canvas_node_id: u32, tag: &str) -> Option<FragmentId> {
-    let kind = FragmentData::from_tag_loose(tag)?;
-    runtime::with_fragment_tree_mut(canvas_node_id, |tree| tree.create_node(kind))
+    // "grid" is a virtual tag — creates a RectFragment with Container::Grid pre-set.
+    let is_grid = tag == "grid";
+    let effective_tag = if is_grid { "rect" } else { tag };
+    let kind = FragmentData::from_tag_loose(effective_tag)?;
+    runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        let id = tree.create_node(kind);
+        if is_grid {
+            if let Some(node) = tree.nodes.get_mut(&id) {
+                node.container = Some(Container::Grid {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    column_gap: 0.0,
+                    row_gap: 0.0,
+                });
+                node.layout_dirty = true;
+            }
+        }
+        id
+    })
 }
 
 pub fn fragment_store_insert_child(
@@ -143,20 +163,11 @@ pub fn fragment_store_set_prop(
             return;
         }
 
-        if is_layout_prop(key) {
-            if let FragmentValue::F64 { value } = &value {
-                let v = *value as f32;
-                tree.with_taffy_style_mut(fragment_id, |style| {
-                    apply_layout_prop_to_style(style, key, v);
-                });
-            } else if let FragmentValue::Str { ref value } = value {
-                tree.with_taffy_style_mut(fragment_id, |style| {
-                    apply_layout_string_prop_to_style(style, key, value);
-                });
-            } else if let FragmentValue::GridTracks { ref tracks } = value {
-                tree.with_taffy_style_mut(fragment_id, |style| {
-                    apply_grid_tracks_to_style(style, key, tracks);
-                });
+        // Layout intent props — all layout keys (Figma-style + legacy CSS-style)
+        if is_layout_intent_prop(key) {
+            if let Some(node) = tree.nodes.get_mut(&fragment_id) {
+                apply_layout_intent_prop(node, key, &value);
+                node.layout_dirty = true;
             }
             tree.any_dirty = true;
             tree.aabbs_dirty = true;
@@ -216,49 +227,40 @@ pub fn fragment_store_set_prop(
             return;
         }
 
-        // Track explicit width/height and sync taffy size (before value is moved).
+        // Track explicit width/height → sizing intent + explicit paint size
         if key == "width" || key == "height" {
             if let FragmentValue::F64 { value: v } = &value {
                 let fv = *v;
                 if let Some(node) = tree.nodes.get_mut(&fragment_id) {
                     if key == "width" {
                         node.props.explicit_width = if fv > 0.0 { Some(fv) } else { None };
+                        placement_sizing_mut(&mut node.placement).w = if fv > 0.0 {
+                            Sizing::Fixed(fv as f32)
+                        } else {
+                            Sizing::Hug
+                        };
                     } else {
                         node.props.explicit_height = if fv > 0.0 { Some(fv) } else { None };
+                        placement_sizing_mut(&mut node.placement).h = if fv > 0.0 {
+                            Sizing::Fixed(fv as f32)
+                        } else {
+                            Sizing::Hug
+                        };
                     }
+                    node.layout_dirty = true;
                 }
-                let v32 = fv as f32;
-                tree.with_taffy_style_mut(fragment_id, |style| {
-                    if key == "width" {
-                        style.size.width = if v32 > 0.0 {
-                            taffy::style::Dimension::length(v32)
-                        } else {
-                            taffy::style::Dimension::auto()
-                        };
-                    } else {
-                        style.size.height = if v32 > 0.0 {
-                            taffy::style::Dimension::length(v32)
-                        } else {
-                            taffy::style::Dimension::auto()
-                        };
-                    }
-                });
             } else if let FragmentValue::Str { ref value } = value {
-                if let Some(dim) = parse_dimension_string(value) {
+                if let Some(sizing) = parse_dimension_string_to_sizing(value) {
                     if let Some(node) = tree.nodes.get_mut(&fragment_id) {
                         if key == "width" {
                             node.props.explicit_width = None;
+                            placement_sizing_mut(&mut node.placement).w = sizing;
                         } else {
                             node.props.explicit_height = None;
+                            placement_sizing_mut(&mut node.placement).h = sizing;
                         }
+                        node.layout_dirty = true;
                     }
-                    tree.with_taffy_style_mut(fragment_id, |style| {
-                        if key == "width" {
-                            style.size.width = dim;
-                        } else {
-                            style.size.height = dim;
-                        }
-                    });
                     tree.any_dirty = true;
                 }
             }
@@ -287,28 +289,39 @@ pub fn fragment_store_set_prop(
         }
         tree.invalidate_subtree_cache_for(fragment_id);
 
-        // Sync taffy position mode when x/y explicit state changes.
+        // Sync placement when x/y explicit state changes.
         if key == "x" || key == "y" {
-            let (ex, ey) = tree
-                .nodes
-                .get(&fragment_id)
-                .map(|n| (n.props.explicit_x, n.props.explicit_y))
-                .unwrap_or((None, None));
-            tree.with_taffy_style_mut(fragment_id, |style| {
+            if let Some(node) = tree.nodes.get_mut(&fragment_id) {
+                let ex = node.props.explicit_x;
+                let ey = node.props.explicit_y;
                 if ex.is_some() || ey.is_some() {
-                    style.position = taffy::style::Position::Absolute;
-                    style.inset.left = ex
-                        .map(|v| taffy::style::LengthPercentageAuto::length(v as f32))
-                        .unwrap_or(taffy::style::LengthPercentageAuto::auto());
-                    style.inset.top = ey
-                        .map(|v| taffy::style::LengthPercentageAuto::length(v as f32))
-                        .unwrap_or(taffy::style::LengthPercentageAuto::auto());
-                } else {
-                    style.position = taffy::style::Position::Relative;
-                    style.inset.left = taffy::style::LengthPercentageAuto::auto();
-                    style.inset.top = taffy::style::LengthPercentageAuto::auto();
+                    let sizing = match &node.placement {
+                        Placement::Flow { sizing, .. } => *sizing,
+                        Placement::Absolute { sizing, .. } => *sizing,
+                        Placement::GridCell { sizing, .. } => *sizing,
+                    };
+                    node.placement = Placement::Absolute {
+                        inset: AbsoluteInset {
+                            left: ex.map(|v| v as f32),
+                            top: ey.map(|v| v as f32),
+                            right: None,
+                            bottom: None,
+                        },
+                        sizing,
+                    };
+                } else if matches!(node.placement, Placement::Absolute { .. }) {
+                    let sizing = match &node.placement {
+                        Placement::Absolute { sizing, .. } => *sizing,
+                        _ => unreachable!(),
+                    };
+                    node.placement = Placement::Flow {
+                        sizing,
+                        align_self: None,
+                        margin: None,
+                    };
                 }
-            });
+                node.layout_dirty = true;
+            }
         }
     })
     .is_some()
@@ -929,10 +942,53 @@ pub fn fragment_store_set_layout_flip(
 }
 
 // ---------------------------------------------------------------------------
-// Layout prop keys
+// Layout intent prop keys — unified (Figma-style + legacy CSS-style)
 // ---------------------------------------------------------------------------
 
-const LAYOUT_PROPS: &[&str] = &[
+const LAYOUT_INTENT_PROPS: &[&str] = &[
+    // Figma-style
+    "w",
+    "h",
+    "direction",
+    "primaryAlign",
+    "crossAlign",
+    "crossGap",
+    "wrapDistribute",
+    "layoutVisible",
+    "layoutOverflow",
+    "layoutOverflowX",
+    "layoutOverflowY",
+    "layoutPadding",
+    "layoutPaddingTop",
+    "layoutPaddingRight",
+    "layoutPaddingBottom",
+    "layoutPaddingLeft",
+    "layoutPosition",
+    "layoutTop",
+    "layoutRight",
+    "layoutBottom",
+    "layoutLeft",
+    "layoutAlignSelf",
+    "layoutMargin",
+    "layoutMarginTop",
+    "layoutMarginRight",
+    "layoutMarginBottom",
+    "layoutMarginLeft",
+    "layoutMinWidth",
+    "layoutMinHeight",
+    "layoutMaxWidth",
+    "layoutMaxHeight",
+    "layoutGridColumns",
+    "layoutGridRows",
+    "layoutGridColumnGap",
+    "layoutGridRowGap",
+    "layoutGridRow",
+    "layoutGridColumn",
+    "layoutGridRowSpan",
+    "layoutGridColSpan",
+    "layoutGridHAlign",
+    "layoutGridVAlign",
+    // Legacy CSS-style
     "display",
     "flexDirection",
     "flexGrow",
@@ -943,6 +999,7 @@ const LAYOUT_PROPS: &[&str] = &[
     "alignSelf",
     "justifyContent",
     "gap",
+    "wrap",
     "padding",
     "paddingTop",
     "paddingRight",
@@ -970,9 +1027,680 @@ const LAYOUT_PROPS: &[&str] = &[
     "gridColSpan",
 ];
 
-// ---------------------------------------------------------------------------
-// Semantics prop helpers — accessibility data
-// ---------------------------------------------------------------------------
+fn is_layout_intent_prop(key: &str) -> bool {
+    LAYOUT_INTENT_PROPS.contains(&key)
+}
+
+fn parse_sizing(value: &FragmentValue) -> Option<Sizing> {
+    match value {
+        FragmentValue::Str { value } => match value.as_str() {
+            "hug" => Some(Sizing::Hug),
+            "fill" => Some(Sizing::Fill),
+            s => {
+                if let Some(fr) = s.strip_suffix("fr") {
+                    fr.parse::<f32>().ok().map(Sizing::Flex)
+                } else if let Some(pct) = s.strip_suffix('%') {
+                    pct.parse::<f32>().ok().map(|v| Sizing::Percent(v / 100.0))
+                } else {
+                    None
+                }
+            }
+        },
+        FragmentValue::F64 { value } => Some(Sizing::Fixed(*value as f32)),
+        _ => None,
+    }
+}
+
+fn placement_sizing_mut(placement: &mut Placement) -> &mut SizeIntent {
+    match placement {
+        Placement::Flow { sizing, .. } => sizing,
+        Placement::Absolute { sizing, .. } => sizing,
+        Placement::GridCell { sizing, .. } => sizing,
+    }
+}
+
+fn apply_layout_intent_prop(node: &mut FragmentNode, key: &str, value: &FragmentValue) {
+    match key {
+        // ─── Sizing ───
+        "w" => {
+            if let Some(s) = parse_sizing(value) {
+                placement_sizing_mut(&mut node.placement).w = s;
+            }
+        }
+        "h" => {
+            if let Some(s) = parse_sizing(value) {
+                placement_sizing_mut(&mut node.placement).h = s;
+            }
+        }
+        "layoutMinWidth" => {
+            if let FragmentValue::F64 { value } = value {
+                placement_sizing_mut(&mut node.placement).min_w = Some(*value as f32);
+            }
+        }
+        "layoutMinHeight" => {
+            if let FragmentValue::F64 { value } = value {
+                placement_sizing_mut(&mut node.placement).min_h = Some(*value as f32);
+            }
+        }
+        "layoutMaxWidth" => {
+            if let FragmentValue::F64 { value } = value {
+                placement_sizing_mut(&mut node.placement).max_w = Some(*value as f32);
+            }
+        }
+        "layoutMaxHeight" => {
+            if let FragmentValue::F64 { value } = value {
+                placement_sizing_mut(&mut node.placement).max_h = Some(*value as f32);
+            }
+        }
+
+        // ─── Container (Flex) ───
+        "direction" => {
+            if let FragmentValue::Str { value } = value {
+                let dir = match value.as_str() {
+                    "horizontal" => Direction::Horizontal,
+                    _ => Direction::Vertical,
+                };
+                match &mut node.container {
+                    Some(Container::Flex { direction, .. }) => *direction = dir,
+                    _ => {
+                        node.container = Some(Container::Flex {
+                            direction: dir,
+                            primary_align: PrimaryAlign::default(),
+                            cross_align: CrossAlign::default(),
+                            gap: 0.0,
+                            cross_gap: None,
+                            wrap: false,
+                            wrap_distribute: WrapDistribute::default(),
+                        });
+                    }
+                }
+            }
+        }
+        "primaryAlign" => {
+            if let FragmentValue::Str { value } = value {
+                let align = match value.as_str() {
+                    "center" => PrimaryAlign::Center,
+                    "end" => PrimaryAlign::End,
+                    "space-between" => PrimaryAlign::SpaceBetween,
+                    "space-around" => PrimaryAlign::SpaceAround,
+                    "space-evenly" => PrimaryAlign::SpaceEvenly,
+                    _ => PrimaryAlign::Start,
+                };
+                ensure_flex_container(node);
+                if let Some(Container::Flex { primary_align, .. }) = &mut node.container {
+                    *primary_align = align;
+                }
+            }
+        }
+        "crossAlign" => {
+            if let FragmentValue::Str { value } = value {
+                let align = match value.as_str() {
+                    "center" => CrossAlign::Center,
+                    "end" => CrossAlign::End,
+                    "stretch" => CrossAlign::Stretch,
+                    "baseline" => CrossAlign::Baseline,
+                    _ => CrossAlign::Start,
+                };
+                ensure_flex_container(node);
+                if let Some(Container::Flex { cross_align, .. }) = &mut node.container {
+                    *cross_align = align;
+                }
+            }
+        }
+        "gap" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_flex_container(node);
+                if let Some(Container::Flex { gap, .. }) = &mut node.container {
+                    *gap = *value as f32;
+                }
+            }
+        }
+        "crossGap" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_flex_container(node);
+                if let Some(Container::Flex { cross_gap, .. }) = &mut node.container {
+                    *cross_gap = Some(*value as f32);
+                }
+            }
+        }
+        "wrap" => {
+            if let FragmentValue::Bool { value } = value {
+                ensure_flex_container(node);
+                if let Some(Container::Flex { wrap, .. }) = &mut node.container {
+                    *wrap = *value;
+                }
+            }
+        }
+        "wrapDistribute" => {
+            if let FragmentValue::Str { value } = value {
+                let dist = match value.as_str() {
+                    "space-between" => WrapDistribute::SpaceBetween,
+                    _ => WrapDistribute::Packed,
+                };
+                ensure_flex_container(node);
+                if let Some(Container::Flex { wrap_distribute, .. }) = &mut node.container {
+                    *wrap_distribute = dist;
+                }
+            }
+        }
+
+        // ─── Padding ───
+        "layoutPadding" => {
+            if let FragmentValue::F64 { value } = value {
+                let v = *value as f32;
+                node.padding = EdgeInsets { top: v, right: v, bottom: v, left: v };
+            }
+        }
+        "layoutPaddingTop" => {
+            if let FragmentValue::F64 { value } = value {
+                node.padding.top = *value as f32;
+            }
+        }
+        "layoutPaddingRight" => {
+            if let FragmentValue::F64 { value } = value {
+                node.padding.right = *value as f32;
+            }
+        }
+        "layoutPaddingBottom" => {
+            if let FragmentValue::F64 { value } = value {
+                node.padding.bottom = *value as f32;
+            }
+        }
+        "layoutPaddingLeft" => {
+            if let FragmentValue::F64 { value } = value {
+                node.padding.left = *value as f32;
+            }
+        }
+
+        // ─── Overflow / Visibility ───
+        "layoutOverflow" => {
+            if let FragmentValue::Str { value } = value {
+                let ov = match value.as_str() {
+                    "clip" => Overflow::Clip,
+                    "hidden" => Overflow::Hidden,
+                    "scroll" => Overflow::Scroll,
+                    _ => Overflow::Visible,
+                };
+                node.overflow_x = ov;
+                node.overflow_y = ov;
+            }
+        }
+        "layoutOverflowX" => {
+            if let FragmentValue::Str { value } = value {
+                node.overflow_x = match value.as_str() {
+                    "clip" => Overflow::Clip,
+                    "hidden" => Overflow::Hidden,
+                    "scroll" => Overflow::Scroll,
+                    _ => Overflow::Visible,
+                };
+            }
+        }
+        "layoutOverflowY" => {
+            if let FragmentValue::Str { value } = value {
+                node.overflow_y = match value.as_str() {
+                    "clip" => Overflow::Clip,
+                    "hidden" => Overflow::Hidden,
+                    "scroll" => Overflow::Scroll,
+                    _ => Overflow::Visible,
+                };
+            }
+        }
+        "layoutVisible" => {
+            if let FragmentValue::Bool { value } = value {
+                node.layout_visible = *value;
+            }
+        }
+
+        // ─── Placement: Absolute ───
+        "layoutPosition" => {
+            if let FragmentValue::Str { value } = value {
+                if value == "absolute" {
+                    let sizing = match &node.placement {
+                        Placement::Flow { sizing, .. } => *sizing,
+                        Placement::Absolute { sizing, .. } => *sizing,
+                        Placement::GridCell { sizing, .. } => *sizing,
+                    };
+                    node.placement = Placement::Absolute {
+                        inset: AbsoluteInset::default(),
+                        sizing,
+                    };
+                } else {
+                    // Back to flow
+                    let sizing = match &node.placement {
+                        Placement::Flow { sizing, .. } => *sizing,
+                        Placement::Absolute { sizing, .. } => *sizing,
+                        Placement::GridCell { sizing, .. } => *sizing,
+                    };
+                    node.placement = Placement::Flow {
+                        sizing,
+                        align_self: None,
+                        margin: None,
+                    };
+                }
+            }
+        }
+        "layoutTop" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Absolute { inset, .. } = &mut node.placement {
+                    inset.top = Some(*value as f32);
+                }
+            }
+        }
+        "layoutRight" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Absolute { inset, .. } = &mut node.placement {
+                    inset.right = Some(*value as f32);
+                }
+            }
+        }
+        "layoutBottom" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Absolute { inset, .. } = &mut node.placement {
+                    inset.bottom = Some(*value as f32);
+                }
+            }
+        }
+        "layoutLeft" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Absolute { inset, .. } = &mut node.placement {
+                    inset.left = Some(*value as f32);
+                }
+            }
+        }
+
+        // ─── Placement: align_self / margin ───
+        "layoutAlignSelf" => {
+            if let FragmentValue::Str { value } = value {
+                let a = match value.as_str() {
+                    "center" => Some(CrossAlign::Center),
+                    "end" => Some(CrossAlign::End),
+                    "stretch" => Some(CrossAlign::Stretch),
+                    "baseline" => Some(CrossAlign::Baseline),
+                    "start" => Some(CrossAlign::Start),
+                    _ => None,
+                };
+                if let Placement::Flow { align_self, .. } = &mut node.placement {
+                    *align_self = a;
+                }
+            }
+        }
+        "layoutMargin" => {
+            if let FragmentValue::F64 { value } = value {
+                let v = *value as f32;
+                let m = EdgeInsets { top: v, right: v, bottom: v, left: v };
+                if let Placement::Flow { margin, .. } = &mut node.placement {
+                    *margin = Some(m);
+                }
+            }
+        }
+        "layoutMarginTop" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Flow { margin, .. } = &mut node.placement {
+                    margin.get_or_insert(EdgeInsets::default()).top = *value as f32;
+                }
+            }
+        }
+        "layoutMarginRight" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Flow { margin, .. } = &mut node.placement {
+                    margin.get_or_insert(EdgeInsets::default()).right = *value as f32;
+                }
+            }
+        }
+        "layoutMarginBottom" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Flow { margin, .. } = &mut node.placement {
+                    margin.get_or_insert(EdgeInsets::default()).bottom = *value as f32;
+                }
+            }
+        }
+        "layoutMarginLeft" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Placement::Flow { margin, .. } = &mut node.placement {
+                    margin.get_or_insert(EdgeInsets::default()).left = *value as f32;
+                }
+            }
+        }
+
+        // ─── Grid container ───
+        "layoutGridColumns" => {
+            if let FragmentValue::GridTracks { tracks } = value {
+                let cols: Vec<TrackSize> = tracks.iter().map(|t| parse_intent_track(t)).collect();
+                match &mut node.container {
+                    Some(Container::Grid { columns, .. }) => *columns = cols,
+                    _ => {
+                        node.container = Some(Container::Grid {
+                            columns: cols,
+                            rows: Vec::new(),
+                            column_gap: 0.0,
+                            row_gap: 0.0,
+                        });
+                    }
+                }
+            }
+        }
+        "layoutGridRows" => {
+            if let FragmentValue::GridTracks { tracks } = value {
+                let rs: Vec<TrackSize> = tracks.iter().map(|t| parse_intent_track(t)).collect();
+                match &mut node.container {
+                    Some(Container::Grid { rows, .. }) => *rows = rs,
+                    _ => {
+                        node.container = Some(Container::Grid {
+                            columns: Vec::new(),
+                            rows: rs,
+                            column_gap: 0.0,
+                            row_gap: 0.0,
+                        });
+                    }
+                }
+            }
+        }
+        "layoutGridColumnGap" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Some(Container::Grid { column_gap, .. }) = &mut node.container {
+                    *column_gap = *value as f32;
+                }
+            }
+        }
+        "layoutGridRowGap" => {
+            if let FragmentValue::F64 { value } = value {
+                if let Some(Container::Grid { row_gap, .. }) = &mut node.container {
+                    *row_gap = *value as f32;
+                }
+            }
+        }
+
+        // ─── Grid child ───
+        "layoutGridRow" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { row, .. } = &mut node.placement {
+                    *row = *value as u16;
+                }
+            }
+        }
+        "layoutGridColumn" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { column, .. } = &mut node.placement {
+                    *column = *value as u16;
+                }
+            }
+        }
+        "layoutGridRowSpan" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { row_span, .. } = &mut node.placement {
+                    *row_span = (*value as u16).max(1);
+                }
+            }
+        }
+        "layoutGridColSpan" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { col_span, .. } = &mut node.placement {
+                    *col_span = (*value as u16).max(1);
+                }
+            }
+        }
+        "layoutGridHAlign" => {
+            if let FragmentValue::Str { value } = value {
+                let a = match value.as_str() {
+                    "start" => CellAlign::Start,
+                    "center" => CellAlign::Center,
+                    "end" => CellAlign::End,
+                    _ => CellAlign::Auto,
+                };
+                if let Placement::GridCell { h_align, .. } = &mut node.placement {
+                    *h_align = a;
+                }
+            }
+        }
+        "layoutGridVAlign" => {
+            if let FragmentValue::Str { value } = value {
+                let a = match value.as_str() {
+                    "start" => CellAlign::Start,
+                    "center" => CellAlign::Center,
+                    "end" => CellAlign::End,
+                    _ => CellAlign::Auto,
+                };
+                if let Placement::GridCell { v_align, .. } = &mut node.placement {
+                    *v_align = a;
+                }
+            }
+        }
+
+        // ─── Legacy CSS-style keys ───
+
+        "flexDirection" => {
+            if let FragmentValue::Str { value } = value {
+                let dir = match value.as_str() {
+                    "row" => Direction::Horizontal,
+                    "column" => Direction::Vertical,
+                    _ => Direction::Vertical,
+                };
+                ensure_flex_container(node);
+                if let Some(Container::Flex { direction, .. }) = &mut node.container {
+                    *direction = dir;
+                }
+            }
+        }
+        "justifyContent" => {
+            if let FragmentValue::Str { value } = value {
+                let align = match value.as_str() {
+                    "flex-start" | "start" => PrimaryAlign::Start,
+                    "flex-end" | "end" => PrimaryAlign::End,
+                    "center" => PrimaryAlign::Center,
+                    "space-between" => PrimaryAlign::SpaceBetween,
+                    "space-around" => PrimaryAlign::SpaceAround,
+                    "space-evenly" => PrimaryAlign::SpaceEvenly,
+                    _ => PrimaryAlign::Start,
+                };
+                ensure_flex_container(node);
+                if let Some(Container::Flex { primary_align, .. }) = &mut node.container {
+                    *primary_align = align;
+                }
+            }
+        }
+        "alignItems" => {
+            if let FragmentValue::Str { value } = value {
+                let align = match value.as_str() {
+                    "flex-start" | "start" => CrossAlign::Start,
+                    "flex-end" | "end" => CrossAlign::End,
+                    "center" => CrossAlign::Center,
+                    "stretch" => CrossAlign::Stretch,
+                    "baseline" => CrossAlign::Baseline,
+                    _ => CrossAlign::Start,
+                };
+                ensure_flex_container(node);
+                if let Some(Container::Flex { cross_align, .. }) = &mut node.container {
+                    *cross_align = align;
+                }
+            }
+        }
+        "flexWrap" => {
+            if let FragmentValue::Str { value } = value {
+                let w = matches!(value.as_str(), "wrap");
+                ensure_flex_container(node);
+                if let Some(Container::Flex { wrap, .. }) = &mut node.container {
+                    *wrap = w;
+                }
+            }
+        }
+        "display" => {
+            if let FragmentValue::Str { value } = value {
+                match value.as_str() {
+                    "none" => node.layout_visible = false,
+                    "grid" => {
+                        if !matches!(node.container, Some(Container::Grid { .. })) {
+                            node.container = Some(Container::Grid {
+                                columns: Vec::new(),
+                                rows: Vec::new(),
+                                column_gap: 0.0,
+                                row_gap: 0.0,
+                            });
+                        }
+                        node.layout_visible = true;
+                    }
+                    _ => {
+                        node.layout_visible = true;
+                    }
+                }
+            }
+        }
+        "flexGrow" => {
+            if let FragmentValue::F64 { value } = value {
+                if *value as f32 > 0.0 {
+                    placement_sizing_mut(&mut node.placement).w = Sizing::Fill;
+                }
+            }
+        }
+        "flexShrink" | "flexBasis" => {
+            // Subsumed by Sizing::Fill/Hug/Fixed — derive generates correct values.
+        }
+        "alignSelf" => {
+            if let FragmentValue::Str { value } = value {
+                let a = match value.as_str() {
+                    "flex-start" | "start" => Some(CrossAlign::Start),
+                    "flex-end" | "end" => Some(CrossAlign::End),
+                    "center" => Some(CrossAlign::Center),
+                    "stretch" => Some(CrossAlign::Stretch),
+                    _ => None,
+                };
+                if let Placement::Flow { align_self, .. } = &mut node.placement {
+                    *align_self = a;
+                }
+            }
+        }
+        "gridTemplateColumns" | "gridTemplateRows" => {
+            if let FragmentValue::GridTracks { tracks } = value {
+                let parsed: Vec<TrackSize> = tracks.iter().map(|t| parse_intent_track(t)).collect();
+                match key {
+                    "gridTemplateColumns" => {
+                        match &mut node.container {
+                            Some(Container::Grid { columns, .. }) => *columns = parsed,
+                            _ => {
+                                node.container = Some(Container::Grid {
+                                    columns: parsed,
+                                    rows: Vec::new(),
+                                    column_gap: 0.0,
+                                    row_gap: 0.0,
+                                });
+                            }
+                        }
+                    }
+                    "gridTemplateRows" => {
+                        match &mut node.container {
+                            Some(Container::Grid { rows, .. }) => *rows = parsed,
+                            _ => {
+                                node.container = Some(Container::Grid {
+                                    columns: Vec::new(),
+                                    rows: parsed,
+                                    column_gap: 0.0,
+                                    row_gap: 0.0,
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "gridAutoFlow" => {
+            if !matches!(node.container, Some(Container::Grid { .. })) {
+                node.container = Some(Container::Grid {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    column_gap: 0.0,
+                    row_gap: 0.0,
+                });
+            }
+        }
+        "gridRow" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { row, .. } = &mut node.placement {
+                    *row = *value as u16;
+                }
+            }
+        }
+        "gridColumn" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { column, .. } = &mut node.placement {
+                    *column = *value as u16;
+                }
+            }
+        }
+        "gridRowSpan" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { row_span, .. } = &mut node.placement {
+                    *row_span = (*value as u16).max(1);
+                }
+            }
+        }
+        "gridColSpan" => {
+            if let FragmentValue::F64 { value } = value {
+                ensure_grid_cell(node);
+                if let Placement::GridCell { col_span, .. } = &mut node.placement {
+                    *col_span = (*value as u16).max(1);
+                }
+            }
+        }
+
+        _ => {}
+    }
+}
+
+fn ensure_flex_container(node: &mut FragmentNode) {
+    if !matches!(node.container, Some(Container::Flex { .. })) {
+        node.container = Some(Container::Flex {
+            direction: Direction::default(),
+            primary_align: PrimaryAlign::default(),
+            cross_align: CrossAlign::default(),
+            gap: 0.0,
+            cross_gap: None,
+            wrap: false,
+            wrap_distribute: WrapDistribute::default(),
+        });
+    }
+}
+
+fn ensure_grid_cell(node: &mut FragmentNode) {
+    if !matches!(node.placement, Placement::GridCell { .. }) {
+        let sizing = match &node.placement {
+            Placement::Flow { sizing, .. } => *sizing,
+            Placement::Absolute { sizing, .. } => *sizing,
+            Placement::GridCell { sizing, .. } => *sizing,
+        };
+        node.placement = Placement::GridCell {
+            row: 0,
+            column: 0,
+            row_span: 1,
+            col_span: 1,
+            h_align: CellAlign::Auto,
+            v_align: CellAlign::Auto,
+            sizing,
+        };
+    }
+}
+
+fn parse_intent_track(s: &str) -> TrackSize {
+    let s = s.trim();
+    if s == "hug" {
+        return TrackSize::Hug;
+    }
+    if let Some(fr_str) = s.strip_suffix("fr") {
+        if let Ok(v) = fr_str.trim().parse::<f32>() {
+            return TrackSize::Flex(v);
+        }
+    }
+    if let Ok(v) = s.parse::<f32>() {
+        return TrackSize::Fixed(v);
+    }
+    TrackSize::Hug
+}
 
 fn is_semantics_prop(key: &str) -> bool {
     matches!(
@@ -1113,244 +1841,21 @@ fn parse_a11y_role(role: &str) -> accesskit::Role {
     }
 }
 
-fn is_layout_prop(key: &str) -> bool {
-    LAYOUT_PROPS.contains(&key)
-}
-
-/// Parse dimension strings like "100%", "50%", "auto".
-fn parse_dimension_string(s: &str) -> Option<taffy::style::Dimension> {
+/// Parse dimension strings like "100%", "50%", "auto" to Sizing.
+fn parse_dimension_string_to_sizing(s: &str) -> Option<Sizing> {
     let s = s.trim();
     if s == "auto" {
-        return Some(taffy::style::Dimension::auto());
+        return Some(Sizing::Hug);
     }
     if let Some(pct) = s.strip_suffix('%') {
         if let Ok(v) = pct.trim().parse::<f32>() {
-            return Some(taffy::style::Dimension::percent(v / 100.0));
+            return Some(Sizing::Percent(v / 100.0));
         }
     }
     None
 }
 
-fn apply_layout_prop_to_style(style: &mut taffy::Style, key: &str, v: f32) {
-    match key {
-        "flexGrow" => style.flex_grow = v,
-        "flexShrink" => style.flex_shrink = v,
-        "flexBasis" => style.flex_basis = taffy::style::Dimension::length(v),
-        "gap" => {
-            style.gap = taffy::geometry::Size {
-                width: taffy::style::LengthPercentage::length(v),
-                height: taffy::style::LengthPercentage::length(v),
-            };
-        }
-        "padding" => {
-            let lp = taffy::style::LengthPercentage::length(v);
-            style.padding = taffy::geometry::Rect {
-                top: lp,
-                right: lp,
-                bottom: lp,
-                left: lp,
-            };
-        }
-        "margin" => {
-            let lpa = taffy::style::LengthPercentageAuto::length(v);
-            style.margin = taffy::geometry::Rect {
-                top: lpa,
-                right: lpa,
-                bottom: lpa,
-                left: lpa,
-            };
-        }
-        "paddingTop" => style.padding.top = taffy::style::LengthPercentage::length(v),
-        "paddingRight" => style.padding.right = taffy::style::LengthPercentage::length(v),
-        "paddingBottom" => style.padding.bottom = taffy::style::LengthPercentage::length(v),
-        "paddingLeft" => style.padding.left = taffy::style::LengthPercentage::length(v),
-        "marginTop" => style.margin.top = taffy::style::LengthPercentageAuto::length(v),
-        "marginRight" => style.margin.right = taffy::style::LengthPercentageAuto::length(v),
-        "marginBottom" => style.margin.bottom = taffy::style::LengthPercentageAuto::length(v),
-        "marginLeft" => style.margin.left = taffy::style::LengthPercentageAuto::length(v),
-        "minWidth" => style.min_size.width = taffy::style::Dimension::length(v),
-        "minHeight" => style.min_size.height = taffy::style::Dimension::length(v),
-        "maxWidth" => style.max_size.width = taffy::style::Dimension::length(v),
-        "maxHeight" => style.max_size.height = taffy::style::Dimension::length(v),
-        "gridRow" => {
-            let idx = v as i16;
-            style.grid_row = taffy::geometry::Line {
-                start: GridPlacement::from_line_index(idx),
-                end: GridPlacement::Auto,
-            };
-        }
-        "gridColumn" => {
-            let idx = v as i16;
-            style.grid_column = taffy::geometry::Line {
-                start: GridPlacement::from_line_index(idx),
-                end: GridPlacement::Auto,
-            };
-        }
-        "gridRowSpan" => {
-            let s = (v as u16).max(1);
-            style.grid_row = taffy::geometry::Line {
-                start: style.grid_row.start.clone(),
-                end: GridPlacement::Span(s),
-            };
-        }
-        "gridColSpan" => {
-            let s = (v as u16).max(1);
-            style.grid_column = taffy::geometry::Line {
-                start: style.grid_column.start.clone(),
-                end: GridPlacement::Span(s),
-            };
-        }
-        _ => {}
-    }
-}
 
-fn apply_layout_string_prop_to_style(style: &mut taffy::Style, key: &str, v: &str) {
-    match key {
-        "display" => {
-            style.display = match v {
-                "flex" => taffy::style::Display::Flex,
-                "grid" => taffy::style::Display::Grid,
-                "none" => taffy::style::Display::None,
-                _ => taffy::style::Display::Flex,
-            };
-        }
-        "gridAutoFlow" => {
-            style.grid_auto_flow = match v {
-                "row" => GridAutoFlow::Row,
-                "column" => GridAutoFlow::Column,
-                "row-dense" => GridAutoFlow::RowDense,
-                "column-dense" => GridAutoFlow::ColumnDense,
-                _ => GridAutoFlow::Row,
-            };
-        }
-        "flexDirection" => {
-            style.flex_direction = match v {
-                "row" => taffy::style::FlexDirection::Row,
-                "column" => taffy::style::FlexDirection::Column,
-                "row-reverse" => taffy::style::FlexDirection::RowReverse,
-                "column-reverse" => taffy::style::FlexDirection::ColumnReverse,
-                _ => taffy::style::FlexDirection::Column,
-            };
-        }
-        "flexWrap" => {
-            style.flex_wrap = match v {
-                "nowrap" => taffy::style::FlexWrap::NoWrap,
-                "wrap" => taffy::style::FlexWrap::Wrap,
-                "wrap-reverse" => taffy::style::FlexWrap::WrapReverse,
-                _ => taffy::style::FlexWrap::NoWrap,
-            };
-        }
-        "alignItems" => {
-            style.align_items = match v {
-                "flex-start" | "start" => Some(taffy::style::AlignItems::FlexStart),
-                "flex-end" | "end" => Some(taffy::style::AlignItems::FlexEnd),
-                "center" => Some(taffy::style::AlignItems::Center),
-                "stretch" => Some(taffy::style::AlignItems::Stretch),
-                "baseline" => Some(taffy::style::AlignItems::Baseline),
-                _ => None,
-            };
-        }
-        "alignSelf" => {
-            style.align_self = match v {
-                "flex-start" | "start" => Some(taffy::style::AlignSelf::FlexStart),
-                "flex-end" | "end" => Some(taffy::style::AlignSelf::FlexEnd),
-                "center" => Some(taffy::style::AlignSelf::Center),
-                "stretch" => Some(taffy::style::AlignSelf::Stretch),
-                _ => None,
-            };
-        }
-        "justifyContent" => {
-            style.justify_content = match v {
-                "flex-start" | "start" => Some(taffy::style::JustifyContent::FlexStart),
-                "flex-end" | "end" => Some(taffy::style::JustifyContent::FlexEnd),
-                "center" => Some(taffy::style::JustifyContent::Center),
-                "space-between" => Some(taffy::style::JustifyContent::SpaceBetween),
-                "space-around" => Some(taffy::style::JustifyContent::SpaceAround),
-                "space-evenly" => Some(taffy::style::JustifyContent::SpaceEvenly),
-                _ => None,
-            };
-        }
-        "position" => {
-            style.position = match v {
-                "relative" => taffy::style::Position::Relative,
-                "absolute" => taffy::style::Position::Absolute,
-                _ => taffy::style::Position::Relative,
-            };
-        }
-        "overflow" => {
-            let ov = match v {
-                "visible" => taffy::style::Overflow::Visible,
-                "clip" => taffy::style::Overflow::Clip,
-                "hidden" => taffy::style::Overflow::Hidden,
-                "scroll" => taffy::style::Overflow::Scroll,
-                _ => taffy::style::Overflow::Visible,
-            };
-            style.overflow = taffy::geometry::Point { x: ov, y: ov };
-        }
-        "overflowX" => {
-            style.overflow.x = match v {
-                "visible" => taffy::style::Overflow::Visible,
-                "clip" => taffy::style::Overflow::Clip,
-                "hidden" => taffy::style::Overflow::Hidden,
-                "scroll" => taffy::style::Overflow::Scroll,
-                _ => taffy::style::Overflow::Visible,
-            };
-        }
-        "overflowY" => {
-            style.overflow.y = match v {
-                "visible" => taffy::style::Overflow::Visible,
-                "clip" => taffy::style::Overflow::Clip,
-                "hidden" => taffy::style::Overflow::Hidden,
-                "scroll" => taffy::style::Overflow::Scroll,
-                _ => taffy::style::Overflow::Visible,
-            };
-        }
-        _ => {}
-    }
-}
-
-fn parse_track_size(s: &str) -> GridTemplateComponent<String> {
-    let s = s.trim();
-    if s == "auto" {
-        return GridTemplateComponent::AUTO;
-    }
-    if s == "min-content" {
-        return GridTemplateComponent::MIN_CONTENT;
-    }
-    if s == "max-content" {
-        return GridTemplateComponent::MAX_CONTENT;
-    }
-    if let Some(fr_str) = s.strip_suffix("fr") {
-        if let Ok(v) = fr_str.trim().parse::<f32>() {
-            return GridTemplateComponent::from_fr(v);
-        }
-    }
-    if let Some(pct_str) = s.strip_suffix('%') {
-        if let Ok(v) = pct_str.trim().parse::<f32>() {
-            return GridTemplateComponent::from_percent(v / 100.0);
-        }
-    }
-    if let Ok(v) = s.parse::<f32>() {
-        return GridTemplateComponent::from_length(v);
-    }
-    GridTemplateComponent::AUTO
-}
-
-fn apply_grid_tracks_to_style(style: &mut taffy::Style, key: &str, tracks: &[String]) {
-    let parsed: Vec<GridTemplateComponent<String>> =
-        tracks.iter().map(|t| parse_track_size(t)).collect();
-    match key {
-        "gridTemplateRows" => {
-            style.display = taffy::style::Display::Grid;
-            style.grid_template_rows = parsed;
-        }
-        "gridTemplateColumns" => {
-            style.display = taffy::style::Display::Grid;
-            style.grid_template_columns = parsed;
-        }
-        _ => {}
-    }
-}
 
 fn apply_fragment_prop(node: &mut FragmentNode, key: &str, value: FragmentValue) {
     match key {

@@ -36,9 +36,9 @@ function createRenderingGalleryWindow(): WindowHandle {
       height: 800,
     },
     () => (
-      <rect fill={BG} flexGrow={1}>
-        <ScrollView flexGrow={1}>
-        <group flexDirection="column" padding={20} gap={16}>
+      <rect fill={BG} h="fill">
+        <ScrollView h="fill">
+        <group padding={20} gap={16}>
 
             <text text="qt-solid · Rendering Feature Gallery" fontSize={14} color={TEXT_} />
 
@@ -48,10 +48,10 @@ function createRenderingGalleryWindow(): WindowHandle {
             <text text="Gradients" fontSize={18} color={MAUVE} />
             <text text="Linear, radial, and sweep gradient fills" fontSize={12} color={SUBTEXT} />
 
-            <group flexDirection="row" gap={20} flexWrap="wrap">
+            <group row wrap gap={20}>
               {/* Linear gradient — diagonal blue→purple */}
-              <group flexDirection="column" gap={4}>
-                <rect width={120} height={80} fill={{
+              <group gap={4}>
+                <rect w={120} h={80} fill={{
                   type: "linearGradient",
                   startX: 0, startY: 0,
                   endX: 120, endY: 80,
@@ -61,8 +61,8 @@ function createRenderingGalleryWindow(): WindowHandle {
               </group>
 
               {/* Radial gradient — warm center→edge */}
-              <group flexDirection="column" gap={4}>
-                <rect width={120} height={120} fill={{
+              <group gap={4}>
+                <rect w={120} h={120} fill={{
                   type: "radialGradient",
                   centerX: 60, centerY: 60,
                   radius: 60,
@@ -72,8 +72,8 @@ function createRenderingGalleryWindow(): WindowHandle {
               </group>
 
               {/* Sweep gradient — rainbow ring */}
-              <group flexDirection="column" gap={4}>
-                <rect width={120} height={120} fill={{
+              <group gap={4}>
+                <rect w={120} h={120} fill={{
                   type: "sweepGradient",
                   centerX: 60, centerY: 60,
                   startAngle: 0, endAngle: 360,
@@ -88,8 +88,8 @@ function createRenderingGalleryWindow(): WindowHandle {
               </group>
 
               {/* Horizontal pill */}
-              <group flexDirection="column" gap={4}>
-                <rect width={180} height={80} fill={{
+              <group gap={4}>
+                <rect w={180} h={80} fill={{
                   type: "linearGradient",
                   startX: 0, startY: 0,
                   endX: 180, endY: 0,
@@ -104,7 +104,7 @@ function createRenderingGalleryWindow(): WindowHandle {
             </group>
 
             {/* Separator */}
-            <rect height={1} fill={OVERLAY} />
+            <rect h={1} fill={OVERLAY} />
 
             {/* ============================================================= */}
             {/* Section 2: Shadows (T2.2)                                     */}
@@ -112,31 +112,31 @@ function createRenderingGalleryWindow(): WindowHandle {
             <text text="Shadows" fontSize={18} color={MAUVE} />
             <text text="Outer shadow vs inner (inset) shadow" fontSize={12} color={SUBTEXT} />
 
-            <group flexDirection="row" gap={40}>
+            <group row gap={40}>
               {/* Outer shadow */}
-              <group flexDirection="column" gap={8}>
-                <rect width={160} height={80} fill={SURFACE} cornerRadius={10}
+              <group gap={8}>
+                <rect w={160} h={80} fill={SURFACE} cornerRadius={10}
                   shadow={{ offsetX: 4, offsetY: 4, blur: 12, color: "#00000060" }} />
                 <text text="Outer shadow" fontSize={11} color={SUBTEXT} />
               </group>
 
               {/* Inner shadow */}
-              <group flexDirection="column" gap={8}>
-                <rect width={160} height={80} fill={SURFACE} cornerRadius={10}
+              <group gap={8}>
+                <rect w={160} h={80} fill={SURFACE} cornerRadius={10}
                   shadow={{ offsetX: 2, offsetY: 2, blur: 8, color: "#00000080", inset: true }} />
                 <text text="Inner shadow" fontSize={11} color={SUBTEXT} />
               </group>
 
               {/* Comparison card */}
-              <group flexDirection="column" gap={8}>
-                <rect width={160} height={80} fill={SURFACE} cornerRadius={10}
+              <group gap={8}>
+                <rect w={160} h={80} fill={SURFACE} cornerRadius={10}
                   shadow={{ offsetX: 3, offsetY: 3, blur: 10, color: "#00000070" }} />
                 <text text="Card with drop shadow" fontSize={11} color={SUBTEXT} />
               </group>
             </group>
 
             {/* Separator */}
-            <rect height={1} fill={OVERLAY} />
+            <rect h={1} fill={OVERLAY} />
 
             {/* ============================================================= */}
             {/* Section 3: Backdrop Blur (T2.3)                               */}
@@ -144,35 +144,35 @@ function createRenderingGalleryWindow(): WindowHandle {
             <text text="Backdrop Blur" fontSize={18} color={MAUVE} />
             <text text="Frosted glass effect over colorful background" fontSize={12} color={SUBTEXT} />
 
-            <group flexDirection="row" gap={20}>
+            <group row gap={20}>
               {/* Demo 1: moderate blur */}
-              <group width={280} height={120}>
-                <rect width={280} height={120} fill={RED} cornerRadius={8} />
-                <rect x={40} y={20} width={80} height={80} fill={BLUE} cornerRadius={40} />
-                <rect x={140} y={10} width={100} height={60} fill={GREEN} cornerRadius={12} />
+              <group w={280} h={120}>
+                <rect w={280} h={120} fill={RED} cornerRadius={8} />
+                <rect transformX={40} transformY={20} w={80} h={80} fill={BLUE} cornerRadius={40} />
+                <rect transformX={140} transformY={10} w={100} h={60} fill={GREEN} cornerRadius={12} />
                 <circle cx={240} cy={80} r={30} fill={YELLOW} />
 
-                <rect x={30} y={20} width={220} height={80} fill="#1e1e2e80"
+                <rect transformX={30} transformY={20} w={220} h={80} fill="#1e1e2e80"
                   cornerRadius={12} backdropBlur={12} />
-                <text x={50} y={46} text="Frosted Glass" fontSize={14} color={TEXT_} />
-                <text x={50} y={66} text="backdropBlur={12}" fontSize={10} color={SUBTEXT} />
+                <text transformX={50} transformY={46} text="Frosted Glass" fontSize={14} color={TEXT_} />
+                <text transformX={50} transformY={66} text="backdropBlur={12}" fontSize={10} color={SUBTEXT} />
               </group>
 
               {/* Demo 2: heavy blur */}
-              <group width={240} height={120}>
-                <rect width={240} height={120} fill={MAUVE} cornerRadius={8} />
+              <group w={240} h={120}>
+                <rect w={240} h={120} fill={MAUVE} cornerRadius={8} />
                 <circle cx={50} cy={60} r={40} fill={PEACH} />
                 <circle cx={150} cy={50} r={35} fill={TEAL} />
 
-                <rect x={20} y={20} width={200} height={80} fill="#1e1e2e60"
+                <rect transformX={20} transformY={20} w={200} h={80} fill="#1e1e2e60"
                   cornerRadius={12} backdropBlur={24} />
-                <text x={40} y={48} text="Heavy Blur" fontSize={14} color={TEXT_} />
-                <text x={40} y={68} text="backdropBlur={24}" fontSize={10} color={SUBTEXT} />
+                <text transformX={40} transformY={48} text="Heavy Blur" fontSize={14} color={TEXT_} />
+                <text transformX={40} transformY={68} text="backdropBlur={24}" fontSize={10} color={SUBTEXT} />
               </group>
             </group>
 
             {/* Separator */}
-            <rect height={1} fill={OVERLAY} />
+            <rect h={1} fill={OVERLAY} />
 
             {/* ============================================================= */}
             {/* Section 4: Blend Modes (T2.4)                                 */}
@@ -180,46 +180,46 @@ function createRenderingGalleryWindow(): WindowHandle {
             <text text="Blend Modes" fontSize={18} color={MAUVE} />
             <text text="Overlapping shapes with different compositing" fontSize={12} color={SUBTEXT} />
 
-            <group flexDirection="row" gap={30}>
+            <group row gap={30}>
               {/* Multiply */}
-              <group flexDirection="column" gap={4}>
-                <group width={105} height={70}>
-                  <rect width={70} height={70} fill={RED} cornerRadius={6} />
-                  <rect x={35} y={0} width={70} height={70} fill={BLUE} cornerRadius={6} blendMode="multiply" />
+              <group gap={4}>
+                <group w={105} h={70}>
+                  <rect w={70} h={70} fill={RED} cornerRadius={6} />
+                  <rect transformX={35} transformY={0} w={70} h={70} fill={BLUE} cornerRadius={6} blendMode="multiply" />
                 </group>
                 <text text="multiply" fontSize={10} color={SUBTEXT} />
               </group>
 
               {/* Screen */}
-              <group flexDirection="column" gap={4}>
-                <group width={105} height={70}>
-                  <rect width={70} height={70} fill={RED} cornerRadius={6} />
-                  <rect x={35} y={0} width={70} height={70} fill={BLUE} cornerRadius={6} blendMode="screen" />
+              <group gap={4}>
+                <group w={105} h={70}>
+                  <rect w={70} h={70} fill={RED} cornerRadius={6} />
+                  <rect transformX={35} transformY={0} w={70} h={70} fill={BLUE} cornerRadius={6} blendMode="screen" />
                 </group>
                 <text text="screen" fontSize={10} color={SUBTEXT} />
               </group>
 
               {/* Overlay */}
-              <group flexDirection="column" gap={4}>
-                <group width={105} height={70}>
-                  <rect width={70} height={70} fill={GREEN} cornerRadius={6} />
-                  <rect x={35} y={0} width={70} height={70} fill={MAUVE} cornerRadius={6} blendMode="overlay" />
+              <group gap={4}>
+                <group w={105} h={70}>
+                  <rect w={70} h={70} fill={GREEN} cornerRadius={6} />
+                  <rect transformX={35} transformY={0} w={70} h={70} fill={MAUVE} cornerRadius={6} blendMode="overlay" />
                 </group>
                 <text text="overlay" fontSize={10} color={SUBTEXT} />
               </group>
 
               {/* Difference */}
-              <group flexDirection="column" gap={4}>
-                <group width={105} height={70}>
-                  <rect width={70} height={70} fill={PEACH} cornerRadius={6} />
-                  <rect x={35} y={0} width={70} height={70} fill={TEAL} cornerRadius={6} blendMode="difference" />
+              <group gap={4}>
+                <group w={105} h={70}>
+                  <rect w={70} h={70} fill={PEACH} cornerRadius={6} />
+                  <rect transformX={35} transformY={0} w={70} h={70} fill={TEAL} cornerRadius={6} blendMode="difference" />
                 </group>
                 <text text="difference" fontSize={10} color={SUBTEXT} />
               </group>
             </group>
 
             {/* Separator */}
-            <rect height={1} fill={OVERLAY} />
+            <rect h={1} fill={OVERLAY} />
 
             {/* ============================================================= */}
             {/* Section 5: Rich Text (T2.7)                                   */}
@@ -243,7 +243,7 @@ function createRenderingGalleryWindow(): WindowHandle {
             </text>
 
             {/* Bottom padding */}
-            <group height={20} />
+            <group h={20} />
           </group>
         </ScrollView>
       </rect>

@@ -7,15 +7,13 @@ import {
   canvasFragmentGetWorldBounds,
 } from "@qt-solid/core/native"
 
-import type { WheelEventPayload } from "../../qt-intrinsics.ts"
+import type { SizingValue, WheelEventPayload } from "../../intrinsics.ts"
 import type { FragmentRendererNode } from "../../runtime/fragment.ts"
 
 export interface ScrollViewProps {
   children?: JSX.Element
-  width?: number
-  height?: number
-  flexGrow?: number
-  flexShrink?: number
+  w?: SizingValue
+  h?: SizingValue
   direction?: "vertical" | "horizontal" | "both"
   /** Spring stiffness for overscroll return-to-bounds (default: 170) */
   springStiffness?: number
@@ -39,8 +37,8 @@ export const ScrollView: Component<ScrollViewProps> = (props) => {
 
   const getViewportSize = (axis: "x" | "y"): number => {
     if (!containerRef) return 0
-    if (axis === "x" && props.width != null) return props.width
-    if (axis === "y" && props.height != null) return props.height
+    if (axis === "x" && typeof props.w === "number") return props.w
+    if (axis === "y" && typeof props.h === "number") return props.h
     const bounds = canvasFragmentGetWorldBounds(
       containerRef.canvasNodeId,
       containerRef.fragmentId,
@@ -168,10 +166,8 @@ export const ScrollView: Component<ScrollViewProps> = (props) => {
   return (
     <rect
       ref={(node: FragmentRendererNode) => { containerRef = node }}
-      width={props.width}
-      height={props.height}
-      flexGrow={props.flexGrow}
-      flexShrink={props.flexShrink}
+      w={props.w}
+      h={props.h}
       overflowX={overflowX()}
       overflowY={overflowY()}
       clip={true}

@@ -1,6 +1,6 @@
 import { FragmentRendererNode } from "../fragment.ts"
 import { buildCanvasKeyboardPayload } from "../key-mapping.ts"
-import type { WheelEventPayload } from "../../qt-intrinsics.ts"
+import type { WheelEventPayload } from "../../intrinsics.ts"
 import {
   CANVAS_BINDINGS,
   hoveredFragments,

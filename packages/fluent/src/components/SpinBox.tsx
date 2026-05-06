@@ -68,9 +68,9 @@ export const SpinBox: Component<SpinBoxProps> = (props) => {
 
   return (
     <group
-      width={totalWidth()}
-      height={editHeight()}
-      flexDirection="row"
+      w={totalWidth()}
+      h={editHeight()}
+      row
     >
       <LineEdit
         value={String(value())}
@@ -81,14 +81,13 @@ export const SpinBox: Component<SpinBoxProps> = (props) => {
       />
       {/* Up/Down button column */}
       <group
-        width={BUTTON_W}
-        height={editHeight()}
-        flexDirection="column"
+        w={BUTTON_W}
+        h={editHeight()}
       >
         {/* Up button */}
         <rect
-          width={BUTTON_W}
-          height={BUTTON_H}
+          w={BUTTON_W}
+          h={BUTTON_H}
           fill={arrowBg(upHovered(), upPressed())}
           cornerRadius={theme().radiusSm}
           onPointerEnter={() => setUpHovered(true)}
@@ -98,9 +97,9 @@ export const SpinBox: Component<SpinBoxProps> = (props) => {
           onClick={() => {}}
         >
           <path
-            position="absolute"
-            x={(BUTTON_W - 16) / 2}
-            y={(BUTTON_H - 12) / 2}
+            absolute
+            transformX={(BUTTON_W - 16) / 2}
+            transformY={(BUTTON_H - 12) / 2}
             d="M 4 8 L 8 4 L 12 8"
             stroke={arrowColor()}
             strokeWidth={1.5}
@@ -109,8 +108,8 @@ export const SpinBox: Component<SpinBoxProps> = (props) => {
         </rect>
         {/* Down button */}
         <rect
-          width={BUTTON_W}
-          height={BUTTON_H}
+          w={BUTTON_W}
+          h={BUTTON_H}
           fill={arrowBg(downHovered(), downPressed())}
           cornerRadius={theme().radiusSm}
           onPointerEnter={() => setDownHovered(true)}
@@ -120,9 +119,9 @@ export const SpinBox: Component<SpinBoxProps> = (props) => {
           onClick={() => {}}
         >
           <path
-            position="absolute"
-            x={(BUTTON_W - 16) / 2}
-            y={(BUTTON_H - 12) / 2}
+            absolute
+            transformX={(BUTTON_W - 16) / 2}
+            transformY={(BUTTON_H - 12) / 2}
             d="M 4 4 L 8 8 L 12 4"
             stroke={arrowColor()}
             strokeWidth={1.5}
