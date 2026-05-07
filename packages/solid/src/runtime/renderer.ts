@@ -32,7 +32,14 @@ import {
   type GestureState,
   type DragController,
 } from "../app/motion/motion.ts"
-import type { MotionComponentProps } from "../app/motion/types.ts"
+import {
+  attachOrchestration,
+  createOrchestration,
+  detachOrchestration,
+  hasChildStaggerOrchestration,
+  type OrchestrationParentControl,
+} from "../app/motion/orchestration.ts"
+import type { MotionComponentProps, MotionTransition } from "../app/motion/types.ts"
 
 const FRAGMENT_LISTENER_LAYOUT = 1
 
@@ -345,15 +352,41 @@ const MOTION_PROP_KEYS_SET = new Set<string>(MOTION_PROP_KEYS as unknown as stri
 interface InlineMotionState {
   bag: Record<string, unknown>
   trigger: () => void
+  orchestration?: OrchestrationParentControl
 }
 
 const inlineMotionStates = new WeakMap<FragmentRendererNode, InlineMotionState>()
 
-function ensureInlineMotion(node: FragmentRendererNode): InlineMotionState {
+function syncInlineOrchestration(node: FragmentRendererNode, state: InlineMotionState): void {
+  const transition = state.bag.transition as MotionTransition | undefined
+
+  if (!hasChildStaggerOrchestration(transition)) {
+    if (state.orchestration) {
+      detachOrchestration(node)
+      state.orchestration = undefined
+    }
+    return
+  }
+
+  state.orchestration ??= createOrchestration({
+    delayChildren: transition?.delayChildren ?? 0,
+    staggerChildren: transition?.staggerChildren ?? 0,
+    when: transition?.when ?? false,
+  })
+  attachOrchestration(node, state.orchestration)
+}
+
+function ensureInlineMotion(
+  node: FragmentRendererNode,
+  seed?: { key: string; value: unknown },
+): InlineMotionState {
   let state = inlineMotionStates.get(node)
   if (state) return state
 
   const bag: Record<string, unknown> = {}
+  if (seed) {
+    bag[seed.key] = seed.value
+  }
   const [track, trigger] = createSignal(undefined, { equals: false })
 
   state = { bag, trigger }
@@ -662,8 +695,11 @@ function patchFragmentProp(node: FragmentRendererNode, key: string, _prev: unkno
 
   // Motion prop interception
   if (MOTION_PROP_KEYS_SET.has(key)) {
-    const state = ensureInlineMotion(node)
+    const state = ensureInlineMotion(node, { key, value: next })
     state.bag[key] = next
+    if (key === "transition") {
+      syncInlineOrchestration(node, state)
+    }
     state.trigger()
     return
   }

@@ -28,7 +28,8 @@ import type {
 } from "./types.ts";
 import { usePresence } from "./presence.ts";
 import {
-  useOrchestration,
+  findParentOrchestration,
+  type OrchestrationContextState,
 } from "./orchestration.ts";
 
 export type MotionNodeHandle = QtNode & {
@@ -337,8 +338,9 @@ export function bindMotionNode(
 ): void {
   let started = false;
   const presence = usePresence();
-  const parentOrch = useOrchestration();
-  const childIndex = parentOrch?.registerChild() ?? 0;
+  let parentOrch: OrchestrationContextState | undefined;
+  let childIndex = 0;
+  const [animateReady, setAnimateReady] = createSignal(false);
 
   let userOnComplete: (() => void) | undefined;
   createEffect(() => {
@@ -374,8 +376,8 @@ export function bindMotionNode(
   // ---------------------------------------------------------------------------
   // Persistent drag pose — survives across drag sessions, prevents animate
   // effect from overwriting drag-controlled axes on release.
-  let dragPoseX = resolveMotionValue(readMotion().initial?.x ?? readMotion().animate?.x) ?? 0;
-  let dragPoseY = resolveMotionValue(readMotion().initial?.y ?? readMotion().animate?.y) ?? 0;
+  let dragPoseX = resolveMotionValue(untrack(() => readMotion().initial?.x ?? readMotion().animate?.x)) ?? 0;
+  let dragPoseY = resolveMotionValue(untrack(() => readMotion().initial?.y ?? readMotion().animate?.y)) ?? 0;
   let hasDragPose = false;
 
   {
@@ -602,8 +604,9 @@ export function bindMotionNode(
   // Priority: drag > tap > hover > focus > animate
   createEffect(() => {
     const props = readMotion();
+    const ready = animateReady();
     const mounted = presence?.mount() ?? true;
-    if (!started || !mounted) return;
+    if (!ready || !started || !mounted) return;
     // While dragging, drag controller drives x/y directly — suppress animate
     if (gesture.isDragging()) return;
 
