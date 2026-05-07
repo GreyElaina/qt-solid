@@ -1,9 +1,6 @@
-import {
-  createContext,
-  createSignal,
-  useContext,
-  type Accessor,
-} from "solid-js";
+import { createSignal, type Accessor } from "solid-js";
+
+import type { MotionTransition } from "./types.ts";
 
 export interface OrchestrationConfig {
   delayChildren: number;
@@ -33,19 +30,27 @@ export interface OrchestrationContextState {
   allChildrenComplete: Accessor<boolean>;
 }
 
-export const OrchestrationContext = createContext<OrchestrationContextState>();
+const orchestrationByNode = new WeakMap<object, OrchestrationParentControl>();
 
-export function useOrchestration(): OrchestrationContextState | undefined {
-  return useContext(OrchestrationContext);
+function isOrchestratedNode(node: unknown): node is object & { parent: unknown } {
+  return node != null
+    && typeof node === "object"
+    && "parent" in node;
+}
+
+export function hasChildStaggerOrchestration(
+  transition: MotionTransition | undefined,
+): boolean {
+  return (transition?.delayChildren ?? 0) > 0
+    || (transition?.staggerChildren ?? 0) > 0;
 }
 
 /**
  * Create orchestration state from a parent's transition config.
- * Returns `undefined` if no orchestration is needed.
  */
 export function createOrchestration(
   config: OrchestrationConfig,
-): OrchestrationContextState {
+): OrchestrationParentControl {
   let childCount = 0;
   let completedCount = 0;
 
@@ -72,10 +77,35 @@ export function createOrchestration(
     unlockChildren() {
       setChildrenCanAnimate(true);
     },
-  } as OrchestrationContextState & { unlockChildren: () => void };
+  };
 }
 
 /** Extended state including parent-only control. */
 export type OrchestrationParentControl = OrchestrationContextState & {
   unlockChildren: () => void;
 };
+
+export function attachOrchestration(
+  node: object,
+  orchestration: OrchestrationParentControl,
+): void {
+  orchestrationByNode.set(node, orchestration);
+}
+
+export function detachOrchestration(node: object): void {
+  orchestrationByNode.delete(node);
+}
+
+export function findParentOrchestration(
+  node: unknown,
+): OrchestrationContextState | undefined {
+  let current = isOrchestratedNode(node) ? node.parent : null;
+  while (isOrchestratedNode(current)) {
+    const orchestration = orchestrationByNode.get(current);
+    if (orchestration) {
+      return orchestration;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
