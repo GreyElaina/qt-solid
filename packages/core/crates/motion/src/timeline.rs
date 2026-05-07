@@ -47,8 +47,14 @@ impl PropertyKey {
     /// Default resting value for each property.
     pub fn default_value(self) -> f64 {
         match self {
-            Self::X | Self::Y | Self::Rotate | Self::LayoutX | Self::LayoutY
-            | Self::RotateX | Self::RotateY | Self::Perspective => 0.0,
+            Self::X
+            | Self::Y
+            | Self::Rotate
+            | Self::LayoutX
+            | Self::LayoutY
+            | Self::RotateX
+            | Self::RotateY
+            | Self::Perspective => 0.0,
             Self::ScaleX
             | Self::ScaleY
             | Self::Opacity
@@ -67,21 +73,35 @@ impl PropertyKey {
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::X => "x", Self::Y => "y",
-            Self::ScaleX => "scaleX", Self::ScaleY => "scaleY",
-            Self::Rotate => "rotate", Self::Opacity => "opacity",
-            Self::OriginX => "originX", Self::OriginY => "originY",
-            Self::LayoutX => "layoutX", Self::LayoutY => "layoutY",
-            Self::LayoutScaleX => "layoutScaleX", Self::LayoutScaleY => "layoutScaleY",
-            Self::BackgroundR => "backgroundR", Self::BackgroundG => "backgroundG",
-            Self::BackgroundB => "backgroundB", Self::BackgroundA => "backgroundA",
-            Self::BorderRadius => "borderRadius", Self::BlurRadius => "blurRadius",
-            Self::ShadowOffsetX => "shadowOffsetX", Self::ShadowOffsetY => "shadowOffsetY",
+            Self::X => "x",
+            Self::Y => "y",
+            Self::ScaleX => "scaleX",
+            Self::ScaleY => "scaleY",
+            Self::Rotate => "rotate",
+            Self::Opacity => "opacity",
+            Self::OriginX => "originX",
+            Self::OriginY => "originY",
+            Self::LayoutX => "layoutX",
+            Self::LayoutY => "layoutY",
+            Self::LayoutScaleX => "layoutScaleX",
+            Self::LayoutScaleY => "layoutScaleY",
+            Self::BackgroundR => "backgroundR",
+            Self::BackgroundG => "backgroundG",
+            Self::BackgroundB => "backgroundB",
+            Self::BackgroundA => "backgroundA",
+            Self::BorderRadius => "borderRadius",
+            Self::BlurRadius => "blurRadius",
+            Self::ShadowOffsetX => "shadowOffsetX",
+            Self::ShadowOffsetY => "shadowOffsetY",
             Self::ShadowBlurRadius => "shadowBlurRadius",
-            Self::ShadowR => "shadowR", Self::ShadowG => "shadowG",
-            Self::ShadowB => "shadowB", Self::ShadowA => "shadowA",
-            Self::ScrollX => "scrollX", Self::ScrollY => "scrollY",
-            Self::RotateX => "rotateX", Self::RotateY => "rotateY",
+            Self::ShadowR => "shadowR",
+            Self::ShadowG => "shadowG",
+            Self::ShadowB => "shadowB",
+            Self::ShadowA => "shadowA",
+            Self::ScrollX => "scrollX",
+            Self::ScrollY => "scrollY",
+            Self::RotateX => "rotateX",
+            Self::RotateY => "rotateY",
             Self::Perspective => "perspective",
         }
     }
@@ -207,6 +227,11 @@ impl NodeTimeline {
         now: f64,
         delay_secs: f64,
     ) {
+        if self.channels.get(&key).is_some_and(|existing| {
+            existing.state() == ChannelState::Running && (existing.target() - value).abs() < 1e-10
+        }) {
+            return;
+        }
         let origin = self.current_resting(key);
         self.set_target_keyframes(key, vec![origin, value], None, transition, now, delay_secs);
     }
@@ -226,6 +251,9 @@ impl NodeTimeline {
 
         if let Some(existing) = self.channels.get_mut(&key) {
             if existing.state() == ChannelState::Running {
+                if existing.matches_requested_animation(&values, times.as_deref(), &transition) {
+                    return;
+                }
                 // Retarget: collapse to simple A→B from current to new final
                 let new_channel = existing.retarget(final_value, transition, now);
                 self.channels.insert(key, new_channel);
@@ -255,7 +283,10 @@ impl NodeTimeline {
                 None
             }
         });
-        let prev_target_for_chain = self.channels.get(&key).map(|old| (old.target(), old.started_at()));
+        let prev_target_for_chain = self
+            .channels
+            .get(&key)
+            .map(|old| (old.target(), old.started_at()));
 
         // For simple 2-value case, use current resting as origin if values[0] matches default
         let transition = match (inferred_velocity, transition) {
@@ -268,7 +299,8 @@ impl NodeTimeline {
             (_, t) => t,
         };
 
-        let mut channel = AnimationChannel::new_keyframes(values, times, transition, now, delay_secs);
+        let mut channel =
+            AnimationChannel::new_keyframes(values, times, transition, now, delay_secs);
         channel.prev_target = prev_target_for_chain;
         self.channels.insert(key, channel);
     }
@@ -391,12 +423,22 @@ impl NodeTimeline {
     }
 
     /// Snapshot of running channels for devtools.
-    /// Returns (property_name, origin, target, state) tuples.
-    pub fn running_channel_snapshots(&self) -> Vec<(&'static str, f64, f64, &'static str)> {
-        self.channels.iter()
+    /// Returns (property_name, origin, target, state, remaining_delay_secs) tuples.
+    pub fn running_channel_snapshots(
+        &self,
+        now: f64,
+    ) -> Vec<(&'static str, f64, f64, &'static str, f64)> {
+        self.channels
+            .iter()
             .filter(|(_, ch)| ch.state() == ChannelState::Running)
             .map(|(key, ch)| {
-                (key.name(), ch.origin(), ch.target(), "running")
+                (
+                    key.name(),
+                    ch.origin(),
+                    ch.target(),
+                    "running",
+                    ch.delay_remaining_secs(now),
+                )
             })
             .collect()
     }
@@ -463,9 +505,9 @@ fn visual_velocity_weight(key: PropertyKey) -> f64 {
         | PropertyKey::ShadowG
         | PropertyKey::ShadowB
         | PropertyKey::ShadowA => 30.0,
-        PropertyKey::ShadowOffsetX
-        | PropertyKey::ShadowOffsetY
-        | PropertyKey::ShadowBlurRadius => 1.0,
+        PropertyKey::ShadowOffsetX | PropertyKey::ShadowOffsetY | PropertyKey::ShadowBlurRadius => {
+            1.0
+        }
         PropertyKey::Perspective => 1.0,
     }
 }
@@ -585,6 +627,81 @@ mod tests {
         assert!(animating, "spring should be running");
         // With velocity ~6250 px/s, even 1ms later the value should have moved
         // past 300 (started at 300, velocity pushes further before spring pulls back)
-        assert!(pose.x > 300.0, "expected overshoot from inferred velocity, got {}", pose.x);
+        assert!(
+            pose.x > 300.0,
+            "expected overshoot from inferred velocity, got {}",
+            pose.x
+        );
+    }
+
+    #[test]
+    fn duplicate_scalar_target_while_running_preserves_timing() {
+        let mut tl = NodeTimeline::new();
+        let spec = TransitionSpec::Tween {
+            duration_secs: 1.0,
+            easing: Easing::LINEAR,
+            repeat: None,
+            times: None,
+        };
+
+        tl.set_target(PropertyKey::X, 100.0, spec.clone(), 0.0, 0.0);
+        let (pose, animating) = tl.sample_pose(0.5);
+        assert!(animating);
+        assert!(
+            (pose.x - 50.0).abs() < 1.0,
+            "expected midpoint before duplicate send, got {}",
+            pose.x
+        );
+
+        tl.set_target(PropertyKey::X, 100.0, spec, 0.5, 0.0);
+
+        let (pose, animating) = tl.sample_pose(1.0);
+        assert!(!animating, "duplicate send should not restart tween");
+        assert!(
+            (pose.x - 100.0).abs() < 1e-6,
+            "expected original tween to finish, got {}",
+            pose.x
+        );
+    }
+
+    #[test]
+    fn duplicate_keyframe_target_while_running_preserves_track() {
+        let mut tl = NodeTimeline::new();
+        let spec = TransitionSpec::Tween {
+            duration_secs: 2.0,
+            easing: Easing::LINEAR,
+            repeat: None,
+            times: None,
+        };
+
+        tl.set_target_keyframes(
+            PropertyKey::X,
+            vec![0.0, 10.0, 0.0],
+            None,
+            spec.clone(),
+            0.0,
+            0.0,
+        );
+
+        let (pose, animating) = tl.sample_pose(0.5);
+        assert!(animating);
+        assert!(
+            (pose.x - 5.0).abs() < 1.0,
+            "expected first segment midpoint, got {}",
+            pose.x
+        );
+
+        tl.set_target_keyframes(PropertyKey::X, vec![0.0, 10.0, 0.0], None, spec, 0.5, 0.0);
+
+        let (pose, animating) = tl.sample_pose(1.0);
+        assert!(
+            animating,
+            "duplicate keyframe send should keep track running"
+        );
+        assert!(
+            (pose.x - 10.0).abs() < 0.5,
+            "expected keyframe peak, got {}",
+            pose.x
+        );
     }
 }

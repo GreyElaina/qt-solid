@@ -23,7 +23,11 @@ impl TweenTrack {
             let n = values.len();
             (0..n).map(|i| i as f64 / (n - 1) as f64).collect()
         });
-        assert_eq!(values.len(), times.len(), "values and times length mismatch");
+        assert_eq!(
+            values.len(),
+            times.len(),
+            "values and times length mismatch"
+        );
         Self { values, times }
     }
 
@@ -33,6 +37,35 @@ impl TweenTrack {
 
     fn target(&self) -> f64 {
         *self.values.last().unwrap()
+    }
+
+    fn matches(&self, values: &[f64], times: Option<&[f64]>) -> bool {
+        self.values.len() == values.len()
+            && self
+                .values
+                .iter()
+                .zip(values.iter())
+                .all(|(lhs, rhs)| approx_eq(*lhs, *rhs))
+            && match (self.times.as_slice(), times) {
+                (existing, Some(next)) => {
+                    existing.len() == next.len()
+                        && existing
+                            .iter()
+                            .zip(next.iter())
+                            .all(|(lhs, rhs)| approx_eq(*lhs, *rhs))
+                }
+                (existing, None) => {
+                    let len = values.len();
+                    existing.iter().enumerate().all(|(index, value)| {
+                        let expected = if len <= 1 {
+                            0.0
+                        } else {
+                            index as f64 / (len - 1) as f64
+                        };
+                        approx_eq(*value, expected)
+                    })
+                }
+            }
     }
 
     /// Whether all keyframe values are approximately equal.
@@ -74,6 +107,61 @@ impl TweenTrack {
     }
 }
 
+fn approx_eq(lhs: f64, rhs: f64) -> bool {
+    (lhs - rhs).abs() < 1e-10
+}
+
+fn easing_matches(lhs: &crate::easing::Easing, rhs: &crate::easing::Easing) -> bool {
+    approx_eq(lhs.x1, rhs.x1)
+        && approx_eq(lhs.y1, rhs.y1)
+        && approx_eq(lhs.x2, rhs.x2)
+        && approx_eq(lhs.y2, rhs.y2)
+}
+
+fn transition_matches(lhs: &TransitionSpec, rhs: &TransitionSpec) -> bool {
+    match (lhs, rhs) {
+        (TransitionSpec::Instant, TransitionSpec::Instant) => true,
+        (
+            TransitionSpec::Tween {
+                duration_secs: lhs_duration,
+                easing: lhs_easing,
+                repeat: lhs_repeat,
+                times: lhs_times,
+            },
+            TransitionSpec::Tween {
+                duration_secs: rhs_duration,
+                easing: rhs_easing,
+                repeat: rhs_repeat,
+                times: rhs_times,
+            },
+        ) => {
+            approx_eq(*lhs_duration, *rhs_duration)
+                && easing_matches(lhs_easing, rhs_easing)
+                && lhs_repeat == rhs_repeat
+                && match (lhs_times, rhs_times) {
+                    (Some(lhs), Some(rhs)) => {
+                        lhs.len() == rhs.len()
+                            && lhs
+                                .iter()
+                                .zip(rhs.iter())
+                                .all(|(lhs, rhs)| approx_eq(*lhs, *rhs))
+                    }
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        (TransitionSpec::Spring(lhs), TransitionSpec::Spring(rhs)) => {
+            approx_eq(lhs.stiffness, rhs.stiffness)
+                && approx_eq(lhs.damping, rhs.damping)
+                && approx_eq(lhs.mass, rhs.mass)
+                && approx_eq(lhs.initial_velocity, rhs.initial_velocity)
+                && approx_eq(lhs.rest_delta, rhs.rest_delta)
+                && approx_eq(lhs.rest_speed, rhs.rest_speed)
+        }
+        _ => false,
+    }
+}
+
 /// A single animating property channel.
 ///
 /// Tracks origin, target, transition config, and current state.
@@ -101,7 +189,13 @@ impl AnimationChannel {
         started_at: f64,
         delay_secs: f64,
     ) -> Self {
-        Self::new_keyframes(vec![origin, target], None, transition, started_at, delay_secs)
+        Self::new_keyframes(
+            vec![origin, target],
+            None,
+            transition,
+            started_at,
+            delay_secs,
+        )
     }
 
     pub fn new_keyframes(
@@ -150,16 +244,35 @@ impl AnimationChannel {
         self.started_at
     }
 
+    pub fn matches_requested_animation(
+        &self,
+        values: &[f64],
+        times: Option<&[f64]>,
+        transition: &TransitionSpec,
+    ) -> bool {
+        self.track.matches(values, times) && transition_matches(&self.transition, transition)
+    }
+
+    pub fn delay_remaining_secs(&self, now: f64) -> f64 {
+        (self.started_at + self.delay_secs - now).max(0.0)
+    }
+
     /// The value the channel rests at after all iterations complete.
     pub fn final_value(&self) -> f64 {
         match &self.transition {
             TransitionSpec::Tween { repeat, .. } => match repeat {
                 None => self.track.target(),
-                Some(RepeatConfig { count: RepeatCount::Infinite, .. }) => {
+                Some(RepeatConfig {
+                    count: RepeatCount::Infinite,
+                    ..
+                }) => {
                     // Convention: last value
                     self.track.target()
                 }
-                Some(RepeatConfig { count: RepeatCount::Finite(n), repeat_type }) => {
+                Some(RepeatConfig {
+                    count: RepeatCount::Finite(n),
+                    repeat_type,
+                }) => {
                     let total = *n as u64 + 1;
                     match repeat_type {
                         RepeatType::Loop => self.track.target(),
@@ -244,8 +357,14 @@ impl AnimationChannel {
 
         let (total_iterations, is_infinite) = match repeat {
             None => (1u64, false),
-            Some(RepeatConfig { count: RepeatCount::Finite(n), .. }) => (*n as u64 + 1, false),
-            Some(RepeatConfig { count: RepeatCount::Infinite, .. }) => (u64::MAX, true),
+            Some(RepeatConfig {
+                count: RepeatCount::Finite(n),
+                ..
+            }) => (*n as u64 + 1, false),
+            Some(RepeatConfig {
+                count: RepeatCount::Infinite,
+                ..
+            }) => (u64::MAX, true),
         };
 
         let repeat_type = repeat.map(|r| r.repeat_type).unwrap_or(RepeatType::Loop);
@@ -300,7 +419,8 @@ impl AnimationChannel {
         // Infer velocity from prev_target when channel is completed (instant snap).
         // This is the "driven mode" velocity: Δvalue / Δtime between consecutive
         // instant setTarget calls.
-        let effective_velocity = if self.state == ChannelState::Completed && current_velocity == 0.0 {
+        let effective_velocity = if self.state == ChannelState::Completed && current_velocity == 0.0
+        {
             if let Some((prev_val, prev_time)) = self.prev_target {
                 let dt = now - prev_time;
                 if dt > 0.0 && dt < 0.5 {
@@ -501,13 +621,7 @@ mod tests {
             times: None,
         };
         // 0 -> 10 -> 0 over 2 seconds, evenly spaced [0.0, 0.5, 1.0]
-        let mut ch = AnimationChannel::new_keyframes(
-            vec![0.0, 10.0, 0.0],
-            None,
-            spec,
-            0.0,
-            0.0,
-        );
+        let mut ch = AnimationChannel::new_keyframes(vec![0.0, 10.0, 0.0], None, spec, 0.0, 0.0);
 
         // At t=0.5 (progress=0.25), in first segment (0->10), seg_t = 0.5 => 5.0
         let (v, _) = ch.sample(0.5);
@@ -538,13 +652,7 @@ mod tests {
             }),
             times: None,
         };
-        let mut ch = AnimationChannel::new_keyframes(
-            vec![0.0, 10.0, 5.0],
-            None,
-            spec,
-            0.0,
-            0.0,
-        );
+        let mut ch = AnimationChannel::new_keyframes(vec![0.0, 10.0, 5.0], None, spec, 0.0, 0.0);
 
         // Halfway through second iteration
         let (v, _) = ch.sample(1.25);
@@ -566,13 +674,7 @@ mod tests {
             repeat: None,
             times: None,
         };
-        let ch = AnimationChannel::new_keyframes(
-            vec![5.0, 5.0, 5.0],
-            None,
-            spec,
-            0.0,
-            0.0,
-        );
+        let ch = AnimationChannel::new_keyframes(vec![5.0, 5.0, 5.0], None, spec, 0.0, 0.0);
         assert_eq!(ch.state(), ChannelState::Completed);
     }
 
@@ -584,13 +686,8 @@ mod tests {
             repeat: None,
             times: None,
         };
-        let mut ch = AnimationChannel::new_keyframes(
-            vec![0.0, 10.0, 0.0],
-            None,
-            spec.clone(),
-            0.0,
-            0.0,
-        );
+        let mut ch =
+            AnimationChannel::new_keyframes(vec![0.0, 10.0, 0.0], None, spec.clone(), 0.0, 0.0);
 
         // Sample at t=0.5 (should be ~5.0)
         let (v, _) = ch.sample(0.5);

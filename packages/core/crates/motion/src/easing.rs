@@ -161,8 +161,8 @@ impl Easing {
         current_sample -= 1;
 
         // Interpolate to get initial guess for t
-        let dist = (x - table[current_sample])
-            / (table[current_sample + 1] - table[current_sample]);
+        let dist =
+            (x - table[current_sample]) / (table[current_sample + 1] - table[current_sample]);
         let guess_for_t = interval_start + dist * SAMPLE_STEP_SIZE;
 
         // Refine t using Newton-Raphson or binary subdivision
@@ -226,9 +226,15 @@ mod tests {
         // and above 1 near end
         let e = Easing::with_table(0.68, -0.6, 0.32, 1.6);
         let early = e.apply(0.1);
-        assert!(early < 0.0, "back-in-out at t=0.1 should undershoot, got {early}");
+        assert!(
+            early < 0.0,
+            "back-in-out at t=0.1 should undershoot, got {early}"
+        );
         let late = e.apply(0.9);
-        assert!(late > 1.0, "back-in-out at t=0.9 should overshoot, got {late}");
+        assert!(
+            late > 1.0,
+            "back-in-out at t=0.9 should overshoot, got {late}"
+        );
         // endpoints still correct
         assert!((e.apply(0.0)).abs() < 1e-6);
         assert!((e.apply(1.0) - 1.0).abs() < 1e-6);
@@ -241,7 +247,10 @@ mod tests {
         for i in 1..=100 {
             let t = i as f64 / 100.0;
             let y = e.apply(t);
-            assert!(y >= prev - 1e-10, "ease should be monotonic at t={t}: {prev} -> {y}");
+            assert!(
+                y >= prev - 1e-10,
+                "ease should be monotonic at t={t}: {prev} -> {y}"
+            );
             prev = y;
         }
     }
