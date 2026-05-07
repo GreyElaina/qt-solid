@@ -93,6 +93,8 @@ export declare function canvasFragmentSetF64Prop(canvasNodeId: number, fragmentI
 
 export declare function canvasFragmentSetLayoutFlip(canvasNodeId: number, fragmentId: number, dx: number, dy: number, sx: number, sy: number, transition: QtTransitionSpec): boolean
 
+export declare function canvasFragmentSetLayoutFlipConfig(canvasNodeId: number, fragmentId: number, mode?: string | undefined | null, transition?: QtTransitionSpec | undefined | null): void
+
 export declare function canvasFragmentSetListener(canvasNodeId: number, fragmentId: number, listenerBit: number, enabled: boolean): void
 
 export declare function canvasFragmentSetMotionTarget(canvasNodeId: number, fragmentId: number, target: QtMotionTarget, transition: QtPerPropertyTransition, delay?: number | undefined | null): boolean

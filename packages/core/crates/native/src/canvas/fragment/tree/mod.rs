@@ -102,6 +102,11 @@ pub struct FragmentTree {
     // -- devtools -----------------------------------------------------------
     /// Fragment to highlight (devtools overlay).
     pub(crate) debug_highlight: Option<FragmentId>,
+
+    // -- frame timing -------------------------------------------------------
+    /// Current frame timestamp (seconds). Set before compute_layout by the
+    /// pipeline or API caller. Used by layout FLIP to timestamp animations.
+    pub(crate) frame_now: f64,
 }
 
 impl Default for FragmentTree {
@@ -136,6 +141,7 @@ impl Default for FragmentTree {
             dirty_node_ids: HashSet::new(),
             dirty_clips: Vec::new(),
             semantics_dirty: HashSet::new(),
+            frame_now: 0.0,
         }
     }
 }
@@ -223,6 +229,8 @@ impl FragmentTree {
                 overflow_y: Overflow::default(),
                 layout_visible: true,
                 layout_dirty: false,
+                layout_flip_mode: None,
+                layout_flip_transition: None,
             },
         );
         // Node not yet attached to a parent — just mark global dirty.
@@ -581,9 +589,17 @@ impl FragmentTree {
     }
 
     fn apply_layout_results(&mut self) -> Vec<FragmentLayoutChange> {
+        use crate::canvas::fragment::LayoutFlipMode;
+        use ::motion::{SpringParams, TransitionSpec};
+
         let ids: Vec<FragmentId> = self.nodes.keys().copied().collect();
         let mut layout_dirty_ids: Vec<FragmentId> = Vec::new();
         let mut layout_events: Vec<FragmentLayoutChange> = Vec::new();
+        // Deferred FLIP animations — collected during layout application,
+        // applied after the loop so `set_layout_flip` can borrow &mut self.
+        let mut flip_requests: Vec<(FragmentId, f64, f64, f64, f64, TransitionSpec)> =
+            Vec::new();
+
         for id in ids {
             let Some(taffy_node) = self.nodes.get(&id).and_then(|n| n.taffy_node) else {
                 continue;
@@ -599,8 +615,14 @@ impl FragmentTree {
             let node = self.nodes.get_mut(&id).unwrap();
             let has_listener = node.listeners.contains(FragmentListeners::LAYOUT);
 
+            // Snapshot old layout for FLIP delta computation.
+            let old_x = node.layout.x;
+            let old_y = node.layout.y;
+            let old_w = node.layout.width;
+            let old_h = node.layout.height;
+
             let pos_changed =
-                (node.layout.x - lx).abs() > 0.01 || (node.layout.y - ly).abs() > 0.01;
+                (old_x - lx).abs() > 0.01 || (old_y - ly).abs() > 0.01;
             if pos_changed {
                 node.layout.x = lx;
                 node.layout.y = ly;
@@ -614,7 +636,7 @@ impl FragmentTree {
             }
 
             let layout_size_changed =
-                (node.layout.width - lw).abs() > 0.01 || (node.layout.height - lh).abs() > 0.01;
+                (old_w - lw).abs() > 0.01 || (old_h - lh).abs() > 0.01;
             if layout_size_changed {
                 node.layout.width = lw;
                 node.layout.height = lh;
@@ -680,10 +702,65 @@ impl FragmentTree {
                     height: lh,
                 });
             }
+
+            // Native-owned same-element layout FLIP:
+            // When layout changed and this node has layout_flip_mode configured,
+            // compute FLIP deltas and queue animation.
+            if let Some(flip_mode) = node.layout_flip_mode {
+                let any_change = pos_changed || layout_size_changed || paint_size_changed;
+                // Only FLIP when old layout had positive dimensions (skip first layout).
+                if any_change && old_w > 0.01 && old_h > 0.01 {
+                    let dx = match flip_mode {
+                        LayoutFlipMode::Size => 0.0,
+                        _ => old_x - lx,
+                    };
+                    let dy = match flip_mode {
+                        LayoutFlipMode::Size => 0.0,
+                        _ => old_y - ly,
+                    };
+                    let sx = match flip_mode {
+                        LayoutFlipMode::Position => 1.0,
+                        _ => if lw > 0.01 { old_w / lw } else { 1.0 },
+                    };
+                    let sy = match flip_mode {
+                        LayoutFlipMode::Position => 1.0,
+                        _ => if lh > 0.01 { old_h / lh } else { 1.0 },
+                    };
+
+                    let has_delta = dx.abs() > 0.5
+                        || dy.abs() > 0.5
+                        || (sx - 1.0).abs() > 0.001
+                        || (sy - 1.0).abs() > 0.001;
+
+                    if has_delta {
+                        let transition = node
+                            .layout_flip_transition
+                            .clone()
+                            .unwrap_or_else(|| {
+                                TransitionSpec::Spring(SpringParams {
+                                    stiffness: 500.0,
+                                    damping: 30.0,
+                                    mass: 1.0,
+                                    ..Default::default()
+                                })
+                            });
+                        flip_requests.push((id, dx, dy, sx, sy, transition));
+                    }
+                }
+            }
         }
         for id in layout_dirty_ids {
             self.invalidate_subtree_cache_for(id);
         }
+
+        // Apply deferred FLIP animations.
+        if !flip_requests.is_empty() {
+            let now = self.frame_now;
+            for (id, dx, dy, sx, sy, transition) in flip_requests {
+                self.set_layout_flip(id, dx, dy, sx, sy, &transition, now);
+            }
+        }
+
         layout_events
     }
 
@@ -797,5 +874,133 @@ mod tests {
         assert_eq!(tree.dirty_root_children, HashSet::from([child]));
         assert_eq!(tree.dirty_node_ids, HashSet::from([child]));
         assert!(tree.nodes.get(&child).is_some_and(|node| node.dirty));
+    }
+
+    #[test]
+    fn layout_flip_triggers_on_size_change() {
+        use crate::canvas::fragment::node::LayoutFlipMode;
+
+        let mut tree = FragmentTree::new();
+        let rect_id = tree.create_node(FragmentData::Rect(Default::default()));
+        tree.insert_child(None, rect_id, None);
+
+        // Set initial layout so FLIP can compare old vs new.
+        if let Some(node) = tree.nodes.get_mut(&rect_id) {
+            node.layout = LayoutResult {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 50.0,
+            };
+        }
+
+        // Set fixed size via taffy so compute_layout produces new dimensions.
+        tree.with_taffy_style_mut(rect_id, |style| {
+            style.size = taffy::geometry::Size {
+                width: taffy::style::Dimension::length(200.0),
+                height: taffy::style::Dimension::length(80.0),
+            };
+        });
+
+        // Enable layout FLIP.
+        if let Some(node) = tree.nodes.get_mut(&rect_id) {
+            node.layout_flip_mode = Some(LayoutFlipMode::All);
+        }
+
+        // Run layout — this should detect size change and queue FLIP.
+        tree.frame_now = 1.0;
+        let _ = tree.compute_layout(400.0, 400.0);
+
+        // Verify that layout FLIP channels were created on the timeline.
+        let node = tree.nodes.get(&rect_id).unwrap();
+        let timeline = node.timeline.as_ref().expect("timeline should exist after FLIP");
+        assert!(
+            timeline.is_animating(),
+            "timeline should be animating after layout FLIP"
+        );
+        assert!(
+            timeline.has_property(::motion::PropertyKey::LayoutScaleX),
+            "layoutScaleX channel should exist"
+        );
+        assert!(
+            timeline.has_property(::motion::PropertyKey::LayoutScaleY),
+            "layoutScaleY channel should exist"
+        );
+    }
+
+    #[test]
+    fn layout_flip_position_mode_ignores_scale() {
+        use crate::canvas::fragment::node::LayoutFlipMode;
+
+        let mut tree = FragmentTree::new();
+        let rect_id = tree.create_node(FragmentData::Rect(Default::default()));
+        tree.insert_child(None, rect_id, None);
+
+        // Set initial layout with position.
+        if let Some(node) = tree.nodes.get_mut(&rect_id) {
+            node.layout = LayoutResult {
+                x: 10.0,
+                y: 20.0,
+                width: 100.0,
+                height: 50.0,
+            };
+        }
+
+        // Change both position and size via taffy.
+        tree.with_taffy_style_mut(rect_id, |style| {
+            style.size = taffy::geometry::Size {
+                width: taffy::style::Dimension::length(200.0),
+                height: taffy::style::Dimension::length(80.0),
+            };
+        });
+
+        // Enable position-only FLIP.
+        if let Some(node) = tree.nodes.get_mut(&rect_id) {
+            node.layout_flip_mode = Some(LayoutFlipMode::Position);
+        }
+
+        tree.frame_now = 1.0;
+        let _ = tree.compute_layout(400.0, 400.0);
+
+        let node = tree.nodes.get(&rect_id).unwrap();
+        let timeline = node.timeline.as_ref().expect("timeline should exist");
+        // Position-only mode should NOT create scale channels (scale deltas = 1.0 = no-op).
+        // It should have layout position channels.
+        assert!(
+            timeline.has_property(::motion::PropertyKey::LayoutX)
+                || timeline.has_property(::motion::PropertyKey::LayoutY),
+            "should have layout position channels"
+        );
+    }
+
+    #[test]
+    fn layout_flip_skips_first_layout() {
+        use crate::canvas::fragment::node::LayoutFlipMode;
+
+        let mut tree = FragmentTree::new();
+        let rect_id = tree.create_node(FragmentData::Rect(Default::default()));
+        tree.insert_child(None, rect_id, None);
+
+        // Leave initial layout as default (0x0) — first layout should NOT trigger FLIP.
+        if let Some(node) = tree.nodes.get_mut(&rect_id) {
+            node.layout_flip_mode = Some(LayoutFlipMode::All);
+        }
+
+        tree.with_taffy_style_mut(rect_id, |style| {
+            style.size = taffy::geometry::Size {
+                width: taffy::style::Dimension::length(100.0),
+                height: taffy::style::Dimension::length(50.0),
+            };
+        });
+
+        tree.frame_now = 1.0;
+        let _ = tree.compute_layout(400.0, 400.0);
+
+        let node = tree.nodes.get(&rect_id).unwrap();
+        // No timeline should be created on first layout (old dimensions were 0x0).
+        assert!(
+            node.timeline.is_none() || !node.timeline.as_ref().unwrap().is_animating(),
+            "first layout should not trigger FLIP animation"
+        );
     }
 }

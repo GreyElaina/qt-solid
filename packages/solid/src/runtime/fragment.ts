@@ -12,6 +12,7 @@ import {
   canvasFragmentSetMotionTarget,
   canvasFragmentGetWorldBounds,
   canvasFragmentSetLayoutFlip,
+  canvasFragmentSetLayoutFlipConfig,
   canvasFragmentStoreEnsure,
 } from "@qt-solid/core/native"
 
@@ -159,6 +160,18 @@ export class FragmentRendererNode {
     if (config.hitTestEnabled) {
       writeFragmentProp(this.canvasNodeId, this.fragmentId, "hitTest", true)
     }
+  }
+
+  setLayoutFlipConfig(
+    mode: string | null,
+    transition?: import("@qt-solid/core/native").QtTransitionSpec | null,
+  ): void {
+    canvasFragmentSetLayoutFlipConfig(
+      this.canvasNodeId,
+      this.fragmentId,
+      mode,
+      transition,
+    )
   }
 
   onMotionComplete(callback: () => void): void {

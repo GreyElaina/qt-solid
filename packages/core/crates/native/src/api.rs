@@ -1789,6 +1789,34 @@ pub fn canvas_fragment_set_layout_flip(
     Ok(animating)
 }
 
+#[napi_derive::napi(js_name = "canvasFragmentSetLayoutFlipConfig")]
+pub fn canvas_fragment_set_layout_flip_config(
+    canvas_node_id: u32,
+    fragment_id: u32,
+    mode: Option<String>,
+    transition: Option<QtTransitionSpec>,
+) -> Result<()> {
+    use crate::canvas::fragment::LayoutFlipMode;
+
+    let flip_mode = mode.as_deref().and_then(|m| match m {
+        "all" => Some(LayoutFlipMode::All),
+        "position" => Some(LayoutFlipMode::Position),
+        "size" => Some(LayoutFlipMode::Size),
+        _ => None,
+    });
+
+    let flip_transition = transition.as_ref().map(|t| lower_transition_spec(t));
+
+    crate::runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        if let Some(node) = tree.nodes.get_mut(&FragmentId(fragment_id)) {
+            node.layout_flip_mode = flip_mode;
+            node.layout_flip_transition = flip_transition;
+        }
+    });
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Clipboard
 // ---------------------------------------------------------------------------

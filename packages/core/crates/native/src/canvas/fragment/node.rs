@@ -201,6 +201,18 @@ impl LayoutResult {
     }
 }
 
+/// Same-element layout FLIP mode — stored per fragment, drives automatic
+/// layout animation in `apply_layout_results`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutFlipMode {
+    /// Animate both position and size changes.
+    All,
+    /// Animate only position changes.
+    Position,
+    /// Animate only size changes.
+    Size,
+}
+
 // ---------------------------------------------------------------------------
 // Fragment node — one entry in the tree
 // ---------------------------------------------------------------------------
@@ -241,6 +253,8 @@ pub struct FragmentNode {
     pub overflow_y: Overflow,
     pub layout_visible: bool,
     pub layout_dirty: bool,
+    pub layout_flip_mode: Option<LayoutFlipMode>,
+    pub layout_flip_transition: Option<motion::TransitionSpec>,
 }
 
 impl FragmentNode {

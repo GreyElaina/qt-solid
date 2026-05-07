@@ -289,8 +289,9 @@ export interface GridProps extends CommonProps {
 
 export interface MotionConfig {
   layerEnabled: boolean
-  layoutEnabled: boolean
   hitTestEnabled: boolean
+  layoutFlipMode?: "all" | "position" | "size" | null
+  layoutFlipTransition?: import("./app/motion/types.ts").TransitionSpec
 }
 
 

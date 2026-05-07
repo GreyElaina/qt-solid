@@ -786,7 +786,9 @@ pub fn fragment_store_compute_layout(
     available_width: f64,
     available_height: f64,
 ) {
+    let now = crate::qt::trace_now_ns() as f64 / 1_000_000_000.0;
     let events = runtime::with_fragment_tree_mut(canvas_node_id, |tree| {
+        tree.frame_now = now;
         tree.compute_layout(available_width, available_height)
     });
     if let Some(events) = events {
