@@ -36,6 +36,8 @@ struct LayerTextureState {
 /// Per-window GPU surface state: wgpu device/queue/surface + vello renderer.
 struct WindowSurface {
     surface: wgpu::Surface<'static>,
+    #[cfg(target_os = "macos")]
+    metal_layer_ptr: usize,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -998,6 +1000,21 @@ pub(crate) fn resize_surface(node_id: u32, width_px: u32, height_px: u32) {
     }
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn set_surface_presents_with_transaction(node_id: u32, enabled: bool) {
+    use objc2_quartz_core::CAMetalLayer;
+
+    let surfaces = WINDOW_SURFACES
+        .lock()
+        .expect("surface_renderer mutex poisoned");
+    let Some(WindowRenderMode::Gpu(ws)) = surfaces.get(&node_id) else {
+        return;
+    };
+
+    let layer: &CAMetalLayer = unsafe { &*(ws.metal_layer_ptr as *const CAMetalLayer) };
+    layer.setPresentsWithTransaction(enabled);
+}
+
 /// Convert a SurfaceTarget to wgpu's SurfaceTargetUnsafe via raw-window-handle.
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn compositor_surface_target(
@@ -1087,20 +1104,20 @@ fn create_window_surface_with_backends(
     });
 
     #[cfg(target_os = "macos")]
-    let surface = {
+    let (surface, metal_layer_ptr) = {
         use crate::renderer::types::SurfaceHandle;
         let SurfaceHandle::AppKit(ns_view) = target.handle else {
             return Err(SurfaceCreationError::NoGpu("expected AppKit handle on macOS".into()));
         };
-        let layer_ptr = resolve_metal_layer_for_ns_view(ns_view).as_ptr();
+        let layer_ptr = resolve_metal_layer_for_ns_view(ns_view);
         let surface = unsafe {
             instance
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
-                    layer_ptr,
+                    layer_ptr.as_ptr(),
                 ))
                 .map_err(|e| SurfaceCreationError::NoGpu(format!("create surface: {e}")))?
         };
-        surface
+        (surface, layer_ptr.as_ptr() as usize)
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -1399,6 +1416,8 @@ fn create_window_surface_with_backends(
 
     Ok(WindowSurface {
         surface,
+        #[cfg(target_os = "macos")]
+        metal_layer_ptr,
         device,
         queue,
         config,

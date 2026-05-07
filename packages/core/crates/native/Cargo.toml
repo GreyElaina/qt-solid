@@ -41,7 +41,7 @@ accesskit_macos = "0.26.0"
 objc2-app-kit = { version = "0.3.2", features = ["NSView", "NSWindow", "NSAccessibility"] }
 objc2 = "0.6.4"
 objc2-foundation = "0.3.2"
-objc2-quartz-core = { version = "0.3.2", features = ["CADisplayLink", "CAFrameRateRange"] }
+objc2-quartz-core = { version = "0.3.2", features = ["CADisplayLink", "CAFrameRateRange", "CALayer", "CAMetalLayer"] }
 raw-window-metal = "1.1.0"
 window-host = { version = "0.1.0", path = "../window-host" }
 

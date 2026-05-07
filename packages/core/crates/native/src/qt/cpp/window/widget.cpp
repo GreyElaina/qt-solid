@@ -431,11 +431,21 @@ protected:
       rust_node_id_,
       static_cast<double>(s.width()),
       static_cast<double>(s.height()));
+#if defined(Q_OS_MACOS)
+    // Keep the resize present in the current CA transaction; otherwise
+    // WindowServer can stretch the previous IOSurface to the new bounds.
+    qt_solid_spike::qt::qt_surface_renderer_set_presents_with_transaction(
+        rust_node_id_, true);
+#endif
     // Force a compositor frame on resize — drive_compositor_frame() on Windows
     // early-returns when compositor_frame_requested_ is false, but resize must
     // unconditionally produce a new frame at the updated dimensions.
     compositor_frame_requested_ = true;
     drive_compositor_frame();
+#if defined(Q_OS_MACOS)
+    qt_solid_spike::qt::qt_surface_renderer_set_presents_with_transaction(
+        rust_node_id_, false);
+#endif
     request_compositor_frame();
   }
 

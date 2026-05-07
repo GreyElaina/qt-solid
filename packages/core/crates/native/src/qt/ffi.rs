@@ -242,6 +242,8 @@ pub(crate) mod bridge {
         fn qt_window_event_focus_change(node_id: u32, gained: bool);
         fn qt_window_event_resize(node_id: u32, width: f64, height: f64);
         fn qt_surface_renderer_resize(node_id: u32, width_px: u32, height_px: u32);
+        #[cfg(target_os = "macos")]
+        fn qt_surface_renderer_set_presents_with_transaction(node_id: u32, enabled: bool);
         fn qt_window_event_state_change(node_id: u32, state: u8);
         fn qt_system_color_scheme_changed(scheme: u8);
         fn qt_screen_dpi_changed(dpi: f64);
@@ -756,6 +758,11 @@ pub(crate) fn qt_window_event_resize(node_id: u32, width: f64, height: f64) {
 
 pub(crate) fn qt_surface_renderer_resize(node_id: u32, width_px: u32, height_px: u32) {
     crate::renderer::compositor::resize_surface(node_id, width_px, height_px);
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn qt_surface_renderer_set_presents_with_transaction(node_id: u32, enabled: bool) {
+    crate::renderer::compositor::set_surface_presents_with_transaction(node_id, enabled);
 }
 
 pub(crate) fn qt_window_event_state_change(node_id: u32, state: u8) {
