@@ -549,12 +549,13 @@ const MotionCompoundDemo: Component = () => {
         <rect
           w={expanded() ? 200 : 80}
           h={expanded() ? 120 : 80}
-          cornerRadius={expanded() ? 16 : 40}
+          cornerRadius={40}
           fill="#0078d4"
+          clip
           layout
           animate={{
             scale: 1,
-            rotate: expanded() ? 0 : 0,
+            borderRadius: expanded() ? 16 : 40,
           }}
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
@@ -562,11 +563,32 @@ const MotionCompoundDemo: Component = () => {
           layoutTransition={{ type: "spring", stiffness: 400, damping: 28 }}
           hitTest
         >
-          <text
-            text={expanded() ? "I'm expanded!" : "Hi"}
-            fontSize={expanded() ? 16 : 12}
-            color="#ffffff"
-          />
+          <AnimatePresence when={!expanded()}>
+            {() => (
+              <text
+                text="Hi"
+                fontSize={12}
+                color="#ffffff"
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ type: "tween", duration: 0.18, ease: "ease-in-out" }}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence when={expanded()}>
+            {() => (
+              <text
+                text="I'm expanded!"
+                fontSize={16}
+                color="#ffffff"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ type: "tween", duration: 0.22, ease: "ease-in-out" }}
+              />
+            )}
+          </AnimatePresence>
         </rect>
         <rect
           w={80} h={80} cornerRadius={8}
