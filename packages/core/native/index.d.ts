@@ -212,6 +212,7 @@ export interface QtAnimationChannelSnapshot {
   origin: number
   target: number
   state: string
+  delayMs: number
 }
 
 export interface QtAnimationSnapshot {

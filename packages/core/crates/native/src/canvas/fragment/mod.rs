@@ -1919,6 +1919,7 @@ pub struct AnimationChannelSnapshot {
     pub origin: f64,
     pub target: f64,
     pub state: String,
+    pub delay_ms: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -2168,6 +2169,7 @@ impl FragmentTree {
 
     /// Snapshot of active animations for devtools Animation domain.
     pub fn snapshot_animations(&self) -> Vec<AnimationSnapshot> {
+        let now = crate::qt::trace_now_ns() as f64 / 1_000_000_000.0;
         self.nodes
             .values()
             .filter_map(|n| {
@@ -2176,13 +2178,14 @@ impl FragmentTree {
                     return None;
                 }
                 let channels = timeline
-                    .running_channel_snapshots()
+                    .running_channel_snapshots(now)
                     .into_iter()
-                    .map(|(prop, origin, target, state)| AnimationChannelSnapshot {
+                    .map(|(prop, origin, target, state, delay_secs)| AnimationChannelSnapshot {
                         property: prop.to_string(),
                         origin,
                         target,
                         state: state.to_string(),
+                        delay_ms: delay_secs * 1000.0,
                     })
                     .collect();
                 Some(AnimationSnapshot {

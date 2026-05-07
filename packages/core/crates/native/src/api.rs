@@ -2079,6 +2079,7 @@ pub struct QtAnimationChannelSnapshot {
     pub origin: f64,
     pub target: f64,
     pub state: String,
+    pub delay_ms: f64,
 }
 
 #[napi_derive::napi(object)]
@@ -2103,6 +2104,7 @@ pub fn canvas_fragment_snapshot_animations(canvas_node_id: u32) -> Vec<QtAnimati
                     origin: c.origin,
                     target: c.target,
                     state: c.state,
+                    delay_ms: c.delay_ms,
                 })
                 .collect(),
         })
