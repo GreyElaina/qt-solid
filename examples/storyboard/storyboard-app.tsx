@@ -2,6 +2,7 @@ import {
   createApp,
   createWindow,
   ScrollView,
+  VirtualList,
   AnimatePresence,
   Router,
   Outlet,
@@ -1258,6 +1259,67 @@ const InteractiveToggleButton: Component = () => {
   )
 }
 
+const VirtualListDemo: Component = () => {
+  const theme = useTheme()
+
+  const itemCount = 10_000
+  const itemHeight = 42
+
+  const rowColor = (index: number) =>
+    index % 2 === 0 ? theme().backgroundDefault : theme().backgroundSecondary
+
+  return (
+    <group gap={10}>
+      <group row gap={8} align="center left">
+        <InfoBadge level="attention" />
+        <CaptionLabel text={`${itemCount.toLocaleString()} rows · ${itemHeight}px row height · overscan 4`} />
+      </group>
+      <rect
+        w={520}
+        h={320}
+        cornerRadius={8}
+        clip
+        fill={theme().backgroundSecondary}
+        stroke={theme().strokeDefault}
+        strokeWidth={1}
+      >
+        <VirtualList
+          itemCount={itemCount}
+          itemHeight={itemHeight}
+          overscan={4}
+          w="fill"
+          h="fill"
+          renderItem={(index) => (
+            <rect
+              h={itemHeight}
+              w="fill"
+              row
+              align="center left"
+              paddingLeft={12}
+              paddingRight={12}
+              fill={rowColor(index)}
+            >
+              <text
+                text={`Row ${index.toString().padStart(5, "0")}`}
+                fontSize={13}
+                fontWeight={index % 100 === 0 ? 700 : 400}
+                color={theme().foregroundPrimary}
+              />
+              <text
+                text={index % 100 === 0 ? "checkpoint" : "virtualized item"}
+                fontSize={11}
+                color={theme().foregroundSecondary}
+                transformX={156}
+              />
+            </rect>
+          )}
+        />
+      </rect>
+      <CaptionLabel text="Wheel inside the frame. First and last rows should clamp without blank space." />
+    </group>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Routing · Router + Outlet + Breadcrumb demo
 // ---------------------------------------------------------------------------
@@ -1637,16 +1699,22 @@ const STORIES: StoryDef[] = [
     render: () => <EffectVibrancyDemo />,
     axes: {},
     defaults: {},
-    },
-    {
+  },
+  {
     name: "Effect · Fluent Materials",
     render: () => <FluentMaterialsDemo />,
     axes: {},
     defaults: {},
-    },
-    {
+  },
+  {
     name: "Context Menu",
     render: () => <ContextMenuDemo />,
+    axes: {},
+    defaults: {},
+  },
+  {
+    name: "Virtual List",
+    render: () => <VirtualListDemo />,
     axes: {},
     defaults: {},
   },

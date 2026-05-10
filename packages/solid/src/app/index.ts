@@ -45,9 +45,10 @@ export type {
 } from "./windowing/index.ts";
 
 // components
-export { ScrollView, Image, Canvas } from "./components/index.ts";
+export { ScrollView, VirtualList, Image, Canvas } from "./components/index.ts";
 export type {
   ScrollViewProps,
+  VirtualListProps,
   ImageProps,
   CanvasProps,
 } from "./components/index.ts";
